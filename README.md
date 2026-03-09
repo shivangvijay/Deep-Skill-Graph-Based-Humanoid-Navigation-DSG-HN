@@ -36,7 +36,7 @@ mkdir build && cd build
 cmake ..
 make -j
 cd ../../..
-``
+```
 
 Install **unitree_sdk2**:
 
