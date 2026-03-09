@@ -32,8 +32,11 @@ Install **MuJoCo** (for C++ simulator). See the [unitree_mujoco installation ins
 ```bash
 cd unitree_mujoco/simulate
 ln -s ~/.mujoco/mujoco-3.3.6 mujoco
-cd ../..
-```
+mkdir build && cd build
+cmake ..
+make -j
+cd ../../..
+``
 
 Install **unitree_sdk2**:
 
