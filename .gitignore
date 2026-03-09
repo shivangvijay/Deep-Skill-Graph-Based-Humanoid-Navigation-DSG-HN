@@ -1,57 +1,8 @@
-# --- Build (C++ / CMake) ---
+# From unitree_mujoco/.gitignore and unitree_sdk2/.gitignore
 **/build/
-**/install/
-*.o
-*.a
-*.so
-*.so.*
-*.dylib
-CMakeCache.txt
-CMakeFiles/
-cmake_install.cmake
-Makefile
-*.ninja
-.ninja_deps
-.ninja_log
-
-# --- Python ---
-**/__pycache__/
-*.py[cod]
-*$py.class
-*.pyo
-*.pyd
-.Python
-*.egg
-*.egg-info/
-.eggs/
-dist/
-*.manifest
-*.spec
-venv/
-.venv/
-env/
-.env/
-
-# --- IDE / Editor ---
 **/.vscode/
-**/.idea/
-*.swp
-*.swo
-*~
-
-# --- Logs & cache ---
+**/__pycache__/
 **/log/
-.cache/
-*.log
-
-# --- MuJoCo / simulation ---
-simulate/mujoco
-
-# --- OS ---
-.DS_Store
-Thumbs.db
-
-# --- Misc ---
-*.bak
-*.tmp
-*.temp
+**/install/
+unitree_mujoco/simulate/mujoco
+.cache
