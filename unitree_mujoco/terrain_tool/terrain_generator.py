@@ -1,11 +1,22 @@
+"""
+Terrain/layout generator for unitree_mujoco scenes.
+
+MuJoCo units (used in scene XML and in this script when outputting to XML):
+  - Length / position / size: METERS (m)
+  - Time: seconds (s)
+  - Mass: kilograms (kg)
+  - Angles: radians (rad)
+
+This script can accept dimensions in cm and convert to m (e.g. AddRealWorldLayoutTwoBoxes(units_cm=True)).
+"""
 import xml.etree.ElementTree as xml_et
 import numpy as np
 import cv2
 import noise
 
-ROBOT = "go2"
+ROBOT = "g1"
 INPUT_SCENE_PATH = "./scene.xml"
-OUTPUT_SCENE_PATH = "../unitree_robots/" + ROBOT + "/scene_terrain.xml"
+OUTPUT_SCENE_PATH = "../unitree_robots/" + ROBOT + "/ai_maker_space_scene.xml"
 
 
 # zyx euler angle to quaternion
@@ -216,6 +227,32 @@ class TerrainGenerator:
         quat = euler_to_quat(euler[0], euler[1], euler[2])
         geo.attrib["quat"] = list_to_str(quat)
 
+    # Origin shift: (0, 30, 0) cm — old (0,30,0) = new (0,0,0). X unchanged.
+    LAYOUT_ORIGIN_SHIFT_CM = (0.0, 30.0, 0.0)
+
+    def AddRealWorldLayoutTwoBoxes(self, units_cm=True):
+        """
+        Add the three rectangular boxes from the real-world layout.
+        Origin shifted: old (0,30,0) cm = new (0,0,0). X unchanged. Sizes unchanged.
+        """
+        scale = 0.01 if units_cm else 1.0  # cm -> m
+        ox, oy, oz = self.LAYOUT_ORIGIN_SHIFT_CM
+
+        # Box 1: center (127.5, -71, 52.5) cm → new (127.5, -101, 52.5) cm
+        center1 = ((127.5 - ox) * scale, (-71.0 - oy) * scale, (52.5 - oz) * scale)
+        size1 = (255.0 * scale, 142.0 * scale, 105.0 * scale)
+        self.AddBox(position=center1, euler=[0, 0, 0], size=list(size1))
+
+        # Box 2: center (-202.5, 90, 50) cm → new (-202.5, 60, 50) cm
+        center2 = ((-202.5 - ox) * scale, (90.0 - oy) * scale, (50.0 - oz) * scale)
+        size2 = (85.0 * scale, 120.0 * scale, 100.0 * scale)
+        self.AddBox(position=center2, euler=[0, 0, 0], size=list(size2))
+
+        # Box 3: center (-2.5, 160, 65) cm → new (-2.5, 130, 65) cm
+        center3 = ((-2.5 - ox) * scale, (160.0 - oy) * scale, (65.0 - oz) * scale)
+        size3 = (485.0 * scale, 20.0 * scale, 130.0 * scale)
+        self.AddBox(position=center3, euler=[0, 0, 0], size=list(size3))
+
     def AddHeighFieldFromImage(
             self,
             position=[1.0, 0.0, 0.0],  # position
@@ -260,38 +297,41 @@ class TerrainGenerator:
 if __name__ == "__main__":
     tg = TerrainGenerator()
 
-    # Box obstacle
-    tg.AddBox(position=[1.5, 0.0, 0.1], euler=[0, 0, 0.0], size=[1, 1.5, 0.2])
+    # Real-world layout: two rectangular boxes (dimensions in cm, converted to m)
+    tg.AddRealWorldLayoutTwoBoxes(units_cm=True)
+
+    # # Box obstacle
+    # tg.AddBox(position=[1.5, 0.0, 0.1], euler=[0, 0, 0.0], size=[1, 1.5, 0.2])
     
-    # Geometry obstacle
-    # geo_type supports "plane", "sphere", "capsule", "ellipsoid", "cylinder", "box"
-    tg.AddGeometry(position=[1.5, 0.0, 0.25], euler=[0, 0, 0.0], size=[1.0,0.5,0.5],geo_type="cylinder")
+    # # Geometry obstacle
+    # # geo_type supports "plane", "sphere", "capsule", "ellipsoid", "cylinder", "box"
+    # tg.AddGeometry(position=[1.5, 0.0, 0.25], euler=[0, 0, 0.0], size=[1.0,0.5,0.5],geo_type="cylinder")
 
-    # Slope
-    tg.AddBox(position=[2.0, 2.0, 0.5],
-              euler=[0.0, -0.5, 0.0],
-              size=[3, 1.5, 0.1])
+    # # Slope
+    # tg.AddBox(position=[2.0, 2.0, 0.5],
+    #           euler=[0.0, -0.5, 0.0],
+    #           size=[3, 1.5, 0.1])
 
-    # Stairs
-    tg.AddStairs(init_pos=[1.0, 4.0, 0.0], yaw=0.0)
+    # # Stairs
+    # tg.AddStairs(init_pos=[1.0, 4.0, 0.0], yaw=0.0)
 
-    # Suspend stairs
-    tg.AddSuspendStairs(init_pos=[1.0, 6.0, 0.0], yaw=0.0)
+    # # Suspend stairs
+    # tg.AddSuspendStairs(init_pos=[1.0, 6.0, 0.0], yaw=0.0)
 
-    # Rough ground
-    tg.AddRoughGround(init_pos=[-2.5, 5.0, 0.0],
-                      euler=[0, 0, 0.0],
-                      nums=[10, 8])
+    # # Rough ground
+    # tg.AddRoughGround(init_pos=[-2.5, 5.0, 0.0],
+    #                   euler=[0, 0, 0.0],
+    #                   nums=[10, 8])
 
-    # Perlin heigh field
-    tg.AddPerlinHeighField(position=[-1.5, 4.0, 0.0], size=[2.0, 1.5])
+    # # Perlin heigh field
+    # tg.AddPerlinHeighField(position=[-1.5, 4.0, 0.0], size=[2.0, 1.5])
 
-    # Heigh field from image
-    tg.AddHeighFieldFromImage(position=[-1.5, 2.0, 0.0],
-                              euler=[0, 0, -1.57],
-                              size=[2.0,2.0],
-                              input_img="./unitree_robot.jpeg",
-                              image_scale=[1.0, 1.0],
-                              output_hfield_image="unitree_hfield.png")
+    # # Heigh field from image
+    # tg.AddHeighFieldFromImage(position=[-1.5, 2.0, 0.0],
+    #                           euler=[0, 0, -1.57],
+    #                           size=[2.0,2.0],
+    #                           input_img="./unitree_robot.jpeg",
+    #                           image_scale=[1.0, 1.0],
+    #                           output_hfield_image="unitree_hfield.png")
 
     tg.Save()
