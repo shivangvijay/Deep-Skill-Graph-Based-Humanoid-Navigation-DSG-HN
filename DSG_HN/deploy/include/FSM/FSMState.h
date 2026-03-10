@@ -5,6 +5,7 @@
 #include "FSM/BaseState.h"
 #include "isaaclab/devices/keyboard/keyboard.h"
 #include "unitree_joystick_dsl.hpp"
+#include "dds/vel_subscriber.h"
 
 class FSMState : public BaseState
 {
@@ -67,4 +68,5 @@ public:
     static std::unique_ptr<LowCmd_t> lowcmd;
     static std::shared_ptr<LowState_t> lowstate;
     static std::shared_ptr<Keyboard> keyboard;
+    static std::shared_ptr<VelSubscriber> vel_subscriber;
 };

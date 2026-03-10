@@ -41,17 +41,12 @@ namespace isaaclab
     // 4: looks like there are some existing publishers, need to just find topics and subscribe to get robot state (do this in higher level control block)
     REGISTER_OBSERVATION(dds_commands)
     {
-        static VelSubscriber vel_subscriber;
-        static bool initialized = false;
-        if (!initialized)
-        {
-            vel_subscriber.Init();
-            initialized = true;
-        }
-
         static auto cfg = env->cfg["commands"]["base_velocity"]["ranges"];
-        std::vector<float> cmd = {0.0f, 0.0f, 1.0f};
-        return cmd;
+
+        const auto &vel_cmd = FSMState::vel_subscriber->getVelCmd();
+        // std::cout << "Received vel command: " << vel_cmd[0] << " " << vel_cmd[1] << " " << vel_cmd[2] << std::endl;
+        //std::vector<float> cmd = {0.0f, 0.0f, 1.0f};
+        return vel_cmd;
     }
 }
 
@@ -67,11 +62,11 @@ State_RLBase::State_RLBase(int state_mode, std::string state_string)
         std::make_shared<unitree::BaseArticulation<LowState_t::SharedPtr>>(FSMState::lowstate));
     env->alg = std::make_unique<isaaclab::OrtRunner>(policy_dir / "exported" / "policy.onnx");
 
-    this->registered_checks.emplace_back(
-        std::make_pair(
-            [&]() -> bool
-            { return isaaclab::mdp::bad_orientation(env.get(), 1.0); },
-            FSMStringMap.right.at("Passive")));
+    // this->registered_checks.emplace_back(
+    //     std::make_pair(
+    //         [&]() -> bool
+    //         { return isaaclab::mdp::bad_orientation(env.get(), 1.0); },
+    //         FSMStringMap.right.at("Passive")));
 }
 
 void State_RLBase::run()
