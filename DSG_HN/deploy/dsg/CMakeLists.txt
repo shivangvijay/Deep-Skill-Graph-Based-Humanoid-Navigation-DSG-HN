@@ -15,6 +15,8 @@ include_directories(
   ${PROJECT_SOURCE_DIR}/../include/
 )
 
+set(SCENE_XML_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../unitree_mujoco/unitree_robots/g1/ai_maker_space_scene.xml")
+file(COPY ${SCENE_XML_PATH} DESTINATION ${CMAKE_CURRENT_BINARY_DIR}) # file is for runtime, whereas include_directories is for compile time, where to find headers
 
 link_libraries(
   unitree_sdk2 ddsc ddscxx rt pthread 

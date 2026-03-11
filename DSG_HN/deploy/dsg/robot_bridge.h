@@ -8,8 +8,18 @@
 #include <string>
 #include "dds/state_subscriber.h"
 #include "dds/reset_publisher.h"
+#include <fstream>
+#include <stdexcept>
 
-// TODO: Add function to reset the robot, and ensure that the robot is stable before sending commands
+#define SCENE_FILE "ai_maker_space_scene.xml"
+
+struct Obstacle
+{
+    std::array<float, 3> position;
+    std::array<float, 3> size;
+    std::string name;
+};
+
 class RobotBridge
 {
 public:
@@ -20,9 +30,14 @@ public:
     void resetRobot(); // random reset
     void resetRobot(const std::vector<float> &position, const std::vector<float> &orientation); // reset to a specific pose
     RobotState getRobotState();
+    std::vector<Obstacle> getObstacles() const;
 
 private:
     VelPublisher vel_publisher;
     StateSubscriber state_subscriber;
     ResetPublisher reset_publisher;
+    std::string scene_file = SCENE_FILE;
+    std::vector<Obstacle> obstacles;
+
+    void readScene();
 };
