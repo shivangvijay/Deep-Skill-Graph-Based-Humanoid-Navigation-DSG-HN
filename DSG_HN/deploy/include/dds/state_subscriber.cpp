@@ -25,53 +25,51 @@ void StateSubscriber::jointStateCallback(const void *msg)
     for (int i = 0; i < low_state_msg->motor_state().size(); ++i) {
         current_state.q[i] = low_state_msg->motor_state()[i].q(); // note: for now just keeping order the same as the motor state, but may want to reorder to match whatever is going on in RLBase.cpp, where things get reordered before being sent to the robot
         current_state.dq[i] = low_state_msg->motor_state()[i].dq();
-        //std::cout << current_state.q[i] << " ";
     }
-    //std::cout << std::endl;
 }
-
-// void StateSubscriber::sportModeCallback(const void *msg)
-// {
-//     const auto *sport_mode_msg = static_cast<const ::unitree_hg::msg::dds_::SportModeState_ *>(msg);
-//     // can use this callback to update any sport mode related state if needed, but for now just printing it out
-//     std::cout << "Received SportModeState message: mode = " << static_cast<int>(sport_mode_msg->mode()) << std::endl;
-// }
 
 // This IMU is the IMU of just the torso, use it to get the oritentation of the robot
 void StateSubscriber::imuCallback(const void *msg)
 {
     const auto *imu_state_msg = static_cast<const ::unitree_hg::msg::dds_::IMUState_ *>(msg);
-    std::cout << "Received IMUState message: quaternion = [" 
-                << imu_state_msg->quaternion()[0] << ", " 
-                << imu_state_msg->quaternion()[1] << ", " 
-                << imu_state_msg->quaternion()[2] << ", " 
-                << imu_state_msg->quaternion()[3] << "]" << std::endl;
-    std::cout << "Received IMUState message: gyroscope = [" 
-                << imu_state_msg->gyroscope()[0] << ", " 
-                << imu_state_msg->gyroscope()[1] << ", " 
-                << imu_state_msg->gyroscope()[2] << "]" << std::endl;
-    std::cout << "Received IMUState message: accelerometer = [" 
-                << imu_state_msg->accelerometer()[0] << ", " 
-                << imu_state_msg->accelerometer()[1] << ", " 
-                << imu_state_msg->accelerometer()[2] << "]" << std::endl;   
-    std::cout<< "Received IMUState message: rpy = [" 
-                << imu_state_msg->rpy()[0] << ", " 
-                << imu_state_msg->rpy()[1] << ", " 
-                << imu_state_msg->rpy()[2] << "]" << std::endl;
+    current_state.accel = imu_state_msg->accelerometer();
+    current_state.angular_velocity = imu_state_msg->gyroscope();
+    current_state.orientation = imu_state_msg->quaternion();
+
+    // std::cout << "Received IMUState message: quaternion = [" 
+    //             << imu_state_msg->quaternion()[0] << ", " 
+    //             << imu_state_msg->quaternion()[1] << ", " 
+    //             << imu_state_msg->quaternion()[2] << ", " 
+    //             << imu_state_msg->quaternion()[3] << "]" << std::endl;
+    // std::cout << "Received IMUState message: gyroscope = [" 
+    //             << imu_state_msg->gyroscope()[0] << ", " 
+    //             << imu_state_msg->gyroscope()[1] << ", " 
+    //             << imu_state_msg->gyroscope()[2] << "]" << std::endl;
+    // std::cout << "Received IMUState message: accelerometer = [" 
+    //             << imu_state_msg->accelerometer()[0] << ", " 
+    //             << imu_state_msg->accelerometer()[1] << ", " 
+    //             << imu_state_msg->accelerometer()[2] << "]" << std::endl;   
+    // std::cout<< "Received IMUState message: rpy = [" 
+    //             << imu_state_msg->rpy()[0] << ", " 
+    //             << imu_state_msg->rpy()[1] << ", " 
+    //             << imu_state_msg->rpy()[2] << "]" << std::endl;
 }
 
 // this sport mode contains the aggregate velocity and position of the robot
 void StateSubscriber::sportModeCallback(const void *msg)
 {
     const auto *sport_mode_msg = static_cast<const ::unitree_go::msg::dds_::SportModeState_ *>(msg);
-    std::cout << "Received SportModeState message: pos = ["
-                << sport_mode_msg->position()[0] << ", " 
-                << sport_mode_msg->position()[1] << ", " 
-                << sport_mode_msg->position()[2] << "]" << std::endl;
-    std::cout << "Received SportModeState message: vel = ["
-                << sport_mode_msg->velocity()[0] << ", " 
-                << sport_mode_msg->velocity()[1] << ", " 
-                << sport_mode_msg->velocity()[2] << "]" << std::endl;    
+    current_state.position = sport_mode_msg->position();
+    current_state.velocity = sport_mode_msg->velocity();
+
+    // std::cout << "Received SportModeState message: pos = ["
+    //             << sport_mode_msg->position()[0] << ", " 
+    //             << sport_mode_msg->position()[1] << ", " 
+    //             << sport_mode_msg->position()[2] << "]" << std::endl;
+    // std::cout << "Received SportModeState message: vel = ["
+    //             << sport_mode_msg->velocity()[0] << ", " 
+    //             << sport_mode_msg->velocity()[1] << ", " 
+    //             << sport_mode_msg->velocity()[2] << "]" << std::endl;    
     
     // std::cout << "Received SportModeState message: quaternion = ["
     //             << sport_mode_msg->imu_state().quaternion()[0] << ", "

@@ -20,6 +20,13 @@ struct RobotState
 {
     std::array<float, DOF> q;
     std::array<float, DOF> dq;
+
+    std::array<float, 3> position;
+    std::array<float, 3> velocity;
+    std::array<float, 3> accel;
+
+    std::array<float, 4> orientation; // quaternion
+    std::array<float, 3> angular_velocity; // from the IMU
 };
 
 class StateSubscriber
