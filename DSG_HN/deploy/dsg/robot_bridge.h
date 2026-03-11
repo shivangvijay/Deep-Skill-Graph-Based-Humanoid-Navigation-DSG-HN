@@ -10,8 +10,10 @@
 #include "dds/reset_publisher.h"
 #include <fstream>
 #include <stdexcept>
-
-#define SCENE_FILE "ai_maker_space_scene.xml"
+#include <math.h>
+#include <random>
+#include <utility>
+#include <sstream>
 
 struct Obstacle
 {
@@ -23,21 +25,25 @@ struct Obstacle
 class RobotBridge
 {
 public:
-    RobotBridge(std::string network);
+    RobotBridge(std::string network, std::string scene_file, float x_min, float x_max, float y_min, float y_max);
     ~RobotBridge() = default;
 
     void publishVelCommand(const std::vector<float> &cmd);
-    void resetRobot(); // random reset
-    void resetRobot(const std::vector<float> &position, const std::vector<float> &orientation); // reset to a specific pose
+    void resetRobot();                                                                          // random reset
+    void resetRobot(const std::array<float, 3> &position, const std::array<float, 4> &orientation); // reset to a specific pose
     RobotState getRobotState();
     std::vector<Obstacle> getObstacles() const;
+    float distanceToNearestObstacle(const std::array<float, 3> &position, const std::array<float, 4> &orientation) const; // TODO: implement this function to calculate the distance from the given position to the nearest obstacle
+    float distanceToNearestObstacle();                                                                                    // uses curent robot state
 
 private:
     VelPublisher vel_publisher;
     StateSubscriber state_subscriber;
     ResetPublisher reset_publisher;
-    std::string scene_file = SCENE_FILE;
+    std::string scene_file;
     std::vector<Obstacle> obstacles;
+    float x_min, x_max, y_min, y_max;
 
+    std::pair<std::array<float, 3>, std::array<float, 4>> generateRandomPos() const;
     void readScene();
 };

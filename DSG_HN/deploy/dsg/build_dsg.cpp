@@ -1,4 +1,10 @@
 #include "build_dsg.h"
+#define SCENE_FILE "ai_maker_space_scene.xml"
+#define X_MIN -5.0f
+#define X_MAX 5.0f
+#define Y_MIN -5.0f
+#define Y_MAX 5.0f
+
 
 int main(int argc, char** argv)
 {
@@ -7,7 +13,7 @@ int main(int argc, char** argv)
 
     unitree::robot::ChannelFactory::Instance()->Init(0, vm["network"].as<std::string>());
 
-    RobotBridge robot_bridge(vm["network"].as<std::string>());
+    RobotBridge robot_bridge(vm["network"].as<std::string>(), SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX);
 
     int steps = 0;
     robot_bridge.resetRobot();
