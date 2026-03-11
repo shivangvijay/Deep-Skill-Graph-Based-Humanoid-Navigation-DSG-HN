@@ -30,6 +30,5 @@ link_libraries(${PROJECT_NAME}_lib)
 
 add_executable(g1_ctrl 
   main.cpp
-  ${PROJECT_SOURCE_DIR}/../../include/dds/vel_publisher.cpp
   ${PROJECT_SOURCE_DIR}/../../include/dds/vel_subscriber.cpp
 )

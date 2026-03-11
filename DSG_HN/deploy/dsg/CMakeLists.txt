@@ -34,4 +34,5 @@ add_executable(build_dsg
   ${PROJECT_SOURCE_DIR}/../include/dds/vel_publisher.cpp
   ${PROJECT_SOURCE_DIR}/../include/dds/vel_subscriber.cpp
   ${PROJECT_SOURCE_DIR}/../include/dds/state_subscriber.cpp
+  ${PROJECT_SOURCE_DIR}/../include/dds/reset_publisher.cpp
 )
