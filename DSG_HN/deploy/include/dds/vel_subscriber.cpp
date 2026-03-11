@@ -5,7 +5,7 @@ void VelSubscriber::velCommandCallback(const void *msg)
     vel_cmd[0] = twist_msg->linear().x();
     vel_cmd[1] = twist_msg->linear().y();
     vel_cmd[2] = twist_msg->angular().z();
-    //std::cout << "Received vel command: " << vel_cmd[0] << " " << vel_cmd[1] << " " << vel_cmd[2] << std::endl;
+    std::cout << "Received vel command: " << vel_cmd[0] << " " << vel_cmd[1] << " " << vel_cmd[2] << std::endl;
 }
 
 void VelSubscriber::Init()

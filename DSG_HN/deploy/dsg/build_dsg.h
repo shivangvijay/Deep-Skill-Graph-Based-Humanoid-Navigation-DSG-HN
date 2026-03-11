@@ -1,4 +1,8 @@
 #pragma once
-
-#include "dds/vel_subscriber.h"
-#include "dds/vel_publisher.h"
+#include <thread>
+#include <chrono>
+#include <iostream>
+#include <string>
+#include <vector>
+#include "param.h"
+#include "robot_bridge.h"
