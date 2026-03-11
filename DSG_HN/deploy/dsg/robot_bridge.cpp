@@ -39,7 +39,8 @@ void RobotBridge::resetRobot()
     auto [random_position, random_orientation] = generateRandomPos();
 
     // TODO: need a finer grain way to check distance, since robot is not a point mass
-    while (distanceToNearestObstacle(random_position, random_orientation) < 2.0f) // ensure the random position is not too close to an obstacle
+    // to start, this 
+    while (distanceToNearestObstacle(random_position, random_orientation) < 2.0f)
     {
         std::tie(random_position, random_orientation) = generateRandomPos();
     }
@@ -76,15 +77,16 @@ void RobotBridge::readScene()
 
         if (line.find("<geom") != std::string::npos && line.find("layout_box") != std::string::npos)
         {
+            bool found_name, found_pos, found_size  = false;
             Obstacle box;
 
-            // extract the na,e
             size_t name_pos = line.find("name=\"");
             if (name_pos != std::string::npos)
             {
                 size_t start = name_pos + 6; // move past name="
                 size_t end = line.find("\"", start);
                 box.name = line.substr(start, end - start);
+                found_name = true;
             }
 
             // extract the pos
@@ -98,8 +100,7 @@ void RobotBridge::readScene()
                 // parse the string into floats using stringstream
                 std::stringstream ss(pos_str);
                 ss >> box.position[0] >> box.position[1] >> box.position[2]; // the >> operator moves you to the next item in the stringstream, which you can save by putting the var there
-
-                obstacles.push_back(box);
+                found_pos = true;
             }
 
             // extract the size
@@ -113,7 +114,11 @@ void RobotBridge::readScene()
                 // parse the string into floats using stringstream
                 std::stringstream ss(size_str);
                 ss >> box.size[0] >> box.size[1] >> box.size[2];
+                found_size = true;
+            }
 
+            if (found_name && found_pos && found_size)
+            {
                 obstacles.push_back(box);
             }
         }
@@ -134,8 +139,8 @@ float RobotBridge::distanceToNearestObstacle(const std::array<float, 3> &positio
     float min_distance = std::numeric_limits<float>::max();
     for (const auto &obstacle : obstacles)
     {
-        float dx = std::max(std::abs(position[0] - obstacle.position[0]) - obstacle.size[0] / 2, 0.0f);
-        float dy = std::max(std::abs(position[1] - obstacle.position[1]) - obstacle.size[1] / 2, 0.0f);
+        float dx = std::max(std::abs(position[0] - obstacle.position[0]) - obstacle.size[0], 0.0f);
+        float dy = std::max(std::abs(position[1] - obstacle.position[1]) - obstacle.size[1], 0.0f);
         float distance = std::sqrt(dx * dx + dy * dy);
         min_distance = std::min(min_distance, distance);
     }

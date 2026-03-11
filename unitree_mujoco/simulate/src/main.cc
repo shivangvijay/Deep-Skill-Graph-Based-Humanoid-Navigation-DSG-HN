@@ -423,7 +423,7 @@ namespace
         // run only if model is present
         if (m)
         {
-          if (reset_requested.load()) // gonna just keep this as a binary flag for now, and then if this works gonna add in control over x, y, and orientation
+          if (reset_requested.load())
           {
             mj_resetData(m, d);
             reset_mutex.lock();
@@ -432,6 +432,7 @@ namespace
             {
               d->qpos[i] = reset_pose[i];
             }
+
             reset_mutex.unlock();
 
             for (int i = 7; i < m->nq; i++)
@@ -615,6 +616,7 @@ void reset_callback(const void *msg)
   reset_pose[4] = pose_msg->orientation().x();
   reset_pose[5] = pose_msg->orientation().y();
   reset_pose[6] = pose_msg->orientation().z();
+
   reset_mutex.unlock();
   std::cout << "Received reset message" << std::endl;
   reset_requested.store(true);
