@@ -8,6 +8,8 @@ find_package(yaml-cpp REQUIRED)
 
 include_directories(
   #/usr/include/eigen3
+  /opt/unitree_robotics/include
+  /opt/unitree_robotics/include/ddscxx # dds
   /usr/local/include/ddscxx # dds
   /usr/local/include/iceoryx/v2.0.2 # dds
   include
@@ -18,8 +20,10 @@ include_directories(
 set(SCENE_XML_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../unitree_mujoco/unitree_robots/g1/ai_maker_space_scene.xml")
 file(COPY ${SCENE_XML_PATH} DESTINATION ${CMAKE_CURRENT_BINARY_DIR}) # file is for runtime, whereas include_directories is for compile time, where to find headers
 
+link_directories(/opt/unitree_robotics/lib)
+
 link_libraries(
-  unitree_sdk2 ddsc ddscxx rt pthread 
+  unitree_sdk2 ddsc ddscxx rt pthread
   libboost_program_options.a libyaml-cpp.a fmt
 )
 
