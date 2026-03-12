@@ -18,6 +18,6 @@ void ResetSubscriber::reset_callback(const void *msg)
     reset_pose[4] = pose_msg->orientation().x();
     reset_pose[5] = pose_msg->orientation().y();
     reset_pose[6] = pose_msg->orientation().z();
-    std::cout << "Received reset message" << std::endl;
+    //std::cout << "Received reset message" << std::endl;
     reset = true;
 }

@@ -444,7 +444,7 @@ namespace
 
             // Reset the flag
             reset_requested.store(false);
-            std::cout << "Simulation reset triggered via DDS!" << std::endl;
+            //std::cout << "Simulation reset triggered via DDS!" << std::endl;
           }
 
           // running
@@ -581,7 +581,7 @@ void PhysicsThread(mj::Simulate *sim, const char *filename)
       sim->Load(m, d, filename);
       mj_forward(m, d);
       initial_qpos.assign(d->qpos, d->qpos + m->nq);
-      std::cout << d->qpos[2] << " Z-height" << std::endl;
+      //std::cout << d->qpos[2] << " Z-height" << std::endl;
 
 
       // allocate ctrlnoise
@@ -618,7 +618,7 @@ void reset_callback(const void *msg)
   reset_pose[6] = pose_msg->orientation().z();
 
   reset_mutex.unlock();
-  std::cout << "Received reset message" << std::endl;
+  //std::cout << "Received reset message" << std::endl;
   reset_requested.store(true);
 }
 

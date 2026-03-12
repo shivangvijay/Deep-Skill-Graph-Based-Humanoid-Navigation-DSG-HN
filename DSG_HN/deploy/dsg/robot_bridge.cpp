@@ -40,11 +40,11 @@ void RobotBridge::resetRobot()
 
     // TODO: need a finer grain way to check distance, since robot is not a point mass
     // to start, this 
-    while (distanceToNearestObstacle(random_position, random_orientation) < 2.0f)
+    while (distanceToNearestObstacle(random_position, random_orientation) < 0.5f)
     {
         std::tie(random_position, random_orientation) = generateRandomPos();
     }
-    std::cout << "Distance to nearest obstacle: " << distanceToNearestObstacle(random_position, random_orientation) << std::endl;
+    //std::cout << "Distance to nearest obstacle: " << distanceToNearestObstacle(random_position, random_orientation) << std::endl;
     std::vector<float> random_position_vec(random_position.begin(), random_position.end());
     std::vector<float> random_orientation_vec(random_orientation.begin(), random_orientation.end());
     reset_publisher.publishResetCommand(random_position_vec, random_orientation_vec);

@@ -1,9 +1,9 @@
 #include "build_dsg.h"
 #define SCENE_FILE "ai_maker_space_scene.xml"
-#define X_MIN -10.0f
-#define X_MAX 10.0f
-#define Y_MIN -10.0f
-#define Y_MAX 10.0f
+#define X_MIN -3.0f
+#define X_MAX 3.0f
+#define Y_MIN -3.0f
+#define Y_MAX 3.0f
 
 
 int main(int argc, char** argv)
