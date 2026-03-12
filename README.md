@@ -102,6 +102,32 @@ Use the joystick and keyboard in this order:
 
 After that, you can use the Xbox controller to move the robot.
 
+### 5. Using Robot Bridge
+
+#### 5.1 Setup
+```bash
+cd DSG_HN/deploy/dsg
+mkdir build && cd build
+cmake..
+make -j$(nproc)
+```
+
+To run the example program:
+```bash
+./build_dsg --network lo
+```
+
+#### 5.2 Using RobotBridge
+
+The RobotBridge class, defined in dsg/robot_bridge.h, can be used to abstract away the dds communication required to read state information from the mujoco simulation, and send velocity commands. The key functions are as follows:
+
+1. **RobotBridge(string network, string scene_filepath, x_min, x_max, y_min, y_max)** constructor, where the network should be the same as the low level controller (see example file for how to set it up), the filepath should point to the .xml file (again, see the example for how this is done), and the x/y min and max are the maximum bounds at which you want to spawn the robot.
+2. **resetRobot()** resets the robot to a new, safe starting location.**It must be called before sending any velocity commands.**
+3. **publishVelCommand(vector\<float\> cmd)** sends a velocity command to the low level policy, which actuates the robots joints. The vector inputs consists of the velocity in the x and y directions, as well as the anglular yaw velocity.
+4. **getRobotState()** returns the state as type RobotState. See the program for the exact fields, but holds information on positon, velocity, angular velocity, etc.
+
+
+
 ---
 
 ## Cheatsheet
