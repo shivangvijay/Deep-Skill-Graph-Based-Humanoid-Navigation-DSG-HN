@@ -117,7 +117,7 @@ To run the example program:
 ./build_dsg --network lo
 ```
 
-#### 5.2 Using RobotBridge
+#### 5.2 RobotBridge
 
 The RobotBridge class, defined in dsg/robot_bridge.h, can be used to abstract away the dds communication required to read state information from the mujoco simulation, and send velocity commands. The key functions are as follows:
 
