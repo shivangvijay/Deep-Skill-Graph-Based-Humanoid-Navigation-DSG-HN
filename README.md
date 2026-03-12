@@ -104,6 +104,10 @@ After that, you can use the Xbox controller to move the robot.
 
 ### 5. Using Robot Bridge
 
+#### IMPORTANT
+
+To allow for use without a remote, a number of changes has been made. First, in State_RLBase.cpp the failsafe on lines 74-78 to switch to passive mode in bad configurations has been disabled (this is required as there is a delay when spawning the robot, which causes it to fall, and with this failsafe it goes to the passive mode and is not recoverable back to velocity tracking mode). Second, the robot is switched by default to velocity mode. To rever to normal operations, inside robot/config.yaml swith the order in lines 3-9 so that passive appears first. Finally, I renable the harness inside unitree_mujoco/config.
+
 #### 5.1 Setup
 ```bash
 cd DSG_HN/deploy/dsg
@@ -114,7 +118,7 @@ make -j$(nproc)
 
 To run the example program:
 ```bash
-./build_dsg --network lo
+./example --network lo
 ```
 
 #### 5.2 RobotBridge

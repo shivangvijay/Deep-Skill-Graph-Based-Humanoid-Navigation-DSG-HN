@@ -10,7 +10,7 @@ include_directories(
   #/usr/include/eigen3
   /usr/local/include/ddscxx # dds
   /usr/local/include/iceoryx/v2.0.2 # dds
-  #include
+  include
   #${PROJECT_SOURCE_DIR}/../../thirdparty/onnxruntime-linux-x64-1.22.0/include
   ${PROJECT_SOURCE_DIR}/../include/
 )
@@ -30,8 +30,8 @@ file(GLOB_RECURSE ADD_SRC_LIST
 #add_library(${PROJECT_NAME}_lib ${ADD_SRC_LIST})
 #link_libraries(${PROJECT_NAME}_lib)
 
-add_executable(build_dsg 
-  build_dsg.cpp
+add_executable(example
+  example.cpp
   robot_bridge.cpp
   ${PROJECT_SOURCE_DIR}/../include/dds/vel_publisher.cpp
   ${PROJECT_SOURCE_DIR}/../include/dds/vel_subscriber.cpp
