@@ -31,4 +31,5 @@ link_libraries(${PROJECT_NAME}_lib)
 add_executable(g1_ctrl 
   main.cpp
   ${PROJECT_SOURCE_DIR}/../../include/dds/vel_subscriber.cpp
+  ${PROJECT_SOURCE_DIR}/../../include/dds/reset_subscriber.cpp
 )

@@ -49,6 +49,7 @@ namespace isaaclab
         // std::cout << "Received vel command: " << vel_cmd[0] << " " << vel_cmd[1] << " " << vel_cmd[2] << std::endl;
         //std::vector<float> cmd = {0.0f, 0.0f, 1.0f};
         return vel_cmd;
+
     }
 }
 
@@ -79,10 +80,18 @@ State_RLBase::State_RLBase(int state_mode, std::string state_string)
 
 void State_RLBase::run()
 {
-    auto action = env->action_manager->processed_actions();
+    if (FSMState::reset_subscriber->reset) {
+        env->reset();
+        FSMState::reset_subscriber->reset = false;
+        return;
+    }
 
+    auto action = env->action_manager->processed_actions();
+    
     for (int i(0); i < env->robot->data.joint_ids_map.size(); i++)
     {
+        action[i] = std::clamp(action[i], -1.0f, 1.0f);
         lowcmd->msg_.motor_cmd()[env->robot->data.joint_ids_map[i]].q() = action[i];
     }
+
 }
