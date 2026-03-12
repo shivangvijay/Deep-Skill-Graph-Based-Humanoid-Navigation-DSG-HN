@@ -1,12 +1,12 @@
 FSM:
   _: # enabled fsms
+    Velocity:
+      id: 3
+      type: RLBase
     Passive:
       id: 1
     FixStand:
       id: 2
-    Velocity:
-      id: 3
-      type: RLBase
 
     Mimic_Dance_102: # uncomment to enable
       id: 101

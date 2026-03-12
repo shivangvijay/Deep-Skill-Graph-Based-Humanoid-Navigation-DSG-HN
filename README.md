@@ -102,6 +102,36 @@ Use the joystick and keyboard in this order:
 
 After that, you can use the Xbox controller to move the robot.
 
+### 5. Using Robot Bridge
+
+#### IMPORTANT
+
+To allow for use without a remote, a number of changes has been made. First, in State_RLBase.cpp the failsafe on lines 74-78 to switch to passive mode in bad configurations has been disabled (this is required as there is a delay when spawning the robot, which causes it to fall, and with this failsafe it goes to the passive mode and is not recoverable back to velocity tracking mode). Second, the robot is switched by default to velocity mode. To rever to normal operations, inside robot/config.yaml swith the order in lines 3-9 so that passive appears first. Finally, I renable the harness inside unitree_mujoco/config.
+
+#### 5.1 Setup
+```bash
+cd DSG_HN/deploy/dsg
+mkdir build && cd build
+cmake..
+make -j$(nproc)
+```
+
+To run the example program:
+```bash
+./example --network lo
+```
+
+#### 5.2 RobotBridge
+
+The RobotBridge class, defined in dsg/robot_bridge.h, can be used to abstract away the dds communication required to read state information from the mujoco simulation, and send velocity commands. The key functions are as follows:
+
+1. **RobotBridge(string network, string scene_filepath, x_min, x_max, y_min, y_max)** constructor, where the network should be the same as the low level controller (see example file for how to set it up), the filepath should point to the .xml file (again, see the example for how this is done), and the x/y min and max are the maximum bounds at which you want to spawn the robot.
+2. **resetRobot()** resets the robot to a new, safe starting location.**It must be called before sending any velocity commands.**
+3. **publishVelCommand(vector\<float\> cmd)** sends a velocity command to the low level policy, which actuates the robots joints. The vector inputs consists of the velocity in the x and y directions, as well as the anglular yaw velocity.
+4. **getRobotState()** returns the state as type RobotState. See the program for the exact fields, but holds information on positon, velocity, angular velocity, etc.
+
+
+
 ---
 
 ## Cheatsheet

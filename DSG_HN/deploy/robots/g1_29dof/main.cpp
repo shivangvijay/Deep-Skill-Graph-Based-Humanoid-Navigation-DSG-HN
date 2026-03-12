@@ -3,10 +3,13 @@
 #include "FSM/State_FixStand.h"
 #include "FSM/State_RLBase.h"
 #include "State_Mimic.h"
-
+#include "dds/vel_subscriber.h"
+#include "dds/reset_subscriber.h"
 std::unique_ptr<LowCmd_t> FSMState::lowcmd = nullptr;
 std::shared_ptr<LowState_t> FSMState::lowstate = nullptr;
 std::shared_ptr<Keyboard> FSMState::keyboard = std::make_shared<Keyboard>();
+std::shared_ptr<VelSubscriber> FSMState::vel_subscriber = nullptr;
+std::shared_ptr<ResetSubscriber> FSMState::reset_subscriber = nullptr;
 
 void init_fsm_state()
 {
@@ -20,9 +23,19 @@ void init_fsm_state()
     }
     FSMState::lowcmd = std::make_unique<LowCmd_t>();
     FSMState::lowstate = std::make_shared<LowState_t>();
+    FSMState::vel_subscriber = std::make_shared<VelSubscriber>();
+    FSMState::reset_subscriber = std::make_shared<ResetSubscriber>();
     spdlog::info("Waiting for connection to robot...");
     FSMState::lowstate->wait_for_connection();
     spdlog::info("Connected to robot.");
+
+    spdlog::info("Initializing VelSubscriber...");
+    FSMState::vel_subscriber->Init();
+    spdlog::info("VelSubscriber initialized.");
+
+    spdlog::info("Initializing ResetSubscriber...");
+    FSMState::reset_subscriber->Init();
+    spdlog::info("ResetSubscriber initialized.");
 }
 
 int main(int argc, char** argv)
