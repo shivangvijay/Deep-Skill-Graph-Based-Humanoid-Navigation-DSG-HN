@@ -104,3 +104,35 @@ void RobotBridge::resetRobot()
     }
     resetRobot(pos, quat);
 }
+
+
+void RobotBridge::printState(const RobotState &s) const // just a lil utility function to help with debuffing
+{
+    std::cout << "--- Robot State ---" << std::endl;
+
+    std::cout << "Joint Positions: " << std::endl;
+    for (size_t i = 0; i < s.q.size(); i++)
+    {
+        std::cout << s.q[i] << (i == s.q.size() - 1 ? "" : ", ");
+    }
+    std::cout << std::endl;
+
+    std::cout << "Joint Velocities: " << std::endl;
+    for (size_t i = 0; i < s.dq.size(); i++)
+    {
+        std::cout << s.dq[i] << (i == s.dq.size() - 1 ? "" : ", ");
+    }
+    std::cout << std::endl;
+
+    std::cout << "Base Position: [" << s.position[0] << ", " << s.position[1] << ", " << s.position[2] << "]" << std::endl;
+    std::cout << "Base Velocity: [" << s.velocity[0] << ", " << s.velocity[1] << ", " << s.velocity[2] << "]" << std::endl;
+    
+    std::cout << "Orientation (Quat): [" << s.orientation[0] << ", " << s.orientation[1] << ", " 
+              << s.orientation[2] << ", " << s.orientation[3] << "]" << std::endl;
+
+    std::cout << "Angular Velocity: [" << s.angular_velocity[0] << ", " << s.angular_velocity[1] << ", " 
+              << s.angular_velocity[2] << "]" << std::endl;
+
+    std::cout << "Acceleration: [" << s.accel[0] << ", " << s.accel[1] << ", " << s.accel[2] << "]" << std::endl;
+    std::cout << "-------------------" << std::endl;
+}

@@ -110,3 +110,27 @@ void MuJoCoEngine::reset(const std::array<float, 3> &pos, const std::array<float
     d->qpos[6] = quat[3];
     mj_forward(m, d);
 }
+
+bool MuJoCoEngine::inCollision()
+{
+    if (!d || !m)
+        return false;
+
+    for (int i = 0; i < d->ncon; i++)
+    {
+        mjContact *contact = &d->contact[i];
+
+        int geom1 = contact->geom1;
+        int geom2 = contact->geom2;
+
+        std::string name1 = mj_id2name(m, mjOBJ_GEOM, geom1) ? mj_id2name(m, mjOBJ_GEOM, geom1) : "";
+        std::string name2 = mj_id2name(m, mjOBJ_GEOM, geom2) ? mj_id2name(m, mjOBJ_GEOM, geom2) : "";
+
+        if (name1 != "floor" && name1 != "ground" && 
+            name2 != "floor" && name2 != "ground") 
+        {
+            return true;
+        }
+    }
+    return false;
+}

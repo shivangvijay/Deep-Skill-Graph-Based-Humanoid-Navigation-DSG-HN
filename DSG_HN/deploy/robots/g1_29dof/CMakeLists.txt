@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD 17)
 find_package(Boost REQUIRED COMPONENTS program_options)
 find_package(yaml-cpp REQUIRED)
 
-set(ROBOT_BRIDGE_DIR ${PROJECTS_SOURCE_DIR}/../../../robot_bridge)
+set(ROBOT_BRIDGE_DIR ${PROJECT_SOURCE_DIR}/../../../robot_bridge)
 
 include_directories(
   /usr/include/eigen3
@@ -15,6 +15,7 @@ include_directories(
   include
   ${PROJECT_SOURCE_DIR}/../../thirdparty/onnxruntime-linux-x64-1.22.0/include
   ${PROJECT_SOURCE_DIR}/../../include/
+  ${ROBOT_BRIDGE_DIR}/include
 )
 
 link_libraries(

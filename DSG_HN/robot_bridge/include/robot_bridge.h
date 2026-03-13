@@ -50,6 +50,7 @@ public:
     std::vector<Obstacle> getObstacles() const { return obstacles; }
     std::vector<float> GetCurrentCmd() const { return current_cmd; }
     void resetRobot();
+    void printState(const RobotState &s) const;
 
 protected:
     RobotBridge(std::string scene_file, float x_min, float x_max, float y_min, float y_max);

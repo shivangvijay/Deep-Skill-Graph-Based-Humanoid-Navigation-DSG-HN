@@ -38,6 +38,7 @@ public:
     bool render_m;
     void render();
     void reset(const std::array<float, 3> &pos, const std::array<float, 4> &quat);
+    bool inCollision();
     bool isWindowOpen() const;
 
 private:

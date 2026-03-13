@@ -20,6 +20,7 @@ public:
     void resetRobot(const std::array<float, 3> &pos, const std::array<float, 4> &quat) override;
     RobotState getRobotState() override;
     void update() override;
+    bool inCollision();
 
 private:
     std::shared_ptr<MuJoCoEngine> eng;
@@ -28,4 +29,11 @@ private:
     int num_motors;
     float sim_dt;
     bool render;
+    int imu_quat_adr;
+    int imu_gyro_adr;
+    int imu_accel_adr;
+    int frame_pos_adr;
+    int frame_vel_adr;
+
+    void initSensorAddresses();
 };

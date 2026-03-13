@@ -46,47 +46,17 @@ int main(int argc, char **argv)
             robot_bridge.resetRobot();
             robot_bridge.update();
         }
+        // if (step % 10)
+        // {
+        //     RobotState s = robot_bridge.getRobotState();
+        //     robot_bridge.printState(s);
+        // }
+        // if (robot_bridge.inCollision())
+        // {
+        //     std::cout << "In Collision" << std::endl;
+        // }
         robot_bridge.publishVelCommand(cmd);
         robot_bridge.update();
         step++;
     }
-    // int num_motors = eng->GetModel()->nu;
-    // auto sim_dt = eng->GetModel()->opt.timestep;
-    // int decimation = static_cast<int>(POLICY_STEP_DT / sim_dt);
-
-    // while (!render || eng->IsWindowOpen())
-    // {
-    //     env->step();
-    //     auto action = env->action_manager->processed_actions();
-
-    //     std::vector<float> target_q(num_motors, 0.0);
-    //     for (int i = 0; i < env->robot->data.joint_ids_map.size(); i++)
-    //     {
-    //         int motor_idx = env->robot->data.joint_ids_map[i];
-    //         target_q[motor_idx] = action[i];
-    //     }
-
-    //     for (int t = 0; t < decimation; t++)
-    //     {
-    //         auto d = eng->GetData();
-    //         std::vector<double> current_torques(num_motors, 0.0);
-
-    //         for (int i = 0; i < num_motors; i++)
-    //         {
-    //             auto kp = env->robot->data.joint_stiffness[i];
-    //             auto kd = env->robot->data.joint_damping[i];
-
-    //             double cur_q = d->sensordata[i];
-    //             double cur_dq = d->sensordata[i + num_motors];
-
-    //             current_torques[i] = kp * (target_q[i] - cur_q) + kd * (0.0 - cur_dq);
-    //         }
-
-    //         eng->SetControl(current_torques.data());
-    //         eng->Step(); // Advance physics by 0.002s
-    //     }
-
-    //     if (render)
-    //         eng->Render();
-    // }
 }
