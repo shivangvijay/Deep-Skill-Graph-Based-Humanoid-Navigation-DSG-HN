@@ -11,8 +11,8 @@ include_directories(
   /usr/local/include/ddscxx # dds
   /usr/local/include/iceoryx/v2.0.2 # dds
   include
-  #${PROJECT_SOURCE_DIR}/../../thirdparty/onnxruntime-linux-x64-1.22.0/include
-  ${PROJECT_SOURCE_DIR}/../include/
+  ${PROJECT_SOURCE_DIR}/../include
+  ${PROJECT_SOURCE_DIR}/../../robot_bridge/include
 )
 
 set(SCENE_XML_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../unitree_mujoco/unitree_robots/g1/ai_maker_space_scene.xml")
@@ -32,9 +32,10 @@ file(GLOB_RECURSE ADD_SRC_LIST
 
 add_executable(example
   example.cpp
-  robot_bridge.cpp
-  ${PROJECT_SOURCE_DIR}/../include/dds/vel_publisher.cpp
-  ${PROJECT_SOURCE_DIR}/../include/dds/vel_subscriber.cpp
-  ${PROJECT_SOURCE_DIR}/../include/dds/state_subscriber.cpp
-  ${PROJECT_SOURCE_DIR}/../include/dds/reset_publisher.cpp
+  ${PROJECT_SOURCE_DIR}/../../robot_bridge/robot_bridge.cpp
+  ${PROJECT_SOURCE_DIR}/../../robot_bridge/robot_bridge_dds.cpp
+  ${PROJECT_SOURCE_DIR}/../../robot_bridge/dds/vel_publisher.cpp
+  ${PROJECT_SOURCE_DIR}/../../robot_bridge/dds/vel_subscriber.cpp
+  ${PROJECT_SOURCE_DIR}/../../robot_bridge/dds/state_subscriber.cpp
+  ${PROJECT_SOURCE_DIR}/../../robot_bridge/dds/reset_publisher.cpp
 )

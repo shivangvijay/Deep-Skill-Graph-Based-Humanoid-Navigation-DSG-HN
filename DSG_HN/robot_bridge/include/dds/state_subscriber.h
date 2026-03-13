@@ -4,6 +4,7 @@
 #include <unitree/idl/go2/SportModeState_.hpp>
 #include <unitree/idl/hg/IMUState_.hpp>
 #include <vector>
+#include <robot_bridge.h>
 
 using namespace unitree::common;
 using namespace unitree::robot;
@@ -13,21 +14,6 @@ using namespace unitree::robot;
 
 #define SPORT_MODE_TOPIC "rt/sportmodestate" //high frequency
 #define SPORT_MODE_TOPIC_LF "rt/lf/odommodestate" //low frequency
-
-#define DOF 35 // note that the actual DOF is 29, but the msg has 35 motors, so just going to read all 35
-
-struct RobotState
-{
-    std::array<float, DOF> q;
-    std::array<float, DOF> dq;
-
-    std::array<float, 3> position;
-    std::array<float, 3> velocity;
-    std::array<float, 3> accel;
-
-    std::array<float, 4> orientation; // quaternion
-    std::array<float, 3> angular_velocity; // from the IMU
-};
 
 class StateSubscriber
 {

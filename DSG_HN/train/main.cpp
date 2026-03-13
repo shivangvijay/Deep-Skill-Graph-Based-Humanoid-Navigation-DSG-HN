@@ -18,7 +18,7 @@ namespace isaaclab
 {
     REGISTER_OBSERVATION(dsg_velocity_commands)
     {
-        std::vector<float> cmd = {0.0f, 0.0f, 0.0f};
+        std::vector<float> cmd = {1.0f, 0.0f, 0.0f};
         return cmd;
     }
 }

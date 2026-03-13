@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD 17)
 find_package(Boost REQUIRED COMPONENTS program_options)
 find_package(yaml-cpp REQUIRED)
 
+set(ROBOT_BRIDGE_DIR ${PROJECTS_SOURCE_DIR}/../../../robot_bridge)
+
 include_directories(
   /usr/include/eigen3
   /usr/local/include/ddscxx # dds
@@ -30,6 +32,6 @@ link_libraries(${PROJECT_NAME}_lib)
 
 add_executable(g1_ctrl 
   main.cpp
-  ${PROJECT_SOURCE_DIR}/../../include/dds/vel_subscriber.cpp
-  ${PROJECT_SOURCE_DIR}/../../include/dds/reset_subscriber.cpp
+  ${ROBOT_BRIDGE_DIR}/dds/vel_subscriber.cpp
+  ${ROBOT_BRIDGE_DIR}/dds/reset_subscriber.cpp
 )
