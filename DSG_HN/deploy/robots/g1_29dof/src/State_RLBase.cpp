@@ -41,7 +41,7 @@ namespace isaaclab
     // 4: looks like there are some existing publishers, need to just find topics and subscribe to get robot state (do this in higher level control block)
 
     // 5: to add reset logic, create new publisher that is subscribed to by something inside the sim loop, that can then trigger a reset of the sim
-    REGISTER_OBSERVATION(dds_commands)
+    REGISTER_OBSERVATION(dsg_velocity_commands)
     {
         static auto cfg = env->cfg["commands"]["base_velocity"]["ranges"];
 
@@ -64,6 +64,8 @@ State_RLBase::State_RLBase(int state_mode, std::string state_string)
     : FSMState(state_mode, state_string)
 {
     auto cfg = param::config["FSM"][state_string];
+    std::cout << cfg["policy_dir"] << std::endl;
+
     auto policy_dir = param::parser_policy_dir(cfg["policy_dir"].as<std::string>());
 
     env = std::make_unique<isaaclab::ManagerBasedRLEnv>(
