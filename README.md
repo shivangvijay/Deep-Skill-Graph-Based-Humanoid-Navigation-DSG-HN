@@ -91,16 +91,36 @@ cd DSG_HN/deploy/robots/g1_29dof/build
 ./g1_ctrl --network lo
 ```
 
-### 4. Joystick and keyboard setup
+### 4. Control setup
 
-Use the joystick and keyboard in this order:
+Two control modes are supported: Xbox joystick or keyboard.
+
+#### Option A: Keyboard (no joystick required)
+
+Make sure `deploy/robots/g1_29dof/config/policy/velocity/v0/params/deploy.yaml` has `keyboard_velocity_commands:` enabled (not `dds_commands:`).
+
+In the **g1_ctrl terminal**, use these keys in order:
+
+1. Press **`1`** → robot stands up (FixStand mode).
+2. Click the **MuJoCo window**, then press **`8`** → feet touch the ground.
+3. Back in the **g1_ctrl terminal**, press **`2`** → policy starts running (Velocity mode).
+4. Click the **MuJoCo window**, then press **`9`** → disable the elastic band.
+5. Back in the **g1_ctrl terminal**, use **`w/s/a/d/q/e`** to move the robot:
+   - `w` / `s` — forward / backward
+   - `a` / `d` — strafe left / right
+   - `q` / `e` — rotate left / right
+   - `0` — return to Passive mode
+
+#### Option B: Xbox joystick
+
+Plug in your Xbox controller before starting the simulator. Use the joystick in this order:
 
 1. Press **[L2 + Up]** to set the robot to stand up.
 2. Click the MuJoCo window, then press **8** to make the robot feet touch the ground.
 3. Press **[R1 + X]** to run the policy.
 4. Click the MuJoCo window, then press **9** to disable the elastic band.
 
-After that, you can use the Xbox controller to move the robot.
+After that, use the Xbox controller to move the robot.
 
 ### 5. Using Robot Bridge
 
