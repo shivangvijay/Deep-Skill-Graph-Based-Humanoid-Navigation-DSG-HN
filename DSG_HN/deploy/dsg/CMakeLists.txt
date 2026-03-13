@@ -42,3 +42,12 @@ add_executable(example
   ${PROJECT_SOURCE_DIR}/../include/dds/state_subscriber.cpp
   ${PROJECT_SOURCE_DIR}/../include/dds/reset_publisher.cpp
 )
+
+add_executable(collect_transitions
+  collect_transitions.cpp
+  robot_bridge.cpp
+  ${PROJECT_SOURCE_DIR}/../include/dds/vel_publisher.cpp
+  ${PROJECT_SOURCE_DIR}/../include/dds/vel_subscriber.cpp
+  ${PROJECT_SOURCE_DIR}/../include/dds/state_subscriber.cpp
+  ${PROJECT_SOURCE_DIR}/../include/dds/reset_publisher.cpp
+)
