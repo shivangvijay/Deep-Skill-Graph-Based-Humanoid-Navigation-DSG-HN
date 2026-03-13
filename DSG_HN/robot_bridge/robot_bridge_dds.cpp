@@ -12,6 +12,7 @@ RobotBridgeDDS::RobotBridgeDDS(std::string scene_file, float x_min, float x_max,
 
 void RobotBridgeDDS::publishVelCommand(const std::vector<float> &cmd)
 {
+    current_cmd = cmd;
     vel_publisher.publishVelCommand(cmd);
 }
 
@@ -20,17 +21,7 @@ void RobotBridgeDDS::update()
     // TODO
     // Need to make frequency match that of our trained policy, so we add a sleep here
     // to let some time pass. Right now set to 5Hz, but in the future need to make this updatable
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-}
-
-void RobotBridgeDDS::resetRobot()
-{
-    auto [pos, quat] = generateRandomPos();
-    while (distanceToNearestObstacle(pos, quat) < 0.5f)
-    {
-        std::tie(pos, quat) = generateRandomPos();
-    }
-    resetRobot(pos, quat);
+    std::this_thread::sleep_for(std::chrono::milliseconds(int(VELOCITY_POLICY_DT * 1000)));
 }
 
 void RobotBridgeDDS::resetRobot(const std::array<float, 3> &pos, const std::array<float, 4> &quat)

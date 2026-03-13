@@ -14,17 +14,13 @@ namespace unitree
         {
             _init_sensor_addresses();
 
-            mjModel *m = engine_->GetModel();
+            mjModel *m = engine_->getModel();
         }
 
         void update()
         {
-            mjModel *m = engine_->GetModel();
-            mjData *d = engine_->GetData();
-
-            // step the sim before before processing the new data. Note that when we go to do the training loop, will need
-            // to set the time and frequency of calls to mirror the Hz at which this policy is called, and at which we want to call the vel policy
-            // engine_->Step(); Probably best if this is in the main loop
+            mjModel *m = engine_->getModel();
+            mjData *d = engine_->getData();
 
             // keep the msg here so that I am doubly sure that I am copying things into the format that the observations expect
             ::unitree_hg::msg::dds_::LowState_ msg;
@@ -75,7 +71,7 @@ namespace unitree
 
         void _init_sensor_addresses()
         {
-            mjModel *m = engine_->GetModel();
+            mjModel *m = engine_->getModel();
             int q_id = mj_name2id(m, mjOBJ_SENSOR, "imu_quat");
             if (q_id >= 0)
                 imu_quat_adr_ = m->sensor_adr[q_id];
@@ -86,4 +82,4 @@ namespace unitree
         }
     };
 
-} // namespace unitree
+}

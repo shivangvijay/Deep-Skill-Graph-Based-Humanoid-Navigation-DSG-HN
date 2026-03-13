@@ -1,9 +1,10 @@
-#include "mujoco_engine.h"
+#include "mujoco_utils/mujoco_engine.h"
 #include <iostream>
+#define Z_START_HEIGHT 0.9
 
-MuJoCoEngine::MuJoCoEngine(bool render_) : render(render_) {}
+MuJoCoEngine::MuJoCoEngine(bool render_) : render_m(render_) {}
 
-void MuJoCoEngine::Initialize(const std::string &xml_path)
+void MuJoCoEngine::initialize(const std::string &xml_path)
 {
     char error[1000];
 
@@ -23,13 +24,13 @@ void MuJoCoEngine::Initialize(const std::string &xml_path)
 
     std::cout << "MuJoCo initialized with model: " << xml_path << std::endl;
 
-    if (render)
+    if (render_m)
     {
-        InitViz();
+        initViz();
     }
 }
 
-void MuJoCoEngine::InitViz()
+void MuJoCoEngine::initViz()
 {
     // Initialize GLFW
     if (!glfwInit())
@@ -47,7 +48,7 @@ void MuJoCoEngine::InitViz()
     cam.lookat[0] = 0.0;
     cam.lookat[1] = 0.0;
     cam.lookat[2] = 0.0;
-    
+
     mjv_defaultOption(&opt);
     mjv_defaultPerturb(&pert);
     mjv_defaultScene(&scn);
@@ -58,7 +59,7 @@ void MuJoCoEngine::InitViz()
     mjr_makeContext(m, &con, mjFONTSCALE_150);
 }
 
-void MuJoCoEngine::Render()
+void MuJoCoEngine::render()
 {
     if (!window)
         return;
@@ -74,12 +75,12 @@ void MuJoCoEngine::Render()
     glfwPollEvents();
 }
 
-bool MuJoCoEngine::IsWindowOpen() const
+bool MuJoCoEngine::isWindowOpen() const
 {
     return window && !glfwWindowShouldClose(window);
 }
 
-void MuJoCoEngine::Step()
+void MuJoCoEngine::step()
 {
     if (m && d)
     {
@@ -88,10 +89,24 @@ void MuJoCoEngine::Step()
 }
 
 // Gonna have to modify this, cannot set control directly based on action, since action gives joint pos
-void MuJoCoEngine::SetControl(const double *ctrl)
+void MuJoCoEngine::setControl(const double *ctrl)
 {
+    // TODO: Might want to add control noise
     if (d && m)
     {
         mju_copy(d->ctrl, ctrl, m->nu);
     }
+}
+
+void MuJoCoEngine::reset(const std::array<float, 3> &pos, const std::array<float, 4> &quat)
+{
+    mj_resetData(m, d);
+    d->qpos[0] = pos[0];
+    d->qpos[1] = pos[1];
+    d->qpos[2] = Z_START_HEIGHT;
+    d->qpos[3] = quat[0];
+    d->qpos[4] = quat[1];
+    d->qpos[5] = quat[2];
+    d->qpos[6] = quat[3];
+    mj_forward(m, d);
 }

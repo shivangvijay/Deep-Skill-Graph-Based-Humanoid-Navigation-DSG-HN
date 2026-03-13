@@ -4,6 +4,7 @@
 #include <iostream>
 #include <filesystem>
 #include <GLFW/glfw3.h>
+#include <array>
 
 class MuJoCoEngine
 {
@@ -23,28 +24,24 @@ public:
             mj_deleteModel(m);
     }
 
-    // 1. Initialize: Loads the XML and allocates MuJoCo structures
-    void Initialize(const std::string &xml_path);
+    void initialize(const std::string &xml_path);
 
-    // 2. Step: Advances the simulation by exactly one timestep (m->opt.timestep)
-    void Step();
+    void step();
 
-    // 3. Data Access: Returns pointers to the raw MuJoCo objects
-    mjModel *GetModel() const { return m; }
-    mjData *GetData() const { return d; }
+    mjModel *getModel() const { return m; }
+    mjData *getData() const { return d; }
 
-    // Helper to get the current simulation time
-    double GetTime() const { return d ? d->time : 0.0; }
+    double getTime() const { return d ? d->time : 0.0; }
 
-    // Helper to set control inputs (torques/targets)
-    void SetControl(const double *ctrl);
+    void setControl(const double *ctrl);
 
-    bool render;
-    void Render();
-    bool IsWindowOpen() const;
+    bool render_m;
+    void render();
+    void reset(const std::array<float, 3> &pos, const std::array<float, 4> &quat);
+    bool isWindowOpen() const;
 
 private:
-    void InitViz();
+    void initViz();
 
     mjModel *m = nullptr;
     mjData *d = nullptr;

@@ -15,7 +15,7 @@ public:
     virtual ~RobotBridgeDDS() = default;
 
     void publishVelCommand(const std::vector<float> &cmd) override;
-    void resetRobot() override;
+    using RobotBridge::resetRobot;
     void resetRobot(const std::array<float, 3> &pos, const std::array<float, 4> &quat) override;
     RobotState getRobotState() override;
     void update() override;

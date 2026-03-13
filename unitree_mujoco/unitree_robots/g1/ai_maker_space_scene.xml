@@ -2,6 +2,8 @@
 <mujoco model="g1_29dof scene">
   <include file="g1_29dof.xml"/>
 
+  <!-- NOTE: SEEMS TO WORK BETTER IF WE SIMULATE AT A FASTER FREQUENCY. SHOULD DISCUSS THIS AND OTHER CONTROL FREQUENCIES -->
+  <!-- <option timestep="0.001" iterations="50" solver="Newton" integrator="implicitfast"/> -->
   <statistic center="0 0 0.5" extent="2.0"/>
 
   <visual>

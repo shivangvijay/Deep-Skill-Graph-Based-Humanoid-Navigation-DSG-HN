@@ -92,3 +92,15 @@ std::pair<std::array<float, 3>, std::array<float, 4>> RobotBridge::generateRando
     float yaw = (static_cast<float>(rand()) / RAND_MAX) * 2 * M_PI;
     return {pos, {cosf(yaw / 2), 0, 0, sinf(yaw / 2)}};
 }
+
+void RobotBridge::resetRobot()
+{
+    auto [pos, quat] = generateRandomPos();
+    int attempts = 0;
+    while (distanceToNearestObstacle(pos, quat) < 0.5f)
+    {
+        std::tie(pos, quat) = generateRandomPos();
+        if (attempts++ > 100) throw std::runtime_error("Could Note Respawn Robot.");
+    }
+    resetRobot(pos, quat);
+}
