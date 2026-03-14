@@ -1,3 +1,4 @@
+#pragma once
 #include "robot_bridge.h"
 #include "mujoco_utils/mujoco_articulation.h"
 #include "mujoco_utils/mujoco_engine.h"

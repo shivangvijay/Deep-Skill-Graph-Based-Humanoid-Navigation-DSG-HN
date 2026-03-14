@@ -1,22 +1,31 @@
 cmake_minimum_required(VERSION 3.12)
 project(dsg_train)
 
+# cmake .. \ -DCMAKE_C_COMPILER=gcc-11 \ -DCMAKE_CXX_COMPILER=g++-11 \ -DCUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda-11.8 \ -DCMAKE_CUDA_HOST_COMPILER=/usr/bin/gcc-11
+
+# - include toolkit for cuda path
+# - additionally, if your gcc version is 12 by default and you are using cuda toolkit 11.8, need to use gcc 11
+
 set(CMAKE_CXX_STANDARD 17)
 
 find_package(Boost REQUIRED COMPONENTS program_options)
 find_package(yaml-cpp REQUIRED)
-#find_package(glfw REQUIRED)
 
 set(MUJOCO_DIR "${PROJECT_SOURCE_DIR}/../../unitree_mujoco/simulate/mujoco")
 set(POLICY_CONFIG_DIR "${PROJECT_SOURCE_DIR}/../deploy/robots/g1_29dof/config")
 set(SCENE_XML_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../unitree_mujoco/unitree_robots/g1")
+set(LIBTORCH_PATH "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/libtorch")
+
+list(APPEND CMAKE_PREFIX_PATH "${LIBTORCH_PATH}")
+
+find_package(Torch REQUIRED)
 
 
 include_directories(
   /usr/include/eigen3
   /usr/local/include/ddscxx # dds
   /usr/local/include/iceoryx/v2.0.2 # dds
-  #include
+  include
   ${PROJECT_SOURCE_DIR}/../deploy/thirdparty/onnxruntime-linux-x64-1.22.0/include
   ${PROJECT_SOURCE_DIR}/../deploy/include
   ${POLICY_CONFIG_DIR}
@@ -35,6 +44,7 @@ link_libraries(
   ${PROJECT_SOURCE_DIR}/../deploy/thirdparty/onnxruntime-linux-x64-1.22.0/lib/libonnxruntime.so.1.22.0
   ${MUJOCO_DIR}/lib/libmujoco.so
   glfw
+  ${TORCH_LIBRARIES}
 )
 
 file(GLOB_RECURSE ADD_SRC_LIST

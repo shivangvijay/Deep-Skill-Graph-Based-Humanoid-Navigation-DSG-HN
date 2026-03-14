@@ -10,7 +10,7 @@
 #include <sstream>
 #include <math.h>
 
-#define DOF 35 // note that the actual DOF is 29, but the msg has 35 motors, so just going to read all 35
+#define DOF 35                 // note that the actual DOF is 29, but the msg has 35 motors, so just going to read all 35
 #define VELOCITY_POLICY_DT 0.2 // 5 Hz, this we can change later on though
 
 struct RobotState
@@ -51,12 +51,12 @@ public:
     std::vector<float> GetCurrentCmd() const { return current_cmd; }
     void resetRobot();
     void printState(const RobotState &s) const;
+    std::pair<std::array<float, 3>, std::array<float, 4>> generateRandomPos() const;
 
 protected:
     RobotBridge(std::string scene_file, float x_min, float x_max, float y_min, float y_max);
 
     void readScene();
-    std::pair<std::array<float, 3>, std::array<float, 4>> generateRandomPos() const;
 
     std::string scene_file;
     std::vector<Obstacle> obstacles;

@@ -7,6 +7,8 @@
 #include "param.h"
 #include <algorithm>
 #include "robot_bridge_train.h"
+#include "environment.h"
+#include <torch/torch.h>
 
 #define SCENE_FILE "ai_maker_space_scene.xml"
 #define POLICY_DIR "config/policy/velocity"
@@ -19,11 +21,15 @@
 
 std::unique_ptr<isaaclab::ManagerBasedRLEnv> env;
 
+/*
+TODO: TONIGHT OR TOMORROW MORNING: WRITE KINDA GYM WRAPPER AROUND THIS.
+THEN, FIND EXISTING TD3 IMPLEMENTATION https://github.com/hrshl212/TD3-libtorch/blob/main/agent.cpp LIKE THIS, AND MAKE LOOP IN LIBTORCH
+*/
 
 int main(int argc, char **argv)
 {
     auto vm = param::helper(argc, argv);
-    bool render = true;
+    bool render = false;
     std::string rel_path = param::config["FSM"]["Velocity"]["policy_dir"].as<std::string>();
     auto policy_dir = param::parser_policy_dir(rel_path);
     auto eng = std::make_shared<MuJoCoEngine>(render);
@@ -34,29 +40,31 @@ int main(int argc, char **argv)
         std::make_shared<unitree::MuJoCoArticulation>(eng));
     env->alg = std::make_unique<isaaclab::OrtRunner>(policy_dir / "exported" / "policy.onnx");
 
-    RobotBridgeTrain robot_bridge(SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, eng, std::move(env), true);
+    std::shared_ptr<RobotBridgeTrain> robot_bridge = std::make_shared<RobotBridgeTrain>(SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, eng, std::move(env), render);
 
-    std::vector<float> cmd = {0.0, 1.0, 0.0};
-    int step = 0;
+    TrainEnvironment train_env(robot_bridge);
+
+    torch::Tensor action = torch::zeros({3});
+    train_env.reset();
+    int num_frames = 0;
+    // get start time
+
+    auto start_time = std::chrono::high_resolution_clock::now();
 
     while (true)
     {
-        if (step % 100 == 0) 
+        auto [state, reward, terminated] = train_env.step(action);
+        if (terminated)
         {
-            robot_bridge.resetRobot();
-            robot_bridge.update();
+            train_env.reset();
         }
-        // if (step % 10)
-        // {
-        //     RobotState s = robot_bridge.getRobotState();
-        //     robot_bridge.printState(s);
-        // }
-        // if (robot_bridge.inCollision())
-        // {
-        //     std::cout << "In Collision" << std::endl;
-        // }
-        robot_bridge.publishVelCommand(cmd);
-        robot_bridge.update();
-        step++;
+        num_frames++;
+        auto current_time = std::chrono::high_resolution_clock::now();
+        if (std::chrono::duration_cast<std::chrono::seconds>(current_time - start_time).count() >= 10)
+        {
+            std::cout << "FPS: " << num_frames / 10.0 << std::endl;
+            num_frames = 0;
+            start_time = current_time;
+        }
     }
 }
