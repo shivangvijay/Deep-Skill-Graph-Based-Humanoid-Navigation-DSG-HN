@@ -51,8 +51,17 @@ file(GLOB_RECURSE ADD_SRC_LIST
   ${PROJECT_SOURCE_DIR}/src/*.cpp
 )
 
-add_executable(example 
-  example.cpp
+add_executable(train 
+  train.cpp
+  agent.cpp
+  ${PROJECT_SOURCE_DIR}/../robot_bridge/mujoco_utils/mujoco_engine.cpp
+  ${PROJECT_SOURCE_DIR}/../robot_bridge/robot_bridge.cpp
+  ${PROJECT_SOURCE_DIR}/../robot_bridge/robot_bridge_train.cpp
+)
+
+add_executable(test 
+  test.cpp
+  agent.cpp
   ${PROJECT_SOURCE_DIR}/../robot_bridge/mujoco_utils/mujoco_engine.cpp
   ${PROJECT_SOURCE_DIR}/../robot_bridge/robot_bridge.cpp
   ${PROJECT_SOURCE_DIR}/../robot_bridge/robot_bridge_train.cpp

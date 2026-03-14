@@ -34,11 +34,16 @@ void RobotBridgeTrain::update()
         int low_level_decimation = static_cast<int>(LOCMOTION_POLICY_DT / sim_dt);
         env->step();
         auto action = env->action_manager->processed_actions();
+        // std::cout << "Processed action: ";
+        // for (float a : action)        {
+        //     std::cout << a << " ";
+        // }        std::cout << std::endl;
+
         std::vector<float> target_q(num_motors, 0.0);
         for (int i = 0; i < env->robot->data.joint_ids_map.size(); i++)
         {
             int motor_idx = env->robot->data.joint_ids_map[i];
-            target_q[motor_idx] = action[i];
+            target_q[motor_idx] = std::clamp(action[i], -1.0f, 1.0f);
         }
 
         for (int t = 0; t < low_level_decimation; t++)
@@ -81,6 +86,12 @@ RobotState RobotBridgeTrain::getRobotState()
     {
         s.q[i] = d->sensordata[i];
         s.dq[i] = d->sensordata[i + num_motor];
+    }
+
+    for (int i = 0; i < DOF - num_motor; i++)
+    {
+        s.q[i + num_motor] = 0.0;
+        s.dq[i + num_motor] = 0.0;
     }
 
     // kinda odd, but to get imu data, need to use secondary imu, which is the imu state of the torso

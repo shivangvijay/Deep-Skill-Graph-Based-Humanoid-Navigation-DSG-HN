@@ -2,6 +2,7 @@
 #include "mujoco_engine.h"       // The class we just wrote
 #include "isaaclab/assets/articulation/articulation.h"
 #include "unitree/idl/hg/LowState_.hpp"
+#include "robot_bridge.h"
 
 namespace unitree
 {
@@ -30,6 +31,12 @@ namespace unitree
             {
                 msg.motor_state()[i].q() = d->sensordata[i];
                 msg.motor_state()[i].dq() = d->sensordata[i + num_motor];
+            }
+
+            for (int i = 0; i < DOF - num_motor; i++)
+            {
+                msg.motor_state()[i + num_motor].q() = 0.0;
+                msg.motor_state()[i + num_motor].dq() = 0.0;
             }
 
             if (imu_quat_adr_ >= 0)

@@ -6,6 +6,8 @@
 #include <GLFW/glfw3.h>
 #include <array>
 
+void silent_warning_handler(const char *msg);
+
 class MuJoCoEngine
 {
 public:

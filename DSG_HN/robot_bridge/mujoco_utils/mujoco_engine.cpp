@@ -2,6 +2,11 @@
 #include <iostream>
 #define Z_START_HEIGHT 0.9
 
+void silent_warning_handler(const char *msg)
+{
+    // Do nothing, effectively silencing warnings
+}
+
 MuJoCoEngine::MuJoCoEngine(bool render_) : render_m(render_) {}
 
 void MuJoCoEngine::initialize(const std::string &xml_path)
@@ -28,6 +33,8 @@ void MuJoCoEngine::initialize(const std::string &xml_path)
     {
         initViz();
     }
+
+    mju_user_warning = silent_warning_handler;
 }
 
 void MuJoCoEngine::initViz()
@@ -44,7 +51,7 @@ void MuJoCoEngine::initViz()
     mjv_defaultCamera(&cam);
     cam.elevation = -90.0;
     cam.azimuth = 90.0;
-    cam.distance = 10.0;
+    cam.distance = 20.0;
     cam.lookat[0] = 0.0;
     cam.lookat[1] = 0.0;
     cam.lookat[2] = 0.0;
@@ -126,6 +133,7 @@ bool MuJoCoEngine::inCollision()
         std::string name1 = mj_id2name(m, mjOBJ_GEOM, geom1) ? mj_id2name(m, mjOBJ_GEOM, geom1) : "";
         std::string name2 = mj_id2name(m, mjOBJ_GEOM, geom2) ? mj_id2name(m, mjOBJ_GEOM, geom2) : "";
 
+        // want to only ignore collisions with the floor/ground on the
         if (name1 != "floor" && name1 != "ground" && 
             name2 != "floor" && name2 != "ground") 
         {
