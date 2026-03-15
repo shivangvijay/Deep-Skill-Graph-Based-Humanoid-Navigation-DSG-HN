@@ -3,6 +3,7 @@
 #include "isaaclab/envs/mdp/observations/observations.h"
 #include "isaaclab/envs/mdp/actions/joint_actions.h"
 #include "dds/vel_subscriber.h"
+#include "dds/vel_publisher.h"
 #include <unordered_map>
 
 namespace isaaclab
@@ -27,6 +28,13 @@ namespace isaaclab
             // TODO: smooth and limit the velocity commands
             cmd = key_commands[key];
         }
+
+        // Mirror command to DDS so external processes (e.g. collect_transitions) can observe it
+        static VelPublisher kb_vel_pub = []() {
+            VelPublisher p; p.Init(); return p;
+        }();
+        kb_vel_pub.publishVelCommand(cmd);
+
         // std::cout << cmd[0] << " " << cmd[1] << " " << cmd[2] << std::endl;
         return cmd;
     }

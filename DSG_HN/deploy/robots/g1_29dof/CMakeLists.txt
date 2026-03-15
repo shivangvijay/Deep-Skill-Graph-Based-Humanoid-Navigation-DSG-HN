@@ -10,6 +10,8 @@ set(ROBOT_BRIDGE_DIR ${PROJECT_SOURCE_DIR}/../../../robot_bridge)
 
 include_directories(
   /usr/include/eigen3
+  /opt/unitree_robotics/include
+  /opt/unitree_robotics/include/ddscxx # dds
   /usr/local/include/ddscxx # dds
   /usr/local/include/iceoryx/v2.0.2 # dds
   include
@@ -17,6 +19,8 @@ include_directories(
   ${PROJECT_SOURCE_DIR}/../../include/
   ${ROBOT_BRIDGE_DIR}/include
 )
+
+link_directories(/opt/unitree_robotics/lib)
 
 link_libraries(
   unitree_sdk2 ddsc ddscxx rt pthread # dds
@@ -31,8 +35,8 @@ file(GLOB_RECURSE ADD_SRC_LIST
 add_library(${PROJECT_NAME}_lib ${ADD_SRC_LIST})
 link_libraries(${PROJECT_NAME}_lib)
 
-add_executable(g1_ctrl 
+add_executable(g1_ctrl
   main.cpp
-  ${ROBOT_BRIDGE_DIR}/dds/vel_subscriber.cpp
-  ${ROBOT_BRIDGE_DIR}/dds/reset_subscriber.cpp
+  ${PROJECT_SOURCE_DIR}/../../include/dds/vel_subscriber.cpp
+  ${PROJECT_SOURCE_DIR}/../../include/dds/reset_subscriber.cpp
 )
