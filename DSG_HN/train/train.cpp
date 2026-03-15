@@ -28,23 +28,16 @@
 #define ACTOR_UPDATE_FREQ 4
 #define CRITIC_LAYER_SIZES {128, 256, 128}
 #define ACTOR_LAYER_SIZES {64, 128, 64}
+#define RENDER false
 
 int main(int argc, char **argv)
 {
     auto vm = param::helper(argc, argv);
-    bool render = false;
+    bool render = RENDER;
     std::string rel_path = param::config["FSM"]["Velocity"]["policy_dir"].as<std::string>();
     auto policy_dir = param::parser_policy_dir(rel_path);
-    auto eng = std::make_shared<MuJoCoEngine>(render);
-    eng->initialize(SCENE_FILE);
-    std::unique_ptr<isaaclab::ManagerBasedRLEnv> env;
 
-    env = std::make_unique<isaaclab::ManagerBasedRLEnv>(
-        YAML::LoadFile(policy_dir / "params" / "deploy.yaml"),
-        std::make_shared<unitree::MuJoCoArticulation>(eng));
-    env->alg = std::make_unique<isaaclab::OrtRunner>(policy_dir / "exported" / "policy.onnx");
-
-    std::shared_ptr<RobotBridgeTrain> robot_bridge = std::make_shared<RobotBridgeTrain>(SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, eng, std::move(env), render);
+    std::shared_ptr<RobotBridgeTrain> robot_bridge = std::make_shared<RobotBridgeTrain>(SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, render); //eng, std::move(env), render);
     std::shared_ptr<TrainEnvironment> train_env = std::make_shared<TrainEnvironment>(robot_bridge, 1000);
 
     torch::Device device(torch::kCPU);
@@ -66,21 +59,6 @@ int main(int argc, char **argv)
 
     std::cout << "Starting training for " << num_epochs << " epochs, " << num_steps << " steps per epoch." << std::endl;
     auto state = train_env->reset();
-
-    // while (true)
-    // {
-    //     auto [state, reward, done] = train_env->step(torch::zeros({3}));
-    // }
-
-    // for (int i = 0; i < 100; i++)
-    // {
-    //     std::cout << "\rStep: " << i + 1 << "/100" << std::flush;
-    //     auto [next_state, reward, done] = agent.act(train_env, state);
-    //     if (done.data_ptr<float>()[0] > 0.5)
-    //         state = train_env->reset(); // Just testing the environment step function with zero actions for now
-    //     else
-    //         state = next_state;
-    // }
 
     float best_reward = -std::numeric_limits<float>::infinity();
 

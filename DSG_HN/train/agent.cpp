@@ -35,8 +35,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> TD3Agent::act(std::share
     }
     actor_local->eval();
     torch::NoGradGuard no_grad;
-    torch::Tensor augmented_state = torch::cat({state, last_action}, -1);
-    auto action = actor_local->forward(augmented_state).to(torch::kCPU);
+    auto action = actor_local->forward(state).to(torch::kCPU);
     if (!eval)
     {
         auto noise = (torch::randn_like(action) * 0.1).clamp(-0.2, 0.2); // Add some noise for exploration. Need to respect action limits
@@ -45,12 +44,10 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> TD3Agent::act(std::share
     torch::Tensor scaled_action = action * action_limits; // Scale action to environment limits
 
     last_action = action.clone().squeeze(0); // Store the action for the next step. Remove batch dimension if it exists
-    // std::cout << "Action taken: " << scaled_action.data_ptr<float>()[0] << " " << scaled_action.data_ptr<float>()[1] << " " << scaled_action.data_ptr<float>()[2] << std::endl;
 
-    // scaled_action = torch::zeros_like(scaled_action).to(torch::kCPU); // --- IGNORE --- Remove this line to enable actual actions, currently just testing with zero actions
     auto [next_state, reward, done] = env->step(scaled_action);
     total_reward += reward.item<double>();
-    replay_buffer.addExperienceState(augmented_state, action, reward, next_state, done);
+    replay_buffer.addExperienceState(state, action, reward, next_state, done);
     actor_local->train();
 
     if (done.data_ptr<float>()[0] > 0.5) // episode ended
@@ -71,15 +68,14 @@ void TD3Agent::learn(std::shared_ptr<TrainEnvironment> env)
     auto actions = std::get<1>(experiences).to(actor_local->device);
     auto rewards = std::get<2>(experiences).to(actor_local->device);
     auto next_states = std::get<3>(experiences).to(actor_local->device);
-    auto next_states_augmented = torch::cat({next_states, actions}, -1); // Augment next states with last actions for critic input
     auto dones = std::get<4>(experiences).to(actor_local->device);
 
-    auto next_actions = actor_target->forward(next_states_augmented);
+    auto next_actions = actor_target->forward(next_states);
     auto noise = (torch::randn_like(next_actions) * 0.1).clamp(-0.2, 0.2);
     next_actions = (next_actions + noise).clamp(-1.0, 1.0);
 
-    auto target_q1 = critic_target_1->forward(next_states_augmented, next_actions);
-    auto target_q2 = critic_target_2->forward(next_states_augmented, next_actions);
+    auto target_q1 = critic_target_1->forward(next_states, next_actions);
+    auto target_q2 = critic_target_2->forward(next_states, next_actions);
     auto target_q = torch::min(target_q1, target_q2);
     auto expected_q = rewards + (gamma * target_q * (1 - dones));
 
@@ -98,12 +94,9 @@ void TD3Agent::learn(std::shared_ptr<TrainEnvironment> env)
     critic_optimizer_1.step();
     critic_optimizer_2.step();
 
-    // std::cout << "Critic loss: " << critic_loss.item<double>() << std::endl;
-
     total_critic_loss += critic_loss.item<double>();
     if (learn_step % actor_update_freq == 0)
     {
-        // std::cout << "Updating actor..." << std::endl;
         auto actor_loss = -critic_local_1->forward(states, actor_local->forward(states)).mean();
 
         actor_optimizer.zero_grad();

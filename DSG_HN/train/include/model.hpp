@@ -30,7 +30,7 @@ struct CriticImpl : nn::Module
         hidden_layers = register_module("layers", nn::Sequential());
         for (int i = 0; i < layer_sizes.size(); i++)
         {
-            int input_size = (i == 0) ? (state_size + 2 * action_size) : layer_sizes[i - 1]; // 2 * action size since state includes last action
+            int input_size = (i == 0) ? (state_size + action_size) : layer_sizes[i - 1];
             int output_size = layer_sizes[i];
             hidden_layers->push_back(nn::Linear(input_size, output_size));
             hidden_layers->push_back(nn::ReLU());
@@ -67,7 +67,7 @@ struct ActorImpl : nn::Module
         hidden_layers = register_module("layers", nn::Sequential());
         for (int i = 0; i < layer_sizes.size(); i++)
         {
-            int input_size = (i == 0) ? state_size + action_size : layer_sizes[i - 1]; // include last action
+            int input_size = (i == 0) ? state_size : layer_sizes[i - 1];
             int output_size = layer_sizes[i];
             hidden_layers->push_back(nn::Linear(input_size, output_size));
             hidden_layers->push_back(nn::ReLU());

@@ -12,10 +12,18 @@ namespace isaaclab
     }
 }
 
-RobotBridgeTrain::RobotBridgeTrain(std::string scene_file, float x_min, float x_max, float y_min, float y_max, std::shared_ptr<MuJoCoEngine> eng_, std::unique_ptr<isaaclab::ManagerBasedRLEnv> env_, bool render_)
-    : RobotBridge(scene_file, x_min, x_max, y_min, y_max), eng(eng_), env(std::move(env_)), render(render_)
+RobotBridgeTrain::RobotBridgeTrain(std::string scene_file, float x_min, float x_max, float y_min, float y_max, std::filesystem::path policy_dir, bool render_) //std::shared_ptr<MuJoCoEngine> eng_, std::unique_ptr<isaaclab::ManagerBasedRLEnv> env_, bool render_)
+    : RobotBridge(scene_file, x_min, x_max, y_min, y_max), render(render_)
 {
     ptr = this;
+    eng = std::make_shared<MuJoCoEngine>(render);
+    eng->initialize(scene_file);
+
+    env = std::make_unique<isaaclab::ManagerBasedRLEnv>(
+        YAML::LoadFile(policy_dir / "params" / "deploy.yaml"),
+        std::make_shared<unitree::MuJoCoArticulation>(eng));
+    env->alg = std::make_unique<isaaclab::OrtRunner>(policy_dir / "exported" / "policy.onnx");
+
     num_motors = eng->getModel()->nu;
     sim_dt = eng->getModel()->opt.timestep;
     initSensorAddresses();
