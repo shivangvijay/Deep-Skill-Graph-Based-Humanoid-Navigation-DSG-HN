@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.12)
-project(dsg)
+project(dsg_deploy)
 
 set(CMAKE_CXX_STANDARD 17)
 
@@ -8,8 +8,6 @@ find_package(yaml-cpp REQUIRED)
 
 include_directories(
   #/usr/include/eigen3
-  /opt/unitree_robotics/include
-  /opt/unitree_robotics/include/ddscxx # dds
   /usr/local/include/ddscxx # dds
   /usr/local/include/iceoryx/v2.0.2 # dds
   include
@@ -20,10 +18,8 @@ include_directories(
 set(SCENE_XML_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../unitree_mujoco/unitree_robots/g1/ai_maker_space_scene.xml")
 file(COPY ${SCENE_XML_PATH} DESTINATION ${CMAKE_CURRENT_BINARY_DIR}) # file is for runtime, whereas include_directories is for compile time, where to find headers
 
-link_directories(/opt/unitree_robotics/lib)
-
 link_libraries(
-  unitree_sdk2 ddsc ddscxx rt pthread
+  unitree_sdk2 ddsc ddscxx rt pthread 
   libboost_program_options.a libyaml-cpp.a fmt
 )
 
@@ -36,18 +32,20 @@ file(GLOB_RECURSE ADD_SRC_LIST
 
 add_executable(example
   example.cpp
-  robot_bridge.cpp
-  ${PROJECT_SOURCE_DIR}/../include/dds/vel_publisher.cpp
-  ${PROJECT_SOURCE_DIR}/../include/dds/vel_subscriber.cpp
-  ${PROJECT_SOURCE_DIR}/../include/dds/state_subscriber.cpp
-  ${PROJECT_SOURCE_DIR}/../include/dds/reset_publisher.cpp
+  ${PROJECT_SOURCE_DIR}/../../robot_bridge/robot_bridge.cpp
+  ${PROJECT_SOURCE_DIR}/../../robot_bridge/robot_bridge_dds.cpp
+  ${PROJECT_SOURCE_DIR}/../../robot_bridge/dds/vel_publisher.cpp
+  ${PROJECT_SOURCE_DIR}/../../robot_bridge/dds/vel_subscriber.cpp
+  ${PROJECT_SOURCE_DIR}/../../robot_bridge/dds/state_subscriber.cpp
+  ${PROJECT_SOURCE_DIR}/../../robot_bridge/dds/reset_publisher.cpp
 )
 
 add_executable(collect_transitions
   collect_transitions.cpp
-  robot_bridge.cpp
-  ${PROJECT_SOURCE_DIR}/../include/dds/vel_publisher.cpp
-  ${PROJECT_SOURCE_DIR}/../include/dds/vel_subscriber.cpp
-  ${PROJECT_SOURCE_DIR}/../include/dds/state_subscriber.cpp
-  ${PROJECT_SOURCE_DIR}/../include/dds/reset_publisher.cpp
+  ${PROJECT_SOURCE_DIR}/../../robot_bridge/robot_bridge.cpp
+  ${PROJECT_SOURCE_DIR}/../../robot_bridge/robot_bridge_dds.cpp
+  ${PROJECT_SOURCE_DIR}/../../robot_bridge/dds/vel_publisher.cpp
+  ${PROJECT_SOURCE_DIR}/../../robot_bridge/dds/vel_subscriber.cpp
+  ${PROJECT_SOURCE_DIR}/../../robot_bridge/dds/state_subscriber.cpp
+  ${PROJECT_SOURCE_DIR}/../../robot_bridge/dds/reset_publisher.cpp
 )

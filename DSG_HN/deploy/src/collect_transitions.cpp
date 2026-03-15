@@ -12,7 +12,7 @@
 #include <sys/select.h>
 #include <boost/program_options.hpp>
 #include "unitree/robot/channel/channel_factory.hpp"
-#include "robot_bridge.h"
+#include "robot_bridge_dds.h"
 #include "dds/vel_subscriber.h"
 
 // ---- Configurable defaults (also overridable via --dt and --output CLI flags) ----
@@ -92,7 +92,7 @@ int main(int argc, char** argv)
     std::cout << "Initializing DDS on network: " << network << std::endl;
     unitree::robot::ChannelFactory::Instance()->Init(0, network);
 
-    RobotBridge robot_bridge(network, SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX);
+    RobotBridgeDDS robot_bridge(SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, network);
 
     VelSubscriber vel_sub;
     vel_sub.Init();
