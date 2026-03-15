@@ -124,19 +124,19 @@ private:
         bool terminated = false;
         if (collision)
         {
-            reward -= 1;
+            reward -= 10;
             terminated = true;
         }
-        else if (distance_to_goal < 0.25) // ignoring velocity and orientation for now
+        else if (distance_to_goal < 0.5) // ignoring velocity and orientation for now
         {
-            reward += 1;
+            reward += 50;
             terminated = true;
         }
         else
         {
-            reward -= distance_to_goal / 10.0;
+            reward -= distance_to_goal / 100.0;
         }
-        if (current_step >= max_steps)
+        if (current_step >= max_steps || distance_to_goal > 20)
         {
             terminated = true;
         }

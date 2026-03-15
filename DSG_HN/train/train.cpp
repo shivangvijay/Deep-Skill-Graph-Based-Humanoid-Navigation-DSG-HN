@@ -24,9 +24,9 @@
 #define ACTOR_LR 1e-4
 #define TAU 0.005
 #define GAMMA 0.99
-#define BATCH_SIZE 16
+#define BATCH_SIZE 256
 #define ACTOR_UPDATE_FREQ 4
-#define CRITIC_LAYER_SIZES {64, 128, 64}
+#define CRITIC_LAYER_SIZES {128, 256, 128}
 #define ACTOR_LAYER_SIZES {64, 128, 64}
 
 int main(int argc, char **argv)
@@ -45,7 +45,7 @@ int main(int argc, char **argv)
     env->alg = std::make_unique<isaaclab::OrtRunner>(policy_dir / "exported" / "policy.onnx");
 
     std::shared_ptr<RobotBridgeTrain> robot_bridge = std::make_shared<RobotBridgeTrain>(SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, eng, std::move(env), render);
-    std::shared_ptr<TrainEnvironment> train_env = std::make_shared<TrainEnvironment>(robot_bridge, 2000);
+    std::shared_ptr<TrainEnvironment> train_env = std::make_shared<TrainEnvironment>(robot_bridge, 1000);
 
     torch::Device device(torch::kCPU);
     if (torch::cuda::is_available())
@@ -88,6 +88,8 @@ int main(int argc, char **argv)
     {
         torch::Tensor state = train_env->reset();
         std::cout << "Epoch " << epoch + 1 << "/" << num_epochs << " " << std::endl;
+        int num_success = 0;
+        int num_episodes = 0;
 
         for (int step = 0; step < num_steps; step++)
         {
@@ -96,6 +98,9 @@ int main(int argc, char **argv)
             agent.learn(train_env);
             if (done.data_ptr<float>()[0] > 0.5)
             {
+                num_episodes++;
+                if (reward.data_ptr<float>()[0] > 0.0)
+                    num_success++;
                 state = train_env->reset();
             }
             else
@@ -109,6 +114,7 @@ int main(int argc, char **argv)
         std::cout << "Average Reward: " << agent.total_reward / (num_steps) << std::endl;
         std::cout << "Average Actor Loss: " << agent.total_actor_loss / (num_steps / ACTOR_UPDATE_FREQ) << std::endl;
         std::cout << "Average Critic Loss: " << agent.total_critic_loss / (num_steps) << std::endl;
+        std::cout << "Success Rate: " << (float)num_success / num_episodes * 100.0f << "%" << std::endl;
 
         if (agent.total_reward > best_reward)
         {

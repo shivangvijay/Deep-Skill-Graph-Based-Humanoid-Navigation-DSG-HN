@@ -12,28 +12,6 @@
 using namespace torch;
 using Experience = std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>; // this is how we are going to save expirience in buffer
 
-/*learning hyper-params*/
-const int64_t actor_state = 4; // input size of actor
-const int64_t actor_layer_1 = 16;
-const int64_t actor_layer_2 = 32;
-// const int64_t actor_layer_3 = 64;
-// const int64_t actor_layer_4 = 32;
-const int64_t actor_out = 2; // output size of actor
-
-// input to critic = actor_state , actor_out as critic is for action-value
-const int64_t critic_layer_1 = 16;
-const int64_t critic_layer_2 = 32;
-const int64_t critic_layer_3 = actor_out;
-const int64_t critic_out = 1; // output_size of critic
-// note: architecture and activation f's of networks can be changed in "model.hpp"
-
-const float actor_lr = 1e-3;  // learning rate for actor = 0.0001
-const float critic_lr = 1e-3; // learning rate of critic= 0.001
-const float tau = 0.005;      // rate at which target nets are updated from local nets
-const int batch_size = 16;
-const double action_scale = 1.0; // we are going to scale the output of action by this quantity
-const float gamma2 = 0.99;       // forget/discout rate
-
 inline void xavier_init_weights(torch::nn::Module &module)
 {
     torch::NoGradGuard noGrad;
@@ -173,7 +151,7 @@ public:
         return circular_buffer.size(); // size of the buffer
     }
 
-    boost::circular_buffer<Experience> circular_buffer{10000}; // max size of buffer = 10000
+    boost::circular_buffer<Experience> circular_buffer{100000}; // max size of buffer = 10000
 }; // refer to https://github.com/EmmiOcean/DDPG_LibTorch/blob/master/replayBuffer.h
 
 class OUNoise

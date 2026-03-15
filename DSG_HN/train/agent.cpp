@@ -39,7 +39,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> TD3Agent::act(std::share
     auto action = actor_local->forward(augmented_state).to(torch::kCPU);
     if (!eval)
     {
-        auto noise = torch::randn_like(action) * 0.05; // Add some noise for exploration. Need to respect action limits
+        auto noise = (torch::randn_like(action) * 0.1).clamp(-0.2, 0.2); // Add some noise for exploration. Need to respect action limits
         action = torch::clamp(action + noise, -1.0, 1.0);
     }
     torch::Tensor scaled_action = action * action_limits; // Scale action to environment limits
@@ -75,7 +75,7 @@ void TD3Agent::learn(std::shared_ptr<TrainEnvironment> env)
     auto dones = std::get<4>(experiences).to(actor_local->device);
 
     auto next_actions = actor_target->forward(next_states_augmented);
-    auto noise = torch::randn_like(next_actions) * 0.2;
+    auto noise = (torch::randn_like(next_actions) * 0.1).clamp(-0.2, 0.2);
     next_actions = (next_actions + noise).clamp(-1.0, 1.0);
 
     auto target_q1 = critic_target_1->forward(next_states_augmented, next_actions);
