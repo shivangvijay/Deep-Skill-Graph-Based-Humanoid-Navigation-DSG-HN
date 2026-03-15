@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD 17)
 find_package(Boost REQUIRED COMPONENTS program_options)
 find_package(yaml-cpp REQUIRED)
 
+set(ROBOT_BRIDGE_DIR ${PROJECT_SOURCE_DIR}/../../../robot_bridge)
+
 include_directories(
   /usr/include/eigen3
   /opt/unitree_robotics/include
@@ -15,6 +17,7 @@ include_directories(
   include
   ${PROJECT_SOURCE_DIR}/../../thirdparty/onnxruntime-linux-x64-1.22.0/include
   ${PROJECT_SOURCE_DIR}/../../include/
+  ${ROBOT_BRIDGE_DIR}/include
 )
 
 link_directories(/opt/unitree_robotics/lib)
@@ -35,6 +38,5 @@ link_libraries(${PROJECT_NAME}_lib)
 add_executable(g1_ctrl
   main.cpp
   ${PROJECT_SOURCE_DIR}/../../include/dds/vel_subscriber.cpp
-  ${PROJECT_SOURCE_DIR}/../../include/dds/vel_publisher.cpp
   ${PROJECT_SOURCE_DIR}/../../include/dds/reset_subscriber.cpp
 )

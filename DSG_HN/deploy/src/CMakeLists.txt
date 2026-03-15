@@ -13,8 +13,8 @@ include_directories(
   /usr/local/include/ddscxx # dds
   /usr/local/include/iceoryx/v2.0.2 # dds
   include
-  #${PROJECT_SOURCE_DIR}/../../thirdparty/onnxruntime-linux-x64-1.22.0/include
-  ${PROJECT_SOURCE_DIR}/../include/
+  ${PROJECT_SOURCE_DIR}/../include
+  ${PROJECT_SOURCE_DIR}/../../robot_bridge/include
 )
 
 set(SCENE_XML_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../unitree_mujoco/unitree_robots/g1/ai_maker_space_scene.xml")
