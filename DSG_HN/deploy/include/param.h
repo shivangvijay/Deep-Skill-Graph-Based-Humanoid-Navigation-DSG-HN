@@ -15,6 +15,9 @@
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <memory>
 #include <iomanip>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
 /* ---------- logger ---------- */
 namespace spdlog
@@ -45,15 +48,29 @@ inline std::filesystem::path config_dir;
 inline YAML::Node config;
 
 inline std::filesystem::path get_bin_path() {
+#ifdef __APPLE__
+    uint32_t bufsize = 1024;
+    std::vector<char> path(bufsize);
+    if (_NSGetExecutablePath(&path[0], &bufsize) == 0) {
+        return std::filesystem::canonical(&path[0]);
+    } else {
+        path.resize(bufsize);
+        if (_NSGetExecutablePath(&path[0], &bufsize) == 0)
+            return std::filesystem::canonical(&path[0]);
+    }
+    spdlog::error("Failed to get executable path.");
+    exit(1);
+#else
     std::vector<char> path(1024);
     ssize_t len = readlink("/proc/self/exe", &path[0], path.size());
     if (len != -1) {
-        path[len] = '\0';  // Null-terminate the result
+        path[len] = '\0';
         return std::filesystem::path(&path[0]);
     } else {
         spdlog::error("Failed to get executable path.");
         exit(1);
     }
+#endif
 }
 
 /* ---------- config.yaml ---------- */
