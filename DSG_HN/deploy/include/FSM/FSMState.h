@@ -5,6 +5,8 @@
 #include "FSM/BaseState.h"
 #include "isaaclab/devices/keyboard/keyboard.h"
 #include "unitree_joystick_dsl.hpp"
+#include "dds/vel_subscriber.h"
+#include "dds/reset_subscriber.h"
 
 class FSMState : public BaseState
 {
@@ -44,6 +46,31 @@ public:
             }
         }
 
+        auto kb_transitions = param::config["FSM"][state_string]["keyboard_transitions"];
+        if(kb_transitions)
+        {
+            auto kb_map = kb_transitions.as<std::map<std::string, std::string>>();
+            for(auto it = kb_map.begin(); it != kb_map.end(); ++it)
+            {
+                std::string target_fsm = it->first;
+                if(!FSMStringMap.right.count(target_fsm))
+                {
+                    spdlog::warn("FSM State_'{}' not found in FSMStringMap!", target_fsm);
+                    continue;
+                }
+                int fsm_id = FSMStringMap.right.at(target_fsm);
+                std::string trigger_key = it->second;
+                registered_checks.emplace_back(
+                    std::make_pair(
+                        [trigger_key]()->bool {
+                            return keyboard && keyboard->on_pressed && keyboard->key() == trigger_key;
+                        },
+                        fsm_id
+                    )
+                );
+            }
+        }
+
         // register for all states
         registered_checks.emplace_back(
             std::make_pair(
@@ -67,4 +94,6 @@ public:
     static std::unique_ptr<LowCmd_t> lowcmd;
     static std::shared_ptr<LowState_t> lowstate;
     static std::shared_ptr<Keyboard> keyboard;
+    static std::shared_ptr<VelSubscriber> vel_subscriber;
+    static std::shared_ptr<ResetSubscriber> reset_subscriber;
 };

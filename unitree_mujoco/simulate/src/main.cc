@@ -28,6 +28,9 @@
 #include <new>
 #include <string>
 #include <thread>
+#include <atomic>
+#include <unitree/idl/ros2/Pose_.hpp>
+#include <mutex>
 
 #include <mujoco/mujoco.h>
 #include "simulate.h"
@@ -51,10 +54,16 @@ extern "C"
 #endif
 }
 
+std::atomic<bool> reset_requested(false);
+std::vector<mjtNum> initial_qpos;
+#define Z_START_HEIGHT 0.9
+std::mutex reset_mutex;
+std::vector<float> reset_pose = {0.0f, 0.0f, 0.0f}; // x, y, theta
+
 class ElasticBand
 {
 public:
-  ElasticBand(){};
+  ElasticBand() {};
   void Advance(std::vector<double> x, std::vector<double> dx)
   {
     std::vector<double> delta_x = {0.0, 0.0, 0.0};
@@ -75,7 +84,6 @@ public:
     f_[2] = (stiffness_ * (distance - length_) - damping_ * v) * direction[2];
   }
 
-
   double stiffness_ = 200;
   double damping_ = 100;
   std::vector<double> point_ = {0, 0, 3};
@@ -84,7 +92,6 @@ public:
   std::vector<double> f_ = {0, 0, 0};
 };
 inline ElasticBand elastic_band;
-
 
 namespace
 {
@@ -416,6 +423,30 @@ namespace
         // run only if model is present
         if (m)
         {
+          if (reset_requested.load())
+          {
+            mj_resetData(m, d);
+            reset_mutex.lock();
+
+            for (int i = 0; i < 7; i++)
+            {
+              d->qpos[i] = reset_pose[i];
+            }
+
+            reset_mutex.unlock();
+
+            for (int i = 7; i < m->nq; i++)
+            {
+              d->qpos[i] = initial_qpos[i];
+            }
+
+            mj_forward(m, d);
+
+            // Reset the flag
+            reset_requested.store(false);
+            //std::cout << "Simulation reset triggered via DDS!" << std::endl;
+          }
+
           // running
           if (sim.run)
           {
@@ -549,6 +580,9 @@ void PhysicsThread(mj::Simulate *sim, const char *filename)
     {
       sim->Load(m, d, filename);
       mj_forward(m, d);
+      initial_qpos.assign(d->qpos, d->qpos + m->nq);
+      //std::cout << d->qpos[2] << " Z-height" << std::endl;
+
 
       // allocate ctrlnoise
       free(ctrlnoise);
@@ -571,6 +605,23 @@ void PhysicsThread(mj::Simulate *sim, const char *filename)
   exit(0);
 }
 
+void reset_callback(const void *msg)
+{
+  const auto *pose_msg = static_cast<const ::geometry_msgs::msg::dds_::Pose_ *>(msg);
+  reset_mutex.lock();
+  reset_pose[0] = pose_msg->position().x();
+  reset_pose[1] = pose_msg->position().y();
+  reset_pose[2] = Z_START_HEIGHT; 
+  reset_pose[3] = pose_msg->orientation().w();
+  reset_pose[4] = pose_msg->orientation().x();
+  reset_pose[5] = pose_msg->orientation().y();
+  reset_pose[6] = pose_msg->orientation().z();
+
+  reset_mutex.unlock();
+  //std::cout << "Received reset message" << std::endl;
+  reset_requested.store(true);
+}
+
 void *UnitreeSdk2BridgeThread(void *arg)
 {
   // Wait for mujoco data
@@ -586,21 +637,28 @@ void *UnitreeSdk2BridgeThread(void *arg)
 
   unitree::robot::ChannelFactory::Instance()->Init(param::config.domain_id, param::config.interface);
 
+  unitree::robot::ChannelSubscriberPtr<::geometry_msgs::msg::dds_::Pose_> reset_subscriber;
+  reset_subscriber.reset(new unitree::robot::ChannelSubscriber<::geometry_msgs::msg::dds_::Pose_>("reset_simulation"));
+  reset_subscriber->InitChannel(std::bind(&reset_callback, std::placeholders::_1));
 
   int body_id = mj_name2id(m, mjOBJ_BODY, "torso_link");
-  if (body_id < 0) {
+  if (body_id < 0)
+  {
     body_id = mj_name2id(m, mjOBJ_BODY, "base_link");
   }
   param::config.band_attached_link = 6 * body_id;
-  
+
   std::unique_ptr<UnitreeSDK2BridgeBase> interface = nullptr;
-  if (m->nu > NUM_MOTOR_IDL_GO) {
+  if (m->nu > NUM_MOTOR_IDL_GO)
+  {
     interface = std::make_unique<G1Bridge>(m, d);
-  } else {
+  }
+  else
+  {
     interface = std::make_unique<Go2Bridge>(m, d);
   }
   interface->start();
-  
+
   while (true)
   {
     sleep(1);
@@ -619,19 +677,27 @@ __attribute__((used, visibility("default"))) extern "C" void _mj_rosettaError(co
 #endif
 
 // user keyboard callback
-void user_key_cb(GLFWwindow* window, int key, int scancode, int act, int mods) {
-  if (act==GLFW_PRESS)
+void user_key_cb(GLFWwindow *window, int key, int scancode, int act, int mods)
+{
+  if (act == GLFW_PRESS)
   {
-    if(param::config.enable_elastic_band == 1) {
-      if (key==GLFW_KEY_9) {
+    if (param::config.enable_elastic_band == 1)
+    {
+      if (key == GLFW_KEY_9)
+      {
         elastic_band.enable_ = !elastic_band.enable_;
-      } else if (key==GLFW_KEY_7 || key==GLFW_KEY_UP) {
+      }
+      else if (key == GLFW_KEY_7 || key == GLFW_KEY_UP)
+      {
         elastic_band.length_ -= 0.1;
-      } else if (key==GLFW_KEY_8 || key==GLFW_KEY_DOWN) {
+      }
+      else if (key == GLFW_KEY_8 || key == GLFW_KEY_DOWN)
+      {
         elastic_band.length_ += 0.1;
       }
     }
-    if(key==GLFW_KEY_BACKSPACE) {
+    if (key == GLFW_KEY_BACKSPACE)
+    {
       mj_resetData(m, d);
       mj_forward(m, d);
     }
@@ -674,21 +740,22 @@ int main(int argc, char **argv)
   std::filesystem::path proj_dir = std::filesystem::path(getExecutableDir()).parent_path();
   param::config.load_from_yaml(proj_dir / "config.yaml");
   param::helper(argc, argv);
-  if(param::config.robot_scene.is_relative()) {
+  if (param::config.robot_scene.is_relative())
+  {
     param::config.robot_scene = proj_dir.parent_path() / "unitree_robots" / param::config.robot / param::config.robot_scene;
   }
 
   // simulate object encapsulates the UI
   auto sim = std::make_unique<mj::Simulate>(
-    std::make_unique<mj::GlfwAdapter>(),
-    &cam, &opt, &pert, /* is_passive = */ false);
+      std::make_unique<mj::GlfwAdapter>(),
+      &cam, &opt, &pert, /* is_passive = */ false);
 
   std::thread unitree_thread(UnitreeSdk2BridgeThread, nullptr);
 
   // start physics thread
   std::thread physicsthreadhandle(&PhysicsThread, sim.get(), param::config.robot_scene.c_str());
   // start simulation UI loop (blocking call)
-  glfwSetKeyCallback(static_cast<mj::GlfwAdapter*>(sim->platform_ui.get())->window_,user_key_cb);
+  glfwSetKeyCallback(static_cast<mj::GlfwAdapter *>(sim->platform_ui.get())->window_, user_key_cb);
   sim->RenderLoop();
   physicsthreadhandle.join();
 

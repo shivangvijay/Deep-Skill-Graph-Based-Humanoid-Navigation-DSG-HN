@@ -50,22 +50,22 @@ public:
       on_pressed = false;
       on_released = false;
     }
-    
+
     _last_key = _key;
   }
 
   /**
    * @brief Get the current key value
-   * 
-   * @return std::string 
+   *
+   * @return std::string
    */
   std::string key() const { return _key; };
 
   /**
-   * @brief Get the String object from keyboard 
-   * 
+   * @brief Get the String object from keyboard
+   *
    * @param slogan Used to prompt the user for input
-   * @return std::string 
+   * @return std::string
    */
   std::string getString(std::string slogan)
   {
@@ -97,43 +97,37 @@ public:
 
   void _read()
   {
-    if(_running)
-    {
-      FD_ZERO(&_fd_set);
-      FD_SET( fileno(stdin), &_fd_set);
+    if (!_running) return;
 
-      _tv.tv_sec = 0;
-      _tv.tv_usec = 80000;
+    FD_ZERO(&_fd_set);
+    FD_SET(fileno(stdin), &_fd_set);
+    _tv.tv_sec = 0;
+    _tv.tv_usec = 80000;
 
-      if(select(fileno(stdin)+1, &_fd_set, NULL, NULL, &_tv))
-      {
-        // Read the key value into _c
-        int res = read( fileno(stdin), &_c, 1 );
-
-        // Parser the key value
-        if(_c != '\033') {
-          // This is a normal key
-          _key = _c;
-        }else{
-          // This is a special key
-          int m = read(fileno(stdin), &_c, 1);
-          if(_c == '[')
-          {
-            m = read(fileno(stdin), &_c, 1);
-            switch (_c)
-            {
-            case 'A': _key = "up";    break;
-            case 'B': _key = "down";  break;
-            case 'C': _key = "right"; break;
-            case 'D': _key = "left";  break;
-            default:  _key = "";      break;
+    if (select(fileno(stdin) + 1, &_fd_set, NULL, NULL, &_tv) > 0) {
+      char c;
+      if (read(fileno(stdin), &c, 1) > 0) {
+        if (c != '\033') {
+          _key = std::string(1, c);
+        } else {
+          // Special key (arrow etc.)
+          char seq[2];
+          if (read(fileno(stdin), &seq[0], 1) > 0 && seq[0] == '[') {
+            if (read(fileno(stdin), &seq[1], 1) > 0) {
+              switch (seq[1]) {
+                case 'A': _key = "up";    break;
+                case 'B': _key = "down";  break;
+                case 'C': _key = "right"; break;
+                case 'D': _key = "left";  break;
+                default:  _key = "";      break;
+              }
             }
           }
         }
-      }else{
-        _key = "";
       }
-      // std::cout << "key: "<< key() << std::endl;
+    } else {
+      // Timeout — no key pressed
+      _key = "";
     }
   }
 
@@ -158,7 +152,7 @@ public:
   fd_set _fd_set;
   char _c = '\0';
   std::string _key, _last_key;
-  
+
   termios _oldSettings, _newSettings;
   timeval _tv;
 };
