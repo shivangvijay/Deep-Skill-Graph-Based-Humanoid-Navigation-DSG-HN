@@ -4,30 +4,33 @@
 #include "isaaclab/envs/mdp/actions/joint_actions.h"
 #include "dds/vel_subscriber.h"
 #include "dds/vel_publisher.h"
-#include <unordered_map>
-
 namespace isaaclab
 {
     // keyboard velocity commands example
     // change "velocity_commands" observation name in policy deploy.yaml to "keyboard_velocity_commands"
     REGISTER_OBSERVATION(keyboard_velocity_commands)
     {
-        std::string key = FSMState::keyboard->key();
         static auto cfg = env->cfg["commands"]["base_velocity"]["ranges"];
 
-        static std::unordered_map<std::string, std::vector<float>> key_commands = {
-            {"w", {1.0f, 0.0f, 0.0f}},
-            {"s", {-1.0f, 0.0f, 0.0f}},
-            {"a", {0.0f, 1.0f, 0.0f}},
-            {"d", {0.0f, -1.0f, 0.0f}},
-            {"q", {0.0f, 0.0f, 1.0f}},
-            {"e", {0.0f, 0.0f, -1.0f}}};
-        std::vector<float> cmd = {0.0f, 0.0f, 0.0f};
-        if (key_commands.find(key) != key_commands.end())
-        {
-            // TODO: smooth and limit the velocity commands
-            cmd = key_commands[key];
-        }
+        // Physical range limits (read once from deploy.yaml)
+        static const float VX_MAX  =  cfg["lin_vel_x"][1].as<float>();  //  1.0 m/s
+        static const float VX_MIN  =  cfg["lin_vel_x"][0].as<float>();  // -0.5 m/s
+        static const float VY_MAX  =  cfg["lin_vel_y"][1].as<float>();  //  0.3 m/s
+        static const float VY_MIN  =  cfg["lin_vel_y"][0].as<float>();  // -0.3 m/s
+        static const float YAW_MAX =  cfg["ang_vel_z"][1].as<float>();  //  0.2 rad/s
+        static const float YAW_MIN =  cfg["ang_vel_z"][0].as<float>();  // -0.2 rad/s
+
+        // Map single key to velocity command within policy training ranges
+        auto k = FSMState::keyboard->key();
+        float vx = 0.f, vy = 0.f, yaw = 0.f;
+        if      (k == "w") vx  = VX_MAX;
+        else if (k == "s") vx  = VX_MIN;
+        else if (k == "a") vy  = VY_MAX;
+        else if (k == "d") vy  = VY_MIN;
+        else if (k == "q") yaw = YAW_MAX;
+        else if (k == "e") yaw = YAW_MIN;
+
+        std::vector<float> cmd = {vx, vy, yaw};
 
         // Mirror command to DDS so external processes (e.g. collect_transitions) can observe it
         static VelPublisher kb_vel_pub = []() {
@@ -35,7 +38,6 @@ namespace isaaclab
         }();
         kb_vel_pub.publishVelCommand(cmd);
 
-        // std::cout << cmd[0] << " " << cmd[1] << " " << cmd[2] << std::endl;
         return cmd;
     }
 
