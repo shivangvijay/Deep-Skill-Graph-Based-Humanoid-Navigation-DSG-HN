@@ -34,8 +34,10 @@ public:
 
   ~Keyboard()
   {
-    _thread_running = false;
+    _running = false;
     _pauseKey();
+    if (_readThread.joinable())
+      _readThread.join();
   }
 
   void update()

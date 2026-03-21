@@ -19,6 +19,9 @@ public:
         {
             mjr_freeContext(&con);
             mjv_freeScene(&scn);
+            glfwDestroyWindow(window);
+            glfwTerminate();
+            window = nullptr;
         }
         if (d)
             mj_deleteData(d);
