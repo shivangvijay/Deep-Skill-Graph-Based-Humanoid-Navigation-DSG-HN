@@ -1,0 +1,4 @@
+[submodule "DSG_HN/transition_model"]
+	path = DSG_HN/transition_model
+	url = https://github.com/AbhinandanVellanki/Humanoid_Transition_Model.git
+	branch = main
