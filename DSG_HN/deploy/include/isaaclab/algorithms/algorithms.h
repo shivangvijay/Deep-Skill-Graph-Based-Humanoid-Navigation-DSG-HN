@@ -13,6 +13,7 @@ namespace isaaclab
 class Algorithms
 {
 public:
+    virtual ~Algorithms() = default;
     virtual std::vector<float> act(std::unordered_map<std::string, std::vector<float>> obs) = 0;
 
     std::vector<float> get_action()

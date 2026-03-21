@@ -10,10 +10,11 @@
 namespace isaaclab
 {
 
-class ActionTerm 
+class ActionTerm
 {
 public:
     ActionTerm(YAML::Node cfg, ManagerBasedRLEnv* env): cfg(cfg), env(env) {}
+    virtual ~ActionTerm() = default;
 
     virtual int action_dim() = 0;
     virtual std::vector<float> raw_actions() = 0;
