@@ -59,6 +59,41 @@ public:
         _model = svm_train(&p.prob, &param); // svm_train internally copies the problem data, so we can safely let p go out of scope
     }
 
+    // Train one-class SVM (positive examples only — no labels needed)
+    void trainOneClass(const std::vector<std::vector<float>> &states, double nu = 0.1)
+    {
+        if (states.empty())
+            throw std::runtime_error("InitiationSetClassifier: no training data");
+
+        svm_parameter param{};
+        param.svm_type = ONE_CLASS;
+        param.kernel_type = RBF;
+        param.nu = nu;
+        param.gamma = 1.0 / states[0].size();
+        param.eps = 1e-3;
+        param.cache_size = 256;
+        param.probability = 0;
+        param.nr_weight = 0;
+
+        // ONE_CLASS ignores labels; pass zeros
+        std::vector<int> dummy_labels(states.size(), 0);
+        Problem p = _make_problem(states, dummy_labels);
+        if (_model)
+            svm_free_and_destroy_model(&_model);
+        _model = svm_train(&p.prob, &param);
+    }
+
+    // Returns the raw signed decision value (distance to hyperplane).
+    // Positive = inside initiation set, negative = outside, near 0 = boundary.
+    double decisionValue(const std::vector<float> &state) const
+    {
+        _check_model();
+        auto nodes = _make_nodes(state);
+        double dec_val = 0.0;
+        svm_predict_values(_model, nodes.data(), &dec_val);
+        return dec_val;
+    }
+
     // Returns true if state is in the initiation set
     bool classify(const std::vector<float> &state) const
     {
