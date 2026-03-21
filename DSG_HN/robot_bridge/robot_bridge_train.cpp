@@ -8,7 +8,7 @@ namespace isaaclab
     {
         if (ptr == nullptr)
             return {0.0, 0.0, 0.0};
-        return ptr->GetCurrentCmd();
+        return ptr->getCurrentCmd();
     }
 }
 
@@ -42,10 +42,6 @@ void RobotBridgeTrain::update()
         int low_level_decimation = static_cast<int>(LOCMOTION_POLICY_DT / sim_dt);
         env->step();
         auto action = env->action_manager->processed_actions();
-        // std::cout << "Processed action: ";
-        // for (float a : action)        {
-        //     std::cout << a << " ";
-        // }        std::cout << std::endl;
 
         std::vector<float> target_q(num_motors, 0.0);
         for (int i = 0; i < env->robot->data.joint_ids_map.size(); i++)
@@ -85,9 +81,6 @@ RobotState RobotBridgeTrain::getRobotState()
     RobotState s;
     mjModel *m = eng->getModel();
     mjData *d = eng->getData();
-
-    // keep the msg here so that I am doubly sure that I am copying things into the format that the observations expect
-    ::unitree_hg::msg::dds_::IMUState_ imu_msg;
 
     int num_motor = m->nu;
     for (int i = 0; i < num_motor; i++)
@@ -145,6 +138,7 @@ void RobotBridgeTrain::resetRobot(const std::array<float, 3> &pos, const std::ar
 {
     eng->reset(pos, quat);
     env->reset();
+    current_cmd = {0.0, 0.0, 0.0};
 }
 
 void RobotBridgeTrain::initSensorAddresses()

@@ -5,7 +5,7 @@ RobotBridge::RobotBridge(std::string scene_file, float x_min, float x_max, float
 {
     readScene();
 }
-void RobotBridge::readScene()
+void RobotBridge::readScene() // assuming cylindrical obstacles!
 {
     std::ifstream file(scene_file);
 
@@ -18,18 +18,18 @@ void RobotBridge::readScene()
     while (std::getline(file, line))
     {
 
-        if (line.find("<geom") != std::string::npos && line.find("layout_box") != std::string::npos)
+        if (line.find("<geom") != std::string::npos && line.find("layout_") != std::string::npos)
         {
-            bool found_name, found_pos, found_size = false;
-            Obstacle box;
+            bool found_type, found_pos, found_size = false;
+            Obstacle obs;
 
-            size_t name_pos = line.find("name=\"");
-            if (name_pos != std::string::npos)
+            size_t type_pos = line.find("type=\"");
+            if (type_pos != std::string::npos)
             {
-                size_t start = name_pos + 6; // move past name="
+                size_t start = type_pos + 6; // move past name="
                 size_t end = line.find("\"", start);
-                box.name = line.substr(start, end - start);
-                found_name = true;
+                obs.type = line.substr(start, end - start);
+                found_type = true;
             }
 
             // extract the pos
@@ -42,7 +42,7 @@ void RobotBridge::readScene()
 
                 // parse the string into floats using stringstream
                 std::stringstream ss(pos_str);
-                ss >> box.position[0] >> box.position[1] >> box.position[2]; // the >> operator moves you to the next item in the stringstream, which you can save by putting the var there
+                ss >> obs.position[0] >> obs.position[1] >> obs.position[2]; // the >> operator moves you to the next item in the stringstream, which you can save by putting the var there
                 found_pos = true;
             }
 
@@ -56,13 +56,13 @@ void RobotBridge::readScene()
 
                 // parse the string into floats using stringstream
                 std::stringstream ss(size_str);
-                ss >> box.size[0] >> box.size[1] >> box.size[2];
+                ss >> obs.size[0] >> obs.size[1];
                 found_size = true;
             }
 
-            if (found_name && found_pos && found_size)
+            if (found_type && found_pos && found_size)
             {
-                obstacles.push_back(box);
+                obstacles.push_back(obs);
             }
         }
     }
@@ -76,8 +76,9 @@ float RobotBridge::distanceToNearestObstacle(const std::array<float, 3> &pos, co
     float min_dist = std::numeric_limits<float>::max();
     for (const auto &obs : obstacles)
     {
-        float dx = std::max(std::abs(pos[0] - obs.position[0]) - obs.size[0], 0.0f);
-        float dy = std::max(std::abs(pos[1] - obs.position[1]) - obs.size[1], 0.0f);
+        float dx = std::abs(pos[0] - obs.position[0]) - obs.size[0]; // assuming cylindrical obstacles
+        float dy = std::abs(pos[1] - obs.position[1]) - obs.size[1];
+
         min_dist = std::min(min_dist, std::sqrt(dx * dx + dy * dy));
     }
     return min_dist;

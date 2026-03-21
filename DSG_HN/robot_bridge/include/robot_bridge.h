@@ -26,11 +26,11 @@ struct RobotState
     std::array<float, 3> angular_velocity; // from the IMU
 };
 
-struct Obstacle
+struct Obstacle // FOR NOW, ASSUMING OBSTACLES ARE CYLINDERS
 {
     std::array<float, 3> position;
-    std::array<float, 3> size;
-    std::string name;
+    std::array<float, 2> size;
+    std::string type; // "box", "sphere", "cylinder", "etc."
 };
 
 class RobotBridge
@@ -48,7 +48,7 @@ public:
     float distanceToNearestObstacle();
     float distanceToNearestObstacle(const std::array<float, 3> &pos, const std::array<float, 4> &quat) const;
     std::vector<Obstacle> getObstacles() const { return obstacles; }
-    std::vector<float> GetCurrentCmd() const { return current_cmd; }
+    std::vector<float> getCurrentCmd() const { return current_cmd; }
     void resetRobot();
     void printState(const RobotState &s) const;
     std::pair<std::array<float, 3>, std::array<float, 4>> generateRandomPos() const;
