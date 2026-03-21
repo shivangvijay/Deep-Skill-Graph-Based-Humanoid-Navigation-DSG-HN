@@ -28,6 +28,7 @@ void RobotBridgeDDS::resetRobot(const std::array<float, 3> &pos, const std::arra
 {
     std::vector<float> p(pos.begin(), pos.end());
     std::vector<float> q(quat.begin(), quat.end());
+    current_cmd = {0.0, 0.0, 0.0};
     reset_publisher.publishResetCommand(p, q);
 }
 

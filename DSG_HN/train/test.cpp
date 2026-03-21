@@ -11,7 +11,7 @@
 #include "agent.h"
 #include <torch/torch.h>
 
-#define SCENE_FILE "ai_maker_space_scene.xml"
+#define SCENE_FILE "../config/scene/test_scene.xml"
 #define POLICY_DIR "config/policy/velocity"
 #define CONFIG_PATH "config/config.yaml"
 
@@ -52,14 +52,15 @@ int main(int argc, char **argv)
 
     TD3Agent agent(train_env, actor_layer_sizes, critic_layer_sizes, device, ACTOR_LR, CRITIC_LR, TAU, GAMMA, BATCH_SIZE, ACTOR_UPDATE_FREQ);
 
-    torch::load(agent.actor_local, "best_actor.pt");
-    torch::load(agent.critic_local_1, "best_critic_1.pt");
-    torch::load(agent.critic_local_2, "best_critic_2.pt");
+    torch::load(agent.actor_local, "../models/best_actor.pt");
+    torch::load(agent.critic_local_1, "../models/best_critic_1.pt");
+    torch::load(agent.critic_local_2, "../models/best_critic_2.pt");
 
     torch::Tensor state = train_env->reset();
     while (true)
     {
-        auto [next_state, reward, done] = agent.act(train_env, state, false);
+        auto [action, _] = agent.getAction(state, true);
+        auto [next_state, reward, done] = train_env->step(action);
         if (done.data_ptr<float>()[0] > 0.5)
         {
             if (reward.data_ptr<float>()[0] > 0.0)

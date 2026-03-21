@@ -10,18 +10,23 @@ public:
     TrainEnvironment(std::shared_ptr<RobotBridgeTrain> robot_bridge_, int max_steps_) : robot_bridge(robot_bridge_), max_steps(max_steps_)
     {
         RobotState state = robot_bridge->getRobotState();
+        obstacles = robot_bridge->getObstacles();
+        int obstacle_dim = int(obstacles.size()) * 4; // size + relative pos of obstacles. Assuming obstacles are cylinders for now
+
         state_dim = state.q.size() +
                     state.dq.size() +
                     state.position.size() +
                     state.velocity.size() +
                     state.accel.size() +
                     state.orientation.size() +
-                    state.angular_velocity.size();
+                    state.angular_velocity.size() +
+                    obstacle_dim;
     }
 
     torch::Tensor reset()
     {
         robot_bridge->resetRobot();
+        obstacles = robot_bridge->getObstacles();
         RobotState state = robot_bridge->getRobotState();
         goal_position = robot_bridge->generateRandomPos().first;
         current_step = 0;
@@ -56,30 +61,7 @@ private:
     std::array<float, 3> goal_position = {0.0, 0.0, 0.0};
     int max_steps;
     int current_step = 0;
-
-    // torch::Tensor robotStateToTensor(const RobotState &state)
-    // {
-    //     std::vector<float> flat_state;
-
-    //     // reserve space to avoid multiple reallocations
-    //     flat_state.reserve(state_dim);
-
-    //     float rel_x = goal_position[0] - state.position[0];
-    //     float rel_y = goal_position[1] - state.position[1];
-    //     float rel_z = goal_position[2] - state.position[2];
-
-    //     flat_state.insert(flat_state.end(), state.q.begin(), state.q.end());
-    //     flat_state.insert(flat_state.end(), state.dq.begin(), state.dq.end());
-    //     flat_state.insert(flat_state.end(), rel_x);
-    //     flat_state.insert(flat_state.end(), rel_y);
-    //     flat_state.insert(flat_state.end(), rel_z);
-    //     flat_state.insert(flat_state.end(), state.velocity.begin(), state.velocity.end());
-    //     flat_state.insert(flat_state.end(), state.accel.begin(), state.accel.end());
-    //     flat_state.insert(flat_state.end(), state.orientation.begin(), state.orientation.end());
-    //     flat_state.insert(flat_state.end(), state.angular_velocity.begin(), state.angular_velocity.end());
-
-    //     return torch::from_blob(flat_state.data(), {(int64_t)flat_state.size()}, torch::kFloat32).clone(); // tensor is essentially a pointer. Need the .clone() to make sure the data is owned by the tensor
-    // }
+    std::vector<Obstacle> obstacles;
 
     torch::Tensor robotStateToTensor(const RobotState &state)
     {
@@ -108,6 +90,14 @@ private:
         copy_to_ptr(state.accel);
         copy_to_ptr(state.orientation);
         copy_to_ptr(state.angular_velocity);
+
+        for (const auto &obs : obstacles)
+        {
+            data_ptr[offset++] = obs.position[0] - state.position[0];
+            data_ptr[offset++] = obs.position[1] - state.position[1]; 
+            data_ptr[offset++] = obs.position[2] - state.position[2];
+            data_ptr[offset++] = obs.size[0]; // assuming cylindrical, so only care about radius
+        }
 
         return tensor_state;
     }

@@ -1,6 +1,7 @@
 #pragma once
 #include "model.hpp"
 #include "environment.h"
+#include "math.h"
 #include <torch/torch.h>
 
 using namespace torch;
@@ -20,13 +21,15 @@ public:
         int batch_size,
         int actor_update_freq);
 
-    void hard_copy();
-    void soft_update();
-    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> act(std::shared_ptr<TrainEnvironment> env, torch::Tensor state, bool eval = false);
-    void learn(std::shared_ptr<TrainEnvironment> env);
+    std::pair<torch::Tensor, torch::Tensor> getAction(torch::Tensor state, bool eval = false);
+    void addExperience(torch::Tensor state, torch::Tensor action, torch::Tensor reward, torch::Tensor next_state, torch::Tensor done);
+
+
+    void learn();
+    void hardCopy();
+
     double total_actor_loss = 0.0;
     double total_critic_loss = 0.0;
-    double total_reward = 0.0;
     int learn_step = 0;
 
     Actor actor_local;
@@ -45,12 +48,47 @@ private:
     ReplayBuffer replay_buffer;
     torch::Device device;
     torch::Tensor action_limits;
-    torch::Tensor last_action;
-    bool is_first_step = true;
+
     float tau;
     float gamma;
     int batch_size;
     int actor_update_freq;
     float lr_critic;
     float lr_actor;
+
+    void softUpdate();
+};
+
+class PolicyOverOptionsAgent
+{
+public:
+    PolicyOverOptionsAgent(
+        std::shared_ptr<TrainEnvironment> env,
+        const std::vector<int> &layer_sizes,
+        torch::Device device,
+        float lr,
+        float tau,
+        float gamma,
+        int batch_size);
+
+    void addOption(float initial_bias);
+    void learn();
+    void hardCopy();
+    int getOption(torch::Tensor state);
+    void addExperience(torch::Tensor state, torch::Tensor option, torch::Tensor cumulative_reward, torch::Tensor next_state, torch::Tensor done, torch::Tensor num_steps);
+    void addExperience(torch::Tensor state, int option, torch::Tensor cumulative_reward, torch::Tensor next_state, torch::Tensor done, int num_steps);
+
+private:
+    void softUpdate();
+
+    PolicyOverOptions q;
+    PolicyOverOptions target_q;
+
+    std::unique_ptr<torch::optim::Adam> optimizer;
+    ReplayBuffer replay_buffer;
+    torch::Device device;
+    float lr;
+    float tau;
+    int batch_size;
+    float gamma;
 };
