@@ -52,6 +52,21 @@ public:
             torch::tensor({(float)terminated}, torch::kFloat32) // Usually better to store 'done' as a float (0.0 or 1.0) for RL math
         };
     }
+    torch::Tensor resetTo(const std::array<float, 3> &pos, const std::array<float, 4> &quat)
+    {
+        robot_bridge->resetRobot(pos, quat);
+        obstacles = robot_bridge->getObstacles();
+        goal_position = robot_bridge->generateRandomPos().first;
+        current_step = 0;
+        return robotStateToTensor(robot_bridge->getRobotState());
+    }
+
+    std::pair<std::array<float, 3>, std::array<float, 4>> getRobotPose() const
+    {
+        RobotState s = robot_bridge->getRobotState();
+        return {s.position, s.orientation};
+    }
+
     int state_dim;
     int action_dim = 3;
     std::vector<float> action_limits = {0.5, 0.3, 0.2};
