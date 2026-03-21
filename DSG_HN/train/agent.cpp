@@ -1,5 +1,7 @@
 #include "agent.h"
 
+/****************************************TD3 AGENT****************************************/
+
 TD3Agent::TD3Agent(
     std::shared_ptr<TrainEnvironment> env,
     const std::vector<int> &actor_layer_sizes,
@@ -22,44 +24,31 @@ TD3Agent::TD3Agent(
                              tau(tau), gamma(gamma), batch_size(batch_size), actor_update_freq(actor_update_freq), lr_actor(lr_actor), lr_critic(lr_critic)
 {
     action_limits = torch::tensor(env->action_limits);
-    last_action = torch::zeros({env->action_dim});
-    hard_copy();
+    hardCopy();
 }
 
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> TD3Agent::act(std::shared_ptr<TrainEnvironment> env, torch::Tensor state, bool eval)
+std::pair<torch::Tensor, torch::Tensor> TD3Agent::getAction(torch::Tensor state, bool eval)
 {
-    if (is_first_step)
-    {
-        last_action = torch::zeros({env->action_dim});
-        is_first_step = false;
-    }
     actor_local->eval();
     torch::NoGradGuard no_grad;
-    torch::Tensor augmented_state = torch::cat({state, last_action}, -1); // Concatenate last action to state for the actor's input
-    auto action = actor_local->forward(augmented_state).to(torch::kCPU);
+    auto action = actor_local->forward(state).to(torch::kCPU);
     if (!eval)
     {
         auto noise = (torch::randn_like(action) * 0.1).clamp(-0.2, 0.2); // Add some noise for exploration. Need to respect action limits
         action = torch::clamp(action + noise, -1.0, 1.0);
     }
     torch::Tensor scaled_action = action * action_limits; // Scale action to environment limits
-
-    last_action = action.clone().squeeze(0); // Store the action for the next step. Remove batch dimension if it exists
-
-    auto [next_state, reward, done] = env->step(scaled_action);
-    total_reward += reward.item<double>();
-    replay_buffer.addExperienceState(augmented_state, action, reward, next_state, done);
     actor_local->train();
 
-    if (done.data_ptr<float>()[0] > 0.5) // episode ended
-    {
-        is_first_step = true;
-    }
-
-    return {next_state, reward, done};
+    return {scaled_action, action};
 }
 
-void TD3Agent::learn(std::shared_ptr<TrainEnvironment> env)
+void TD3Agent::addExperience(torch::Tensor state, torch::Tensor action, torch::Tensor reward, torch::Tensor next_state, torch::Tensor done)
+{
+     replay_buffer.addExperienceState(state, action, reward, next_state, done);
+}
+
+void TD3Agent::learn()
 {
     if (replay_buffer.getLength() < batch_size)
         return;
@@ -69,15 +58,14 @@ void TD3Agent::learn(std::shared_ptr<TrainEnvironment> env)
     auto actions = std::get<1>(experiences).to(actor_local->device);
     auto rewards = std::get<2>(experiences).to(actor_local->device);
     auto next_states = std::get<3>(experiences).to(actor_local->device);
-    auto next_states_augmented = torch::cat({next_states, actions}, -1); 
     auto dones = std::get<4>(experiences).to(actor_local->device);
 
-    auto next_actions = actor_target->forward(next_states_augmented);
+    auto next_actions = actor_target->forward(next_states);
     auto noise = (torch::randn_like(next_actions) * 0.1).clamp(-0.2, 0.2);
     next_actions = (next_actions + noise).clamp(-1.0, 1.0);
 
-    auto target_q1 = critic_target_1->forward(next_states_augmented, next_actions);
-    auto target_q2 = critic_target_2->forward(next_states_augmented, next_actions);
+    auto target_q1 = critic_target_1->forward(next_states, next_actions);
+    auto target_q2 = critic_target_2->forward(next_states, next_actions);
     auto target_q = torch::min(target_q1, target_q2);
     auto expected_q = rewards + (gamma * target_q * (1 - dones));
 
@@ -109,11 +97,11 @@ void TD3Agent::learn(std::shared_ptr<TrainEnvironment> env)
 
         total_actor_loss += actor_loss.item<double>();
 
-        soft_update();
+        softUpdate();
     }
 }
 
-void TD3Agent::hard_copy()
+void TD3Agent::hardCopy()
 {
     torch::NoGradGuard no_grad;
     for (size_t i = 0; i < actor_target->parameters().size(); i++)
@@ -124,7 +112,7 @@ void TD3Agent::hard_copy()
         critic_target_2->parameters()[i].copy_(critic_local_2->parameters()[i]);
 }
 
-void TD3Agent::soft_update() // TODO: if this is too slow, methods to make more efficient
+void TD3Agent::softUpdate() // TODO: if this is too slow, methods to make more efficient
 {
     torch::NoGradGuard no_grad; //       disables calulation of gradients
     for (size_t i = 0; i < actor_target->parameters().size(); i++)
@@ -133,4 +121,91 @@ void TD3Agent::soft_update() // TODO: if this is too slow, methods to make more 
         critic_target_1->parameters()[i].copy_(tau * critic_local_1->parameters()[i] + (1.0 - tau) * critic_target_1->parameters()[i]); // global tau
     for (size_t i = 0; i < critic_target_2->parameters().size(); i++)
         critic_target_2->parameters()[i].copy_(tau * critic_local_2->parameters()[i] + (1.0 - tau) * critic_target_2->parameters()[i]); // global tau
+}
+
+/****************************************POLICY OVER OPTIONS AGENT****************************************/
+
+PolicyOverOptionsAgent::PolicyOverOptionsAgent(
+    std::shared_ptr<TrainEnvironment> env,
+    const std::vector<int> &layer_sizes,
+    torch::Device device_,
+    float lr_,
+    float tau_,
+    float gamma_,
+    int batch_size_) : device(device_),
+                       lr(lr_), tau(tau_), gamma(gamma_), batch_size(batch_size_),
+                       q(env->state_dim, layer_sizes, device_),
+                       target_q(env->state_dim, layer_sizes, device_)
+{
+    optimizer = std::make_unique<torch::optim::Adam>(q->parameters(), torch::optim::AdamOptions(lr));
+    hardCopy();
+}
+
+void PolicyOverOptionsAgent::addOption(float initial_bias)
+{
+    q->addOption(initial_bias);
+    target_q->addOption(initial_bias);
+    hardCopy(); // ensure target_q has the same new parameters as q
+    optimizer = std::make_unique<torch::optim::Adam>(q->parameters(), torch::optim::AdamOptions(lr)); // reset optimizer to include new parameters
+}
+
+int PolicyOverOptionsAgent::getOption(torch::Tensor state)
+{
+    auto options = q->forward(state).to(torch::kCPU);
+    auto best_option = options.argmax(-1).item<int>();
+    return best_option;
+}
+
+void PolicyOverOptionsAgent::addExperience(torch::Tensor state, int option, torch::Tensor cumulative_reward, torch::Tensor next_state, torch::Tensor done, int num_steps)
+{
+    addExperience(state, torch::tensor({(float)option}, torch::kInt64), cumulative_reward, next_state, done, torch::tensor({(float)num_steps}));
+}
+
+void PolicyOverOptionsAgent::addExperience(torch::Tensor state, torch::Tensor option, torch::Tensor cumulative_reward, torch::Tensor next_state, torch::Tensor done, torch::Tensor num_steps)
+{
+    replay_buffer.addExperienceState(state, option, cumulative_reward, next_state, done, num_steps);
+}
+
+void PolicyOverOptionsAgent::learn()
+{
+    if (replay_buffer.getLength() < batch_size)
+        return;
+
+    auto experiences = replay_buffer.sample(batch_size);
+    auto states = std::get<0>(experiences).to(q->device);
+    auto options = std::get<1>(experiences).to(q->device).to(torch::kInt64);
+    auto cumulative_rewards = std::get<2>(experiences).to(q->device);
+    auto next_states = std::get<3>(experiences).to(q->device);
+    auto dones = std::get<4>(experiences).to(q->device).narrow(-1, 0, 1); // note that dones and num_steps are concatenated in the same tensor, with num_steps in the last dimension
+    auto num_steps = std::get<4>(experiences).to(q->device).narrow(-1, 1, 1);
+    auto q_values = q->forward(states);
+
+    auto target_q_values = std::get<0>(torch::max(target_q->forward(next_states), -1, true));
+    float discount_factor = pow(gamma, num_steps.data_ptr<int>()[0]); 
+    auto y = cumulative_rewards + (discount_factor * target_q_values * (1 - dones));
+
+    if (options.dim() == 1) options = options.unsqueeze(-1);
+    auto q_values_selected = q_values.gather(-1, options);
+    auto loss = torch::nn::functional::mse_loss(q_values_selected, y.detach());
+
+    optimizer->zero_grad();
+    loss.backward();
+    torch::nn::utils::clip_grad_norm_(q->parameters(), 1.0);
+    optimizer->step();
+
+    softUpdate();
+}
+
+void PolicyOverOptionsAgent::hardCopy()
+{
+    torch::NoGradGuard no_grad;
+    for (size_t i = 0; i < target_q->parameters().size(); i++)
+        target_q->parameters()[i].copy_(q->parameters()[i]);
+}
+
+void PolicyOverOptionsAgent::softUpdate()
+{
+    torch::NoGradGuard no_grad;
+    for (size_t i = 0; i < target_q->parameters().size(); i++)
+        target_q->parameters()[i].copy_(tau * q->parameters()[i] + (1.0 - tau) * target_q->parameters()[i]);
 }
