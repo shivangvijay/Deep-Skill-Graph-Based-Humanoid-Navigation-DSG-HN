@@ -49,6 +49,7 @@ set(COMMON_LIBS
   ${TRAIN_DIR}/../deploy/thirdparty/onnxruntime-osx-arm64-1.22.0/lib/libonnxruntime.dylib
   ${MUJOCO_DIR}/lib/libmujoco.3.3.6.dylib
   $ENV{CONDA_PREFIX}/lib/libglfw.dylib
+  $ENV{CONDA_PREFIX}/lib/libsvm.dylib
   ${TORCH_LIBRARIES}
 )
 
