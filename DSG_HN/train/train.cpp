@@ -65,8 +65,6 @@ int main(int argc, char **argv)
 
     float best_reward = -std::numeric_limits<float>::infinity();
 
-    int N = 1000; // number of options at which to add a new option
-
     for (int epoch = 0; epoch < num_epochs; epoch++)
     {
         float total_reward = 0.0f;
@@ -78,12 +76,33 @@ int main(int argc, char **argv)
 
         for (int step = 0; step < num_steps; step++)
         {
+            if (step == 1000){
+                option_agent.addOption(0.0);
+            }
             std::cout << "\rStep: " << step + 1 << "/" << num_steps << std::flush;
-            auto [scaled_action, action] = agent.getAction(state);
+            auto option = option_agent.getOption(state);
+            torch::Tensor action;
+            torch::Tensor scaled_action;
+            if (option == 0)
+            {
+                auto actions = agent.getAction(state);
+                scaled_action = std::get<0>(actions);
+                action = std::get<1>(actions);
+            }
+            else 
+            {
+                action = torch::randn(3);
+                scaled_action = action * torch::tensor(train_env->action_limits);
+            }
+
+            // std::cout << " Option: " << option << std::endl;
+
             auto [next_state, reward, done] = train_env->step(scaled_action);
             total_reward += reward.item<float>();
             agent.addExperience(state, action, reward, next_state, done);
             agent.learn();
+            option_agent.addExperience(state, option, reward, next_state, done, 1);
+            option_agent.learn();
             if (done.data_ptr<float>()[0] > 0.5)
             {
                 num_episodes++;

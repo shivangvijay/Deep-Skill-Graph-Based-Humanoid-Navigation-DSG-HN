@@ -1,7 +1,6 @@
 #pragma once
 #include "model.hpp"
 #include "environment.h"
-#include "math.h"
 #include <torch/torch.h>
 
 using namespace torch;

@@ -45,7 +45,7 @@ std::pair<torch::Tensor, torch::Tensor> TD3Agent::getAction(torch::Tensor state,
 
 void TD3Agent::addExperience(torch::Tensor state, torch::Tensor action, torch::Tensor reward, torch::Tensor next_state, torch::Tensor done)
 {
-     replay_buffer.addExperienceState(state, action, reward, next_state, done);
+    replay_buffer.addExperienceState(state, action, reward, next_state, done);
 }
 
 void TD3Agent::learn()
@@ -145,7 +145,7 @@ void PolicyOverOptionsAgent::addOption(float initial_bias)
 {
     q->addOption(initial_bias);
     target_q->addOption(initial_bias);
-    hardCopy(); // ensure target_q has the same new parameters as q
+    hardCopy();                                                                                       // ensure target_q has the same new parameters as q
     optimizer = std::make_unique<torch::optim::Adam>(q->parameters(), torch::optim::AdamOptions(lr)); // reset optimizer to include new parameters
 }
 
@@ -153,6 +153,7 @@ int PolicyOverOptionsAgent::getOption(torch::Tensor state)
 {
     auto options = q->forward(state).to(torch::kCPU);
     auto best_option = options.argmax(-1).item<int>();
+    // std::cout << "Max Q-Value: " << std::get<0>(options.max(-1)).item<float>() << std::endl;
     return best_option;
 }
 
@@ -176,15 +177,16 @@ void PolicyOverOptionsAgent::learn()
     auto options = std::get<1>(experiences).to(q->device).to(torch::kInt64);
     auto cumulative_rewards = std::get<2>(experiences).to(q->device);
     auto next_states = std::get<3>(experiences).to(q->device);
-    auto dones = std::get<4>(experiences).to(q->device).narrow(-1, 0, 1); // note that dones and num_steps are concatenated in the same tensor, with num_steps in the last dimension
-    auto num_steps = std::get<4>(experiences).to(q->device).narrow(-1, 1, 1);
+    auto dones = std::get<4>(experiences).to(q->device).narrow(-1, 0, 1).to(torch::kInt64); // note that dones and num_steps are concatenated in the same tensor, with num_steps in the last dimension
+    auto num_steps = std::get<4>(experiences).to(q->device).narrow(-1, 1, 1).to(torch::kInt64);
     auto q_values = q->forward(states);
 
     auto target_q_values = std::get<0>(torch::max(target_q->forward(next_states), -1, true));
-    float discount_factor = pow(gamma, num_steps.data_ptr<int>()[0]); 
+    auto discount_factor = torch::pow(gamma, num_steps);
     auto y = cumulative_rewards + (discount_factor * target_q_values * (1 - dones));
 
-    if (options.dim() == 1) options = options.unsqueeze(-1);
+    if (options.dim() == 1)
+        options = options.unsqueeze(-1);
     auto q_values_selected = q_values.gather(-1, options);
     auto loss = torch::nn::functional::mse_loss(q_values_selected, y.detach());
 
