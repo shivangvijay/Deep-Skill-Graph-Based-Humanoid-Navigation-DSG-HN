@@ -43,7 +43,13 @@ nvcc --version
 ```
 4. Extract the directory, and copy the underlying folder, named libtorch, into DSG_HN/train/thirdparty
 
-#### 3.3 Build Libraries
+#### 3.3 LibSVM Installation
+```bash
+conda install -c conda-forge libsvm
+```
+This handles architecture and dependency resolution. Just make sure to include and link $CONDA_PREFIX/lib and $CONDA_PREFIX/include in CMakeLists.txt.
+
+#### 3.4 Build Libraries
 
 
 ```bash
