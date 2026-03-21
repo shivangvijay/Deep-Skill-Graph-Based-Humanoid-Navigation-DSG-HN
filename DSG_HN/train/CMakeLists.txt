@@ -22,6 +22,7 @@ find_package(Torch REQUIRED)
 
 
 include_directories(
+  $ENV{CONDA_PREFIX}/include
   /usr/include/eigen3
   /usr/local/include/ddscxx # dds
   /usr/local/include/iceoryx/v2.0.2 # dds
@@ -44,6 +45,7 @@ link_libraries(
   ${PROJECT_SOURCE_DIR}/../deploy/thirdparty/onnxruntime-linux-x64-1.22.0/lib/libonnxruntime.so.1.22.0
   ${MUJOCO_DIR}/lib/libmujoco.so
   glfw
+  $ENV{CONDA_PREFIX}/lib/libsvm.so
   ${TORCH_LIBRARIES}
 )
 
