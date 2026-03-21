@@ -59,7 +59,8 @@ int main(int argc, char **argv)
     torch::Tensor state = train_env->reset();
     while (true)
     {
-        auto [next_state, reward, done] = agent.act(train_env, state, false);
+        auto [action, _] = agent.getAction(state, true);
+        auto [next_state, reward, done] = train_env->step(action);
         if (done.data_ptr<float>()[0] > 0.5)
         {
             if (reward.data_ptr<float>()[0] > 0.0)
