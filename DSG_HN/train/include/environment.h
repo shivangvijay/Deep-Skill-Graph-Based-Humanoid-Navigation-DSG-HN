@@ -35,6 +35,8 @@ public:
             std::tie(goal_pos, goal_orientation) = robot_bridge->generateRandomPos();
             if (attempts++ > 100) throw std::runtime_error("Could Note Respawn Robot.");
         }
+        if (!_goal_fixed)
+            goal_position = robot_bridge->generateRandomPos().first;
         current_step = 0;
 
         return robotStateToTensor(state);
@@ -58,6 +60,35 @@ public:
             torch::tensor({(float)terminated}, torch::kFloat32) // Usually better to store 'done' as a float (0.0 or 1.0) for RL math
         };
     }
+    torch::Tensor resetTo(const std::array<float, 3> &pos, const std::array<float, 4> &quat)
+    {
+        robot_bridge->resetRobot(pos, quat);
+        obstacles = robot_bridge->getObstacles();
+        if (!_goal_fixed)
+            goal_position = robot_bridge->generateRandomPos().first;
+        current_step = 0;
+        return robotStateToTensor(robot_bridge->getRobotState());
+    }
+
+    std::pair<std::array<float, 3>, std::array<float, 4>> getRobotPose() const
+    {
+        RobotState s = robot_bridge->getRobotState();
+        return {s.position, s.orientation};
+    }
+
+    // Fix goal_position to a specific point (e.g. next skill's subgoal).
+    // reset() and resetTo() will not randomize goal_position while fixed.
+    void setGoal(const std::array<float, 3> &pos)
+    {
+        goal_position = pos;
+        _goal_fixed   = true;
+    }
+
+    void clearGoal()
+    {
+        _goal_fixed = false;
+    }
+
     int state_dim;
     int action_dim = 3;
     std::vector<float> action_limits = {0.5, 0.3, 0.2};
@@ -65,6 +96,7 @@ public:
 private:
     std::shared_ptr<RobotBridgeTrain> robot_bridge;
     std::array<float, 3> goal_position = {0.0, 0.0, 0.0};
+    bool _goal_fixed = false;
     int max_steps;
     int current_step = 0;
     std::vector<Obstacle> obstacles;
