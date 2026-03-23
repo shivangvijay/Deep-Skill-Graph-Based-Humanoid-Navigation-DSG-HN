@@ -64,6 +64,7 @@ public:
         };
     }
 
+    // see note a top about how you need to set vel and ang vel
     torch::Tensor resetTo(const std::array<float, 3> &pos, const std::array<float, 4> &quat, const std::array<float, 3> &vel, const std::array<float, 3> &ang_vel)
     {
         robot_bridge->resetRobot(pos, quat, vel, ang_vel);
@@ -82,6 +83,8 @@ public:
 
     // Fix goal_position to a specific point (e.g. next skill's subgoal).
     // reset() and resetTo() will not randomize goal_position while fixed.
+
+    // see note a top about how you need to set vel and ang vel
     void setGoal(const std::array<float, 3> &pos, const std::array<float, 4> &quat, const std::array<float, 3> &vel, const std::array<float, 3> &ang_vel)
     {
         goal = {pos, quat, vel, ang_vel};
