@@ -118,6 +118,28 @@ void MuJoCoEngine::reset(const std::array<float, 3> &pos, const std::array<float
     mj_forward(m, d);
 }
 
+void MuJoCoEngine::reset(const std::array<float, 3> &pos, const std::array<float, 4> &quat, const std::array<float, 3> &vel, const std::array<float, 3> &ang_vel)
+{
+    mj_resetData(m, d);
+    d->qpos[0] = pos[0];
+    d->qpos[1] = pos[1];
+    d->qpos[2] = Z_START_HEIGHT;
+    d->qpos[3] = quat[0];
+    d->qpos[4] = quat[1];
+    d->qpos[5] = quat[2];
+    d->qpos[6] = quat[3];
+
+    d->qvel[0] = vel[0];
+    d->qvel[1] = vel[1];
+    d->qvel[2] = vel[2];
+
+    d->qvel[3] = ang_vel[0]; // roll
+    d->qvel[4] = ang_vel[1]; // pitch
+    d->qvel[5] = ang_vel[2];
+
+    mj_forward(m, d);
+}
+
 bool MuJoCoEngine::inCollision()
 {
     if (!d || !m)
@@ -134,8 +156,8 @@ bool MuJoCoEngine::inCollision()
         std::string name2 = mj_id2name(m, mjOBJ_GEOM, geom2) ? mj_id2name(m, mjOBJ_GEOM, geom2) : "";
 
         // want to only ignore collisions with the floor/ground on the
-        if (name1 != "floor" && name1 != "ground" && 
-            name2 != "floor" && name2 != "ground") 
+        if (name1 != "floor" && name1 != "ground" &&
+            name2 != "floor" && name2 != "ground")
         {
             return true;
         }

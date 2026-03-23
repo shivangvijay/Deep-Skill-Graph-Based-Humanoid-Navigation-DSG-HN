@@ -84,28 +84,44 @@ float RobotBridge::distanceToNearestObstacle(const std::array<float, 3> &pos, co
     return min_dist;
 }
 
-std::pair<std::array<float, 3>, std::array<float, 4>> RobotBridge::generateRandomPos() const
+// scalar w is first element
+std::pair<std::array<float, 3>, std::array<float, 4>> RobotBridge::generateRandomPose() const
 {
-    std::array<float, 3> pos = {
-        x_min + static_cast<float>(rand()) / (RAND_MAX / (x_max - x_min)),
-        y_min + static_cast<float>(rand()) / (RAND_MAX / (y_max - y_min)),
-        0.0f};
-    float yaw = (static_cast<float>(rand()) / RAND_MAX) * 2 * M_PI;
-    return {pos, {cosf(yaw / 2), 0, 0, sinf(yaw / 2)}};
+    auto [pos, quat, _, __] = generateRandomPoseWithVel();
+
+    return {pos, quat};
 }
 
-void RobotBridge::resetRobot()
+std::tuple<std::array<float, 3>, std::array<float, 4>, std::array<float, 3>, std::array<float, 3>> RobotBridge::generateRandomPoseWithVel() const
 {
-    auto [pos, quat] = generateRandomPos();
+    std::array<float, 3> pos;
+    std::array<float, 4> quat;
+    std::array<float, 3> vel;
+    std::array<float, 3> ang_vel;
     int attempts = 0;
-    while (distanceToNearestObstacle(pos, quat) < 0.5f)
+    do
     {
-        std::tie(pos, quat) = generateRandomPos();
-        if (attempts++ > 100) throw std::runtime_error("Could Note Respawn Robot.");
-    }
-    resetRobot(pos, quat);
-}
+        if (attempts++ > 1000)
+            throw std::runtime_error("Could Not Respawn Robot");
+        pos = {
+            x_min + static_cast<float>(rand()) / (RAND_MAX / (x_max - x_min)),
+            y_min + static_cast<float>(rand()) / (RAND_MAX / (y_max - y_min)),
+            0.0f};
 
+        float yaw = (static_cast<float>(rand()) / RAND_MAX) * 2 * M_PI;
+        quat = {cosf(yaw / 2), 0, 0, sinf(yaw / 2)};
+
+        vel = {
+            -vel_limits[0] + static_cast<float>(rand()) / (RAND_MAX / (2 * vel_limits[0])),
+            -vel_limits[1] + static_cast<float>(rand()) / (RAND_MAX / (2 * vel_limits[1])),
+            0.0f};
+
+        float ang_vel_yaw = -vel_limits[2] + static_cast<float>(rand()) / (RAND_MAX / (2 * vel_limits[2]));
+        ang_vel = {0.0, 0.0, ang_vel_yaw};
+    } while (distanceToNearestObstacle(pos, quat) < 0.3);
+
+    return {pos, quat, vel, ang_vel};
+}
 
 void RobotBridge::printState(const RobotState &s) const // just a lil utility function to help with debuffing
 {
@@ -127,11 +143,11 @@ void RobotBridge::printState(const RobotState &s) const // just a lil utility fu
 
     std::cout << "Base Position: [" << s.position[0] << ", " << s.position[1] << ", " << s.position[2] << "]" << std::endl;
     std::cout << "Base Velocity: [" << s.velocity[0] << ", " << s.velocity[1] << ", " << s.velocity[2] << "]" << std::endl;
-    
-    std::cout << "Orientation (Quat): [" << s.orientation[0] << ", " << s.orientation[1] << ", " 
+
+    std::cout << "Orientation (Quat): [" << s.orientation[0] << ", " << s.orientation[1] << ", "
               << s.orientation[2] << ", " << s.orientation[3] << "]" << std::endl;
 
-    std::cout << "Angular Velocity: [" << s.angular_velocity[0] << ", " << s.angular_velocity[1] << ", " 
+    std::cout << "Angular Velocity: [" << s.angular_velocity[0] << ", " << s.angular_velocity[1] << ", "
               << s.angular_velocity[2] << "]" << std::endl;
 
     std::cout << "Acceleration: [" << s.accel[0] << ", " << s.accel[1] << ", " << s.accel[2] << "]" << std::endl;
