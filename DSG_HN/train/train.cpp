@@ -27,8 +27,12 @@
 #define BATCH_SIZE 256
 #define ACTOR_UPDATE_FREQ 4
 #define CRITIC_LAYER_SIZES {128, 256, 128}
-#define ACTOR_LAYER_SIZES {64, 128, 64}
+#define ACTOR_LAYER_SIZES {128, 256, 128}
 #define RENDER false
+
+/*
+TODO: VERIFY THAT TD3 CAN STIL LEARN
+*/
 
 int main(int argc, char **argv)
 {
@@ -55,7 +59,7 @@ int main(int argc, char **argv)
     int num_frames = 0;
     auto start_time = std::chrono::high_resolution_clock::now();
     int num_steps = 20000;
-    int num_epochs = 20;
+    int num_epochs = 40;
 
     // for testing, gonna have a new random option that I am gonna add after 1000 steps
     PolicyOverOptionsAgent option_agent(train_env, critic_layer_sizes, device, CRITIC_LR, TAU, GAMMA, BATCH_SIZE);
@@ -76,24 +80,24 @@ int main(int argc, char **argv)
 
         for (int step = 0; step < num_steps; step++)
         {
-            if (step == 1000){
-                option_agent.addOption(0.0);
+            if (step == 10000){
+                option_agent.addOption(-1.0);
             }
             std::cout << "\rStep: " << step + 1 << "/" << num_steps << std::flush;
-            auto option = option_agent.getOption(state);
+            // auto option = option_agent.getOption(state);
             torch::Tensor action;
             torch::Tensor scaled_action;
-            if (option == 0)
-            {
-                auto actions = agent.getAction(state);
-                scaled_action = std::get<0>(actions);
-                action = std::get<1>(actions);
-            }
-            else 
-            {
-                action = torch::randn(3);
-                scaled_action = action * torch::tensor(train_env->action_limits);
-            }
+            // if (option == 0)
+            // {
+            auto actions = agent.getAction(state);
+            scaled_action = std::get<0>(actions);
+            action = std::get<1>(actions);
+            // }
+            // else 
+            // {
+            //     action = torch::randn(3);
+            //     scaled_action = action * torch::tensor(train_env->action_limits);
+            // }
 
             // std::cout << " Option: " << option << std::endl;
 
@@ -101,8 +105,8 @@ int main(int argc, char **argv)
             total_reward += reward.item<float>();
             agent.addExperience(state, action, reward, next_state, done);
             agent.learn();
-            option_agent.addExperience(state, option, reward, next_state, done, 1);
-            option_agent.learn();
+            // option_agent.addExperience(state, option, reward, next_state, done, 1);
+            // option_agent.learn();
             if (done.data_ptr<float>()[0] > 0.5)
             {
                 num_episodes++;
