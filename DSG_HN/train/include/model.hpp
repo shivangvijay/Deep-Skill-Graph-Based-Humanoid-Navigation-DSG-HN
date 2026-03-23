@@ -129,7 +129,7 @@ struct PolicyOverOptionsImpl : nn::Module
 
         new_layer->weight.narrow(0, old_output_size, 1).fill_(0);
         new_layer->bias[old_output_size].fill_(initial_bias);
-
+        this->unregister_module("output_layer");
         output_layer = register_module("output_layer", new_layer);
     }
 

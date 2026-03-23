@@ -38,7 +38,7 @@ int main(int argc, char **argv)
     auto policy_dir = param::parser_policy_dir(rel_path);
 
     std::shared_ptr<RobotBridgeTrain> robot_bridge = std::make_shared<RobotBridgeTrain>(SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, render);
-    std::shared_ptr<TrainEnvironment> train_env = std::make_shared<TrainEnvironment>(robot_bridge, 2000);
+    std::shared_ptr<TrainEnvironment> train_env = std::make_shared<TrainEnvironment>(robot_bridge, 600);
 
     torch::Device device(torch::kCPU);
     if (torch::cuda::is_available())

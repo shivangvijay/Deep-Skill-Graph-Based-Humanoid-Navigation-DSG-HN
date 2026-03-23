@@ -28,6 +28,13 @@ public:
         robot_bridge->resetRobot();
         obstacles = robot_bridge->getObstacles();
         RobotState state = robot_bridge->getRobotState();
+        auto [goal_pos, goal_orientation] = robot_bridge->generateRandomPos();
+        int attempts = 0;
+        while (robot_bridge->distanceToNearestObstacle(goal_pos, goal_orientation) < 0.5f)
+        {
+            std::tie(goal_pos, goal_orientation) = robot_bridge->generateRandomPos();
+            if (attempts++ > 100) throw std::runtime_error("Could Note Respawn Robot.");
+        }
         if (!_goal_fixed)
             goal_position = robot_bridge->generateRandomPos().first;
         current_step = 0;
@@ -109,7 +116,9 @@ private:
             offset += src.size();
         };
 
-        // This will now work for state.q (array) and state.velocity (vector)
+        // TODO: update RL formulation to reflect the fact that termination/initiation are function
+        // of velociy and orientation as well
+
         copy_to_ptr(state.q);
         copy_to_ptr(state.dq);
 
