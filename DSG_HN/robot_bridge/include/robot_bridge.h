@@ -13,6 +13,11 @@
 #define DOF 35                 // note that the actual DOF is 29, but the msg has 35 motors, so just going to read all 35
 #define VELOCITY_POLICY_DT 0.1 // 10 Hz, this we can change later on though
 
+// note: pos, vel, and orientation are given in the context of the global reference frame
+// everything else is given w.r.t to the local frame of the robot
+
+// additionally: note that command is relative, not global velocity
+
 struct RobotState
 {
     std::array<float, DOF> q;
@@ -49,9 +54,10 @@ public:
     float distanceToNearestObstacle(const std::array<float, 3> &pos, const std::array<float, 4> &quat) const;
     std::vector<Obstacle> getObstacles() const { return obstacles; }
     std::vector<float> getCurrentCmd() const { return current_cmd; }
-    void resetRobot();
     void printState(const RobotState &s) const;
-    std::pair<std::array<float, 3>, std::array<float, 4>> generateRandomPos() const;
+    std::pair<std::array<float, 3>, std::array<float, 4>> generateRandomPose() const;
+    std::tuple<std::array<float, 3>, std::array<float, 4>, std::array<float, 3>,  std::array<float, 3>> generateRandomPoseWithVel() const;
+
 
 protected:
     RobotBridge(std::string scene_file, float x_min, float x_max, float y_min, float y_max);
@@ -61,6 +67,7 @@ protected:
     std::string scene_file;
     std::vector<Obstacle> obstacles;
     std::vector<float> current_cmd = {0.0, 0.0, 0.0};
+    std::array<float, 3> vel_limits = {0.5, 0.3, 0.2};
     float x_min = -5.0, x_max = 5.0, y_min = -5.0, y_max = 5.0;
     float velocity_policy_dt = VELOCITY_POLICY_DT;
 };

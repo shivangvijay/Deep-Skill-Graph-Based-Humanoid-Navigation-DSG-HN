@@ -43,6 +43,7 @@ public:
     bool render_m;
     void render();
     void reset(const std::array<float, 3> &pos, const std::array<float, 4> &quat);
+    void reset(const std::array<float, 3> &pos, const std::array<float, 4> &quat, const std::array<float, 3> &vel,  const std::array<float, 3> &ang_vel);
     bool inCollision();
     bool isWindowOpen() const;
 

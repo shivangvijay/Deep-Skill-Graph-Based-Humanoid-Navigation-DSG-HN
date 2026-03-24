@@ -134,9 +134,17 @@ RobotState RobotBridgeTrain::getRobotState()
 
     return s;
 }
+
 void RobotBridgeTrain::resetRobot(const std::array<float, 3> &pos, const std::array<float, 4> &quat)
 {
     eng->reset(pos, quat);
+    env->reset();
+    current_cmd = {0.0, 0.0, 0.0};
+}
+
+void RobotBridgeTrain::resetRobot(const std::array<float, 3> &pos, const std::array<float, 4> &quat, const std::array<float, 3> &vel, const std::array<float, 3> &ang_vel)
+{
+    eng->reset(pos, quat, vel, ang_vel);
     env->reset();
     current_cmd = {0.0, 0.0, 0.0};
 }
