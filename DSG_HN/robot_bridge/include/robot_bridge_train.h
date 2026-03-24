@@ -23,6 +23,9 @@ public:
     void update() override;
     bool inCollision();
 
+    mjModel* getModel() const { return eng->getModel(); }
+    mjData*  getData()  const { return eng->getData(); }
+
 private:
     std::shared_ptr<MuJoCoEngine> eng;
     std::unique_ptr<isaaclab::ManagerBasedRLEnv> env;
