@@ -13,6 +13,9 @@
 #define DOF 35                 // note that the actual DOF is 29, but the msg has 35 motors, so just going to read all 35
 #define VELOCITY_POLICY_DT 0.1 // 10 Hz, this we can change later on though
 
+// note: pos, vel, and orientation are given in the context of the global reference frame
+// everything else is given w.r.t to the local frame of the robot
+
 struct RobotState
 {
     std::array<float, DOF> q;
