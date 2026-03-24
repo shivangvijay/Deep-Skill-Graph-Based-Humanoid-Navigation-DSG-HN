@@ -7,6 +7,9 @@
 #include <array>
 
 void silent_warning_handler(const char *msg);
+void mouse_button(GLFWwindow *window, int button, int action, int mods);
+void mouse_move(GLFWwindow *window, double xpos, double ypos);
+void scroll(GLFWwindow *window, double xoffset, double yoffset);
 
 class MuJoCoEngine
 {
@@ -43,12 +46,15 @@ public:
     bool render_m;
     void render();
     void reset(const std::array<float, 3> &pos, const std::array<float, 4> &quat);
-    void reset(const std::array<float, 3> &pos, const std::array<float, 4> &quat, const std::array<float, 3> &vel,  const std::array<float, 3> &ang_vel);
+    void reset(const std::array<float, 3> &pos, const std::array<float, 4> &quat, const std::array<float, 3> &vel, const std::array<float, 3> &ang_vel);
     bool inCollision();
     bool isWindowOpen() const;
 
-private:
-    void initViz();
+    double lastx = 0;
+    double lasty = 0;
+    bool button_left = false;
+    bool button_middle = false;
+    bool button_right = false;
 
     mjModel *m = nullptr;
     mjData *d = nullptr;
@@ -60,4 +66,7 @@ private:
     mjvScene scn;    // abstract scene
     mjrContext con;  // custom GPU context
     mjvPerturb pert; // mouse perturbation
+
+private:
+    void initViz();
 };
