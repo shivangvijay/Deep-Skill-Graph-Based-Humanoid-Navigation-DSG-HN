@@ -119,6 +119,7 @@ int main(int argc, char **argv)
         robot_bridge->update();
         auto state = robot_bridge->getRobotState();
 
+        std::cout << "Command: " << vx << ", " << vy << ", " << oz << std::endl;
         std::cout << "Velocity: " << state.velocity[0] << ", " << state.velocity[1] << ", " << state.velocity[2] << std::endl;
     }
 

@@ -16,6 +16,8 @@
 // note: pos, vel, and orientation are given in the context of the global reference frame
 // everything else is given w.r.t to the local frame of the robot
 
+// additionally: note that command is relative, not global velocity
+
 struct RobotState
 {
     std::array<float, DOF> q;

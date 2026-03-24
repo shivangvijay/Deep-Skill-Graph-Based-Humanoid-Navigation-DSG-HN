@@ -174,6 +174,9 @@ private:
 
     torch::Tensor transformState(const RobotState &state)
     {
+        // when designing this, note that the state is a mix of being in the global and local reference frame
+        // however, the final policy output is velocity RELATIVE to the robot
+        
         auto options = torch::TensorOptions().dtype(torch::kFloat32);
         torch::Tensor tensor_state = torch::empty({(int64_t)state_dim}, options);
         float *data_ptr = tensor_state.data_ptr<float>();
