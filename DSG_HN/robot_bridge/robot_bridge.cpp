@@ -76,10 +76,13 @@ float RobotBridge::distanceToNearestObstacle(const std::array<float, 3> &pos, co
     float min_dist = std::numeric_limits<float>::max();
     for (const auto &obs : obstacles)
     {
-        float dx = std::abs(pos[0] - obs.position[0]) - obs.size[0]; // assuming cylindrical obstacles
-        float dy = std::abs(pos[1] - obs.position[1]) - obs.size[1];
+        float dx = pos[0] - obs.position[0];
+        float dy = pos[1] - obs.position[1];
+        float center_dist = std::sqrt(dx * dx + dy * dy);
 
-        min_dist = std::min(min_dist, std::sqrt(dx * dx + dy * dy));
+        float actual_dist = center_dist - obs.size[0];
+
+        min_dist = std::min(min_dist, actual_dist);
     }
     return min_dist;
 }
@@ -118,7 +121,7 @@ std::tuple<std::array<float, 3>, std::array<float, 4>, std::array<float, 3>, std
 
         float ang_vel_yaw = -vel_limits[2] + static_cast<float>(rand()) / (RAND_MAX / (2 * vel_limits[2]));
         ang_vel = {0.0, 0.0, ang_vel_yaw};
-    } while (distanceToNearestObstacle(pos, quat) < 0.3);
+    } while (distanceToNearestObstacle(pos, quat) < 0.5);
 
     return {pos, quat, vel, ang_vel};
 }
