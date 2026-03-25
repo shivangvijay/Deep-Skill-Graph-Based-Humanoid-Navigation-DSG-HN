@@ -65,6 +65,7 @@ public:
         if (states.empty())
             throw std::runtime_error("InitiationSetClassifier: no training data");
 
+        // these parameters are commonly used for one-class SVMs, but may require tuning based on the data distribution
         svm_parameter param{};
         param.svm_type = ONE_CLASS;
         param.kernel_type = RBF;
@@ -119,7 +120,26 @@ public:
         _model = m;
     }
 
-    bool trained() const { return _model != nullptr; } // Check if model is trained
+    bool trained() const { return _model != nullptr; }
+
+    // Returns all support vectors as dense float vectors (length = n_features).
+    // libsvm stores SVs in sparse svm_node format; this decodes them to plain vectors.
+    // SVs are the literal boundary points of the learned SVM — used as spawn states
+    // for Phase 3 refinement rather than approximating from training data.
+    std::vector<std::vector<float>> getSupportVectors(int n_features) const
+    {
+        _check_model();
+        std::vector<std::vector<float>> svs;
+        svs.reserve(_model->l);
+        for (int i = 0; i < _model->l; ++i)
+        {
+            std::vector<float> vec(n_features, 0.0f);
+            for (const svm_node *n = _model->SV[i]; n->index != -1; ++n)
+                vec[n->index - 1] = static_cast<float>(n->value);
+            svs.push_back(std::move(vec));
+        }
+        return svs;
+    }
 
 private:
     svm_model *_model = nullptr;
