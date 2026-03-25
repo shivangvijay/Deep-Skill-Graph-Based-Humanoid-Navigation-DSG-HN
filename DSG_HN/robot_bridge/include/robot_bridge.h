@@ -57,6 +57,7 @@ public:
     void printState(const RobotState &s) const;
     std::pair<std::array<float, 3>, std::array<float, 4>> generateRandomPose() const;
     std::tuple<std::array<float, 3>, std::array<float, 4>, std::array<float, 3>,  std::array<float, 3>> generateRandomPoseWithVel() const;
+    float x_min = -5.0, x_max = 5.0, y_min = -5.0, y_max = 5.0;
 
 
 protected:
@@ -68,6 +69,5 @@ protected:
     std::vector<Obstacle> obstacles;
     std::vector<float> current_cmd = {0.0, 0.0, 0.0};
     std::array<float, 3> vel_limits = {0.5, 0.3, 0.2};
-    float x_min = -5.0, x_max = 5.0, y_min = -5.0, y_max = 5.0;
     float velocity_policy_dt = VELOCITY_POLICY_DT;
 };

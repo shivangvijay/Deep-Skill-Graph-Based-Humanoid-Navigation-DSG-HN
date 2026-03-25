@@ -29,6 +29,7 @@ void RobotBridge::readScene() // assuming cylindrical obstacles!
                 size_t start = type_pos + 6; // move past name="
                 size_t end = line.find("\"", start);
                 obs.type = line.substr(start, end - start);
+                if (obs.type != "cylinder") continue;
                 found_type = true;
             }
 
