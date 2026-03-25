@@ -91,6 +91,18 @@ public:
         _goal_fixed = true;
     }
 
+    // Convenience: goal position only, zero velocity, identity orientation
+    void setGoal(const std::array<float, 3> &pos)
+    {
+        setGoal(pos, {1.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f});
+    }
+
+    // Convenience: reset to pos + quat, zero velocity
+    torch::Tensor resetTo(const std::array<float, 3> &pos, const std::array<float, 4> &quat)
+    {
+        return resetTo(pos, quat, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f});
+    }
+
     void clearGoal()
     {
         _goal_fixed = false;
