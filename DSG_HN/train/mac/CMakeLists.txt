@@ -34,6 +34,9 @@ include_directories(
 file(COPY ${SCENE_XML_DIR}/ DESTINATION ${PROJECT_SOURCE_DIR}/config/scene)
 file(COPY ${POLICY_CONFIG_DIR}/ DESTINATION ${PROJECT_SOURCE_DIR}/config)
 
+# Symlink mac/models -> mac/build so that test can load models via "../models/"
+file(CREATE_LINK ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/models SYMBOLIC)
+
 set(COMMON_SOURCES
   ${TRAIN_DIR}/agent.cpp
   ${TRAIN_DIR}/../robot_bridge/mujoco_utils/mujoco_engine.cpp
