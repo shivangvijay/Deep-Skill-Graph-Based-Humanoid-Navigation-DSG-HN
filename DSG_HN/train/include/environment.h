@@ -75,6 +75,8 @@ public:
         return transformState(robot_bridge->getRobotState());
     }
 
+    std::array<float, 3> getGoalPosition() const { return std::get<0>(goal); }
+
     std::pair<std::array<float, 3>, std::array<float, 4>> getRobotPose() const
     {
         RobotState s = robot_bridge->getRobotState();
