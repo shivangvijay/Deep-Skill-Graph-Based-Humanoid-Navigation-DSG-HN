@@ -71,55 +71,77 @@ public:
         , _poo(env, _cfg.poo_layers, device, _cfg.lr_poo, _cfg.tau, _cfg.gamma, _cfg.batch_size)
     {}
 
-    // Train the full DSC chain backward from the global goal.
-    // Returns the number of skills trained.
+    // Load a pre-trained TD3 policy as oG — the permanent global option (IoG = 1).
+    // oG is always available to πO and terminates at the global goal.
+    // Must be called before train(). No classifier is trained; canStart() always returns true.
+    void loadGlobalOption(const std::string &actor_path,
+                          const std::string &critic1_path,
+                          const std::string &critic2_path)
+    {
+        _skills.emplace_back(_makeSkill());
+        _skills[0].setAlwaysAvailable();
+        torch::load(_skills[0].agent().actor_local,    actor_path);
+        torch::load(_skills[0].agent().critic_local_1, critic1_path);
+        torch::load(_skills[0].agent().critic_local_2, critic2_path);
+        _poo.addOption(0.0f);
+        _poo.hardCopy();
+        std::cout << "=== Loaded global option oG from " << actor_path << " ===" << std::endl;
+    }
+
+    // Train the DSC chain backward from the global goal.
+    // Requires loadGlobalOption() to have been called first.
+    // Skills are indexed: _skills[0]=oG, _skills[1]=og1 (terminal), _skills[2]=og2, ...
+    // og1 terminates at goal; ogk (k>=2) terminates when og(k-1).canStart().
+    // Returns the total number of skills including oG.
     int train()
     {
-        // Fix the global goal once for the entire training run.
+        if (_skills.empty())
+        {
+            std::cerr << "Error: call loadGlobalOption() before train()." << std::endl;
+            return 0;
+        }
+
         _env->setGoal(_global_goal);
 
-        // === Skill 0 (oG): terminal skill ===
-        std::cout << "\n=== Training terminal skill (oG) ===" << std::endl;
+        // === og1: first chain skill, terminates at global goal ===
+        std::cout << "\n=== Training og1 (terminal chain skill) ===" << std::endl;
         _skills.emplace_back(_makeSkill());
-        _skills[0].learn(
+        _skills[1].learn(
             _cfg.steps_per_episode, _cfg.gestation_n, _cfg.last_k,
             _cfg.refinement_eps, _cfg.nu,
             /*next_skill=*/nullptr, _cfg.start_noise_radius);
-        _env->setGoal(_global_goal); // restore after learn() may have changed it
+        _env->setGoal(_global_goal);
         _poo.addOption(0.0f);
-        _poo.hardCopy();
 
-        if (_startCovered())
+        if (_startCovered()) // terminal skill can cover the start right away if the global option is good and start is close to the goal
         {
-            std::cout << "Start state covered after terminal skill. Done." << std::endl;
-            return 1;
+            std::cout << "Start covered by og1. Chain complete." << std::endl;
+            return (int)_skills.size();
         }
 
-        // === Skills 1..max_skills-1: chain backward ===
-        for (int i = 1; i < _cfg.max_skills; ++i)
+        // === og2..ogN: chain backward, each terminating at previous skill's initiation set ===
+        for (int i = 2; i < _cfg.max_skills + 1; ++i)
         {
             const Skill *next = &_skills[i - 1];
-            std::cout << "\n=== Training skill " << i
-                      << " (terminates at skill " << i - 1 << "'s initiation set) ===" << std::endl;
+            std::cout << "\n=== Training og" << i
+                      << " (terminates at og" << i - 1 << "'s initiation set) ===" << std::endl;
 
             _skills.emplace_back(_makeSkill());
             _skills[i].learn(
                 _cfg.steps_per_episode, _cfg.gestation_n, _cfg.last_k,
                 _cfg.refinement_eps, _cfg.nu,
                 next, _cfg.start_noise_radius);
-            _env->setGoal(_global_goal); // restore after per-episode subgoal overrides
+            _env->setGoal(_global_goal);
             _poo.addOption(0.0f);
 
             if (_startCovered())
             {
-                std::cout << "Start state covered by skill " << i
-                          << ". DSC chain complete." << std::endl;
-                return i + 1;
+                std::cout << "Start covered by og" << i << ". DSC chain complete." << std::endl;
+                return (int)_skills.size();
             }
         }
 
-        std::cout << "Max skills (" << _cfg.max_skills
-                  << ") reached without covering start." << std::endl;
+        std::cout << "Max skills reached without covering start." << std::endl;
         return (int)_skills.size();
     }
 
@@ -150,9 +172,11 @@ public:
 
                 bool env_done = done_t.item<float>() > 0.5f;
 
-                // β: terminal skill ends when env says done;
-                //    non-terminal ends when the preceding skill can start.
-                bool beta = (opt_idx == 0)
+                // β termination conditions:
+                //   oG  (idx=0): terminates at global goal (env_done)
+                //   og1 (idx=1): terminates at global goal (env_done)
+                //   ogk (idx≥2): terminates when og(k-1).canStart() — entry into previous chain skill
+                bool beta = (opt_idx <= 1)
                     ? env_done
                     : _skills[opt_idx - 1].canStart(next_state);
 

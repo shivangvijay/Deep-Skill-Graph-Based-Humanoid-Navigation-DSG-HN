@@ -84,12 +84,15 @@ public:
     }
 
     // Returns true if the given state is in this skill's initiation set.
-    // Uses the current absolute robot position from the shared environment.
+    // If _always_available is set (oG global option), always returns true.
     bool canStart(const torch::Tensor &state) const
     {
+        if (_always_available) return true;
         auto [pos, quat] = _env->getRobotPose();
         return _classifier.classify(_classifierVec(state, pos));
     }
+
+    void setAlwaysAvailable() { _always_available = true; }
 
     // Returns a random gestation record as a full AbstractedState (pos, quat, vel, ang_vel).
     // Used as the per-episode subgoal for the skill preceding this one in the chain,
@@ -137,6 +140,18 @@ public:
         _classifier.load(classifier_path);
     }
 
+    // Load only the TD3 policy weights (no classifier). Marks this skill as having a
+    // pre-trained policy so that gestation runs in eval mode (no further TD3 updates).
+    void loadPolicy(const std::string &actor_path,
+                    const std::string &critic1_path,
+                    const std::string &critic2_path)
+    {
+        torch::load(_agent.actor_local,    actor_path);
+        torch::load(_agent.critic_local_1, critic1_path);
+        torch::load(_agent.critic_local_2, critic2_path);
+        _policy_pretrained = true;
+    }
+
     TD3Agent &agent() { return _agent; }
 
 private:
@@ -145,6 +160,7 @@ private:
     InitiationSetClassifier           _classifier;
     std::vector<GestationRecord>      _gestation_records; // persisted after learn()
     mutable std::mt19937              _rng;
+    bool                              _always_available = false; // true for oG: IoG=1, can always start
 
     // Build the 13-dim classifier feature vector.
     // abs_pos: absolute robot position (NOT relative to goal — classifier is goal-independent).

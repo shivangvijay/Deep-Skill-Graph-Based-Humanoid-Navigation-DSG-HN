@@ -5,18 +5,23 @@
 #include <torch/torch.h>
 #include <iostream>
 
-#define SCENE_FILE "../config/scene/umaze_scene.xml"
+#define SCENE_FILE "../config/scene/test_scene.xml"
 #define POLICY_DIR "config/policy/velocity"
 #define CONFIG_PATH "config/config.yaml"
 
-#define X_MIN -10.0f
-#define X_MAX  10.0f
-#define Y_MIN -10.0f
-#define Y_MAX  10.0f
+// Pre-trained global option (oG) — TD3 policy from a prior training run.
+#define OG_ACTOR   "best_actor.pt"
+#define OG_CRITIC1 "best_critic_1.pt"
+#define OG_CRITIC2 "best_critic_2.pt"
 
-// Fixed global goal: north-east corner of the umaze, past the wall gap.
-// Start position (bottom-left, sandbox default) is roughly (-7, -7).
-static const std::array<float, 3> GLOBAL_GOAL = {7.0f, 7.0f, 0.0f};
+// test_scene arena bounds (metres). Obstacles span ~±3 m; add margin.
+#define X_MIN -5.0f
+#define X_MAX  5.0f
+#define Y_MIN -5.0f
+#define Y_MAX  5.0f
+
+// Global goal: set this to the desired target position in the test_scene coordinate frame.
+static const std::array<float, 3> GLOBAL_GOAL = {3.0f, 3.0f, 0.0f};
 
 int main(int argc, char **argv)
 {
@@ -43,6 +48,7 @@ int main(int argc, char **argv)
     cfg.max_skills         = 6; // maximum number of skills to chain before giving up (to prevent infinite loops in edge cases where start is not covered)
 
     DeepSkillChaining dsc(train_env, device, GLOBAL_GOAL, cfg);
+    dsc.loadGlobalOption(OG_ACTOR, OG_CRITIC1, OG_CRITIC2);
     int n = dsc.train();
     std::cout << "\nTraining complete: " << n << " skill(s) discovered." << std::endl;
 
