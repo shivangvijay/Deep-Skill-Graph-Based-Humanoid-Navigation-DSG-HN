@@ -1,36 +1,34 @@
 <!-- G1 29-DOF U-maze scene for DSG/DSC training
-     Arena: 20x20 m (±10 in x and y)
+     Arena: 14x14 m (±7 in x and y)
 
      Layout (top-down, north = +y):
 
-       y=10  ####################################
-             #                                  #
-       y=8   #        [C6]                       #
-             #                                  #
-       y=6   #   [C3]                   [C5]    #
-             #                                  #
-       y=1.5 # ############################     #   <- maze_wall (gap on east, x=3..10)
-             #                      [C4]        #
-       y=-4  #   [C2]          [C1]             #
-             #                                  #
-       y=-7  #         [C7]                     #
-             #                                  #
-       y=-10 ####################################
-             x=-10                           x=10
+       y=7   ############################
+             #                          #
+       y=5   #      [C6]                #
+             #                          #
+       y=3   #   [C3]     [C5]          #
+             #                          #
+       y=1.0 # ###########              #   <- cylinder wall (gap on east, x > ~1.5)
+             #        [C4]              #
+       y=-2  #   [C2]   [C1]            #
+             #                          #
+       y=-4  #      [C7]                #
+             #                          #
+       y=-7  ############################
+             x=-7                    x=7
 
-     The maze wall blocks direct north-south travel except through the eastern gap (x>3).
-     A flat distance-minimising agent approaching a goal north of the wall from the south
-     will press against the wall — DSC must chain skills around the gap.
+     Same task: must go around the right-side gap.
 
      Naming convention:
-       layout_*   ->  parsed by readScene() into the policy's obstacle state vector (cylinders only)
-       maze_*     ->  structural walls, NOT in state vector (sensed implicitly via collision)
-       boundary_* ->  arena perimeter, NOT in state vector
+       layout_*   -> parsed into policy state
+       boundary_* -> not observed
 -->
+
 <mujoco model="g1_29dof scene">
   <include file="g1_29dof.xml"/>
 
-  <statistic center="0 0 0.5" extent="4.0"/>
+  <statistic center="0 0 0.5" extent="4.5"/>
 
   <visual>
     <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
@@ -39,45 +37,65 @@
   </visual>
 
   <asset>
-    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
-    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3"
-      markrgb="0.8 0.8 0.8" width="300" height="300"/>
-    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2"/>
+    <texture type="skybox" builtin="gradient"
+             rgb1="0.3 0.5 0.7" rgb2="0 0 0"
+             width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker"
+             mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3"
+             markrgb="0.8 0.8 0.8"
+             width="300" height="300"/>
+    <material name="groundplane" texture="groundplane"
+              texuniform="true" texrepeat="5 5"
+              reflectance="0.2"/>
   </asset>
 
   <worldbody>
     <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
 
-    <!-- Floor: infinite plane covers the full 20x20 arena -->
-    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
+    <!-- Floor -->
+    <geom name="floor" type="plane" size="0 0 0.05" material="groundplane"/>
 
-    <!-- Boundary walls (half-extents: 10m long, 0.2m thick, 2m tall) -->
-    <geom name="boundary_north" type="box" pos="0 10 1"  size="10 0.2 1" rgba="0.4 0.4 0.5 1"/>
-    <geom name="boundary_south" type="box" pos="0 -10 1" size="10 0.2 1" rgba="0.4 0.4 0.5 1"/>
-    <geom name="boundary_east"  type="box" pos="10 0 1"  size="0.2 10 1" rgba="0.4 0.4 0.5 1"/>
-    <geom name="boundary_west"  type="box" pos="-10 0 1" size="0.2 10 1" rgba="0.4 0.4 0.5 1"/>
+    <!-- Boundaries -->
+    <geom name="boundary_north" type="box" pos="0 7.1 1"  size="7 0.2 1"/>
+    <geom name="boundary_south" type="box" pos="0 -7.1 1" size="7 0.2 1"/>
+    <geom name="boundary_east"  type="box" pos="7.1 0 1"  size="0.2 7 1"/>
+    <geom name="boundary_west"  type="box" pos="-7.1 0 1" size="0.2 7 1"/>
 
-    <!-- U-maze dividing wall: runs east-west from x=-9.8 to x=3 at y=1.5
-         half-extents: x=6.4 (12.8m long), y=0.3 (0.6m thick), z=1 (2m tall)
-         centre at (-3.4, 1.5) -> western face at x=-9.8, eastern face at x=3.
-         Gap from x=3 to boundary_east (x=9.8): ~6.8m wide. -->
-    <geom name="maze_wall" type="box" pos="-3.4 1.5 1" size="6.4 0.3 1" rgba="0.6 0.55 0.45 1"/>
+    <!-- ========================= -->
+    <!-- CYLINDER WALL (extended) -->
+    <!-- ========================= -->
+    <!-- y = 1.0, gap for x > ~1.5 -->
 
-    <!-- Local clutter cylinders (layout_ prefix -> parsed into policy state vector)
-         Distributed across both corridors so the local option must dodge them.
-         South corridor (y < 1.5): two cylinders near typical traversal paths -->
-    <geom name="layout_cylinder1" type="cylinder" pos="4.0 -4.0 0.5"  size="0.5 0.5"  quat="1 0 0 0"/>
-    <geom name="layout_cylinder2" type="cylinder" pos="-4.0 -3.5 0.5" size="0.425 0.6" quat="1 0 0 0"/>
-    <!-- North corridor (y > 1.5): one cylinder to keep local option busy after rounding the wall -->
-    <geom name="layout_cylinder3" type="cylinder" pos="-3.0 6.0 0.65" size="0.5 0.65" quat="1 0 0 0"/>
-    <!-- East gap approach (just south of wall, x~6.5): forces the agent to weave through the gap -->
-    <geom name="layout_cylinder4" type="cylinder" pos="6.5 -0.5 0.5"  size="0.45 0.5"  quat="1 0 0 0"/>
-    <!-- North-east corridor: spreads clutter to the far corner above the gap -->
-    <geom name="layout_cylinder5" type="cylinder" pos="6.0 5.5 0.5"   size="0.5 0.5"   quat="1 0 0 0"/>
-    <!-- Far north, slightly west: covers the upper-left quadrant -->
-    <geom name="layout_cylinder6" type="cylinder" pos="-1.0 8.0 0.5"  size="0.45 0.5"  quat="1 0 0 0"/>
-    <!-- Deep south-centre: covers the wide-open lower portion of the arena -->
-    <geom name="layout_cylinder7" type="cylinder" pos="0.5 -7.5 0.5"  size="0.5 0.5"   quat="1 0 0 0"/>
+    <geom name="layout_wall_0" type="cylinder" pos="-6.5 1.0 0.5" size="0.4 0.5"/>
+    <geom name="layout_wall_1" type="cylinder" pos="-5.7 1.0 0.5" size="0.4 0.5"/>
+    <geom name="layout_wall_2" type="cylinder" pos="-4.9 1.0 0.5" size="0.4 0.5"/>
+    <geom name="layout_wall_3" type="cylinder" pos="-4.1 1.0 0.5" size="0.4 0.5"/>
+    <geom name="layout_wall_4" type="cylinder" pos="-3.3 1.0 0.5" size="0.4 0.5"/>
+    <geom name="layout_wall_5" type="cylinder" pos="-2.5 1.0 0.5" size="0.4 0.5"/>
+    <geom name="layout_wall_6" type="cylinder" pos="-1.7 1.0 0.5" size="0.4 0.5"/>
+    <geom name="layout_wall_7" type="cylinder" pos="-0.9 1.0 0.5" size="0.4 0.5"/>
+    <geom name="layout_wall_8" type="cylinder" pos="-0.1 1.0 0.5" size="0.4 0.5"/>
+    <geom name="layout_wall_9" type="cylinder" pos="0.7  1.0 0.5" size="0.4 0.5"/>
+    <geom name="layout_wall_10" type="cylinder" pos="1.5 1.0 0.5" size="0.4 0.5"/>
+
+    <!-- Gap continues to x = 7 -->
+
+    <!-- ========================= -->
+    <!-- CLUTTER (unchanged) -->
+    <!-- ========================= -->
+
+    <geom name="layout_cylinder1" type="cylinder" pos="2.0 -2.5 0.5" size="0.5 0.5"/>
+    <geom name="layout_cylinder2" type="cylinder" pos="-2.5 -2.0 0.5" size="0.45 0.5"/>
+
+    <geom name="layout_cylinder3" type="cylinder" pos="-2.0 3.0 0.5" size="0.4 0.5"/>
+
+    <geom name="layout_cylinder4" type="cylinder" pos="3.0 0.5 0.5" size="0.4 0.5"/>
+
+    <geom name="layout_cylinder5" type="cylinder" pos="3.5 3.5 0.5" size="0.5 0.5"/>
+
+    <geom name="layout_cylinder6" type="cylinder" pos="-0.5 4.2 0.5" size="0.4 0.5"/>
+
+    <geom name="layout_cylinder7" type="cylinder" pos="0.0 -4.0 0.5" size="0.5 0.5"/>
 
   </worldbody>
 </mujoco>

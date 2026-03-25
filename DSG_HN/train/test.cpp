@@ -11,7 +11,7 @@
 #include "agent.h"
 #include <torch/torch.h>
 
-#define SCENE_FILE "../config/scene/test_scene.xml"
+#define SCENE_FILE "../config/scene/umaze_scene.xml"
 #define POLICY_DIR "config/policy/velocity"
 #define CONFIG_PATH "config/config.yaml"
 
@@ -63,7 +63,7 @@ int main(int argc, char **argv)
         auto [next_state, reward, done] = train_env->step(action);
         if (done.data_ptr<float>()[0] > 0.5)
         {
-            if (reward.data_ptr<float>()[0] > 0.0)
+            if (reward.data_ptr<float>()[0] > 90.0)
                 std::cout << "Episode Success: " << reward.item<float>() << std::endl;
             state = train_env->reset();
         }

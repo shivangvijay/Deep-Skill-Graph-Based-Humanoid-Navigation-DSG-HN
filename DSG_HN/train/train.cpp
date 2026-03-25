@@ -11,7 +11,7 @@
 #include "agent.h"
 #include <torch/torch.h>
 
-#define SCENE_FILE "../config/scene/test_scene.xml"
+#define SCENE_FILE "../config/scene/umaze_scene.xml"
 #define POLICY_DIR "config/policy/velocity"
 #define CONFIG_PATH "config/config.yaml"
 
@@ -42,7 +42,7 @@ int main(int argc, char **argv)
     auto policy_dir = param::parser_policy_dir(rel_path);
 
     std::shared_ptr<RobotBridgeTrain> robot_bridge = std::make_shared<RobotBridgeTrain>(SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, render); //eng, std::move(env), render);
-    std::shared_ptr<TrainEnvironment> train_env = std::make_shared<TrainEnvironment>(robot_bridge, 1000);
+    std::shared_ptr<TrainEnvironment> train_env = std::make_shared<TrainEnvironment>(robot_bridge, 2000);
 
     torch::Device device(torch::kCPU);
     if (torch::cuda::is_available())
@@ -59,7 +59,7 @@ int main(int argc, char **argv)
     int num_frames = 0;
     auto start_time = std::chrono::high_resolution_clock::now();
     int num_steps = 20000;
-    int num_epochs = 40;
+    int num_epochs = 60;
 
     // for testing, gonna have a new random option that I am gonna add after 1000 steps
     PolicyOverOptionsAgent option_agent(train_env, critic_layer_sizes, device, CRITIC_LR, TAU, GAMMA, BATCH_SIZE);
@@ -110,7 +110,7 @@ int main(int argc, char **argv)
             if (done.data_ptr<float>()[0] > 0.5)
             {
                 num_episodes++;
-                if (reward.data_ptr<float>()[0] > 0.0)
+                if (reward.data_ptr<float>()[0] > 90)
                     num_success++;
                 state = train_env->reset();
             }
