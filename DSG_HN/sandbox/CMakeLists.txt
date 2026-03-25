@@ -10,7 +10,6 @@ set(MUJOCO_DIR     "${PROJECT_SOURCE_DIR}/../../unitree_mujoco/simulate/mujoco")
 set(POLICY_CONFIG_DIR "${PROJECT_SOURCE_DIR}/../deploy/robots/g1_29dof/config")
 set(SCENE_XML_DIR  "${CMAKE_CURRENT_SOURCE_DIR}/../../unitree_mujoco/unitree_robots/g1")
 set(JOYSTICK_SRC   "${PROJECT_SOURCE_DIR}/../../unitree_mujoco/simulate/src")
-set(SIMULATE_SRC   "${MUJOCO_DIR}/simulate")
 
 include_directories(
   /usr/include/eigen3
@@ -23,8 +22,6 @@ include_directories(
   ${PROJECT_SOURCE_DIR}/../../unitree_sdk2/include
   ${PROJECT_SOURCE_DIR}/../robot_bridge/include
   ${JOYSTICK_SRC}
-  ${JOYSTICK_SRC}/lodepng
-  ${SIMULATE_SRC}
 )
 
 # Copy scene XML files and policy config alongside the binary
@@ -42,13 +39,11 @@ link_libraries(
 file(GLOB SIMULATE_SOURCES
   ${SIMULATE_SRC}/glfw_*.cc
   ${SIMULATE_SRC}/platform_*.cc
-  ${SIMULATE_SRC}/simulate.cc
 )
 
 add_executable(sandbox
   sandbox.cpp
   ${JOYSTICK_SRC}/joystick/joystick.cc
-  ${JOYSTICK_SRC}/lodepng/lodepng.cpp
   ${PROJECT_SOURCE_DIR}/../robot_bridge/mujoco_utils/mujoco_engine.cpp
   ${PROJECT_SOURCE_DIR}/../robot_bridge/robot_bridge.cpp
   ${PROJECT_SOURCE_DIR}/../robot_bridge/robot_bridge_train.cpp

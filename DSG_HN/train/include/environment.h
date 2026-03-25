@@ -41,6 +41,8 @@ public:
             goal = robot_bridge->generateRandomPoseWithVel();
         }
         current_step = 0;
+        last_pos_error = 0;
+        last_vel_error = 0;
 
         return transformState(robot_bridge->getRobotState());
     }
@@ -176,7 +178,7 @@ private:
     {
         // when designing this, note that the state is a mix of being in the global and local reference frame
         // however, the final policy output is velocity RELATIVE to the robot
-        
+
         auto options = torch::TensorOptions().dtype(torch::kFloat32);
         torch::Tensor tensor_state = torch::empty({(int64_t)state_dim}, options);
         float *data_ptr = tensor_state.data_ptr<float>();
@@ -231,39 +233,95 @@ private:
         return tensor_state;
     }
 
+    // formulation where we reward for moving towards target seems better than one that just has negative distances
+
+    // std::pair<float, bool> computeReward()
+    // {
+    //     RobotState state = robot_bridge->getRobotState();
+    //     bool collision = robot_bridge->inCollision();
+
+    //     auto &[goal_position, goal_orientation, goal_velocity, goal_angular_velocity] = goal;
+
+    //     float pos_error = std::sqrt((state.position[0] - goal_position[0]) * (state.position[0] - goal_position[0]) +
+    //                                 (state.position[1] - goal_position[1]) * (state.position[1] - goal_position[1]));
+
+    //     float vel_error = std::sqrt((state.velocity[0] - goal_velocity[0]) * (state.velocity[0] - goal_velocity[0]) +
+    //                                 (state.velocity[1] - goal_velocity[1]) * (state.velocity[1] - goal_velocity[1]));
+
+    //     // std::cout << " " << vel_error << std::endl;
+
+    //     float reward = 0;
+    //     bool terminated = false;
+    //     if (collision)
+    //     {
+    //         reward -= 10;
+    //         terminated = true;
+    //     }
+    //     else if (pos_error < 0.5 && vel_error < 0.25) // ignoring orientation for now
+    //     {
+    //         reward += 50;
+    //         terminated = true;
+    //     }
+    //     else
+    //     {
+    //         reward -= (pos_error / 10.0) + (vel_error / 10.0);
+    //     }
+    //     if (current_step >= max_steps ||
+    //         state.position[0] > robot_bridge->x_max || state.position[0] < robot_bridge->x_min ||
+    //         state.position[1] > robot_bridge->y_max || state.position[1] < robot_bridge->y_min)
+    //     {
+    //         terminated = true;
+    //     }
+    //     return {reward, terminated};
+    // }
+    float last_pos_error = 0;
+    float last_vel_error = 0;
     std::pair<float, bool> computeReward()
     {
         RobotState state = robot_bridge->getRobotState();
         bool collision = robot_bridge->inCollision();
+        auto &[g_pos, g_quat, g_vel, g_ang_vel] = goal;
 
-        auto &[goal_position, goal_orientation, goal_velocity, goal_angular_velocity] = goal;
+        float cur_pos_error = std::sqrt(std::pow(state.position[0] - g_pos[0], 2) +
+                                      std::pow(state.position[1] - g_pos[1], 2));
 
-        float pos_error = std::sqrt((state.position[0] - goal_position[0]) * (state.position[0] - goal_position[0]) +
-                                    (state.position[1] - goal_position[1]) * (state.position[1] - goal_position[1]));
-
-        float vel_error = std::sqrt((state.velocity[0] - goal_velocity[0]) * (state.velocity[0] - goal_velocity[0]) +
-                                    (state.velocity[1] - goal_velocity[1]) * (state.velocity[1] - goal_velocity[1]));
+        float cur_vel_error = std::sqrt(std::pow(state.velocity[0] - g_vel[0], 2) +
+                                      std::pow(state.velocity[1] - g_vel[1], 2));
 
         float reward = 0;
         bool terminated = false;
+
         if (collision)
         {
-            reward -= 10;
+            reward = -20.0f;
             terminated = true;
         }
-        else if (pos_error < 0.5 && vel_error < 0.5) // ignoring velocity and orientation for now
+        else if (cur_pos_error < 0.5 && cur_vel_error < 0.25)
         {
-            reward += 50;
+            reward = 100.0f;
             terminated = true;
         }
         else
         {
-            reward -= (pos_error / 100.0) + (vel_error / 100.0);
+            // moving 1m closer = +5.0 reward
+            float pos_progress = (last_pos_error - cur_pos_error) * 5.0f;
+
+            // closing the velocity gap by 1m/s = +10.0 reward
+            float vel_progress = (last_vel_error - cur_vel_error) * 10.0f;
+
+            reward = pos_progress + vel_progress - 0.01f;
         }
-        if (current_step >= max_steps || pos_error > 20)
+
+        if (current_step >= max_steps ||
+            state.position[0] > robot_bridge->x_max || state.position[0] < robot_bridge->x_min ||
+            state.position[1] > robot_bridge->y_max || state.position[1] < robot_bridge->y_min)
         {
             terminated = true;
         }
+
+        last_pos_error = cur_pos_error;
+        last_vel_error = cur_vel_error;
+
         return {reward, terminated};
     }
 };
