@@ -65,10 +65,11 @@ public:
         int refinement_eps        = 20,
         double nu                 = 0.1,
         double boundary_threshold = 0.5,
-        const Skill *next_skill   = nullptr)
+        const Skill *next_skill   = nullptr,
+        float start_noise_radius  = 2.0f)
     {
         std::cout << "=== Phase 1: Gestation ===" << std::endl;
-        _gestation_records = _gestation(steps_per_episode, gestation_n, last_k, next_skill);
+        _gestation_records = _gestation(steps_per_episode, gestation_n, last_k, next_skill, start_noise_radius);
 
         std::cout << "=== Phase 2: Training one-class classifier ("
                   << _gestation_records.size() << " states) ===" << std::endl;
@@ -80,8 +81,6 @@ public:
         _refineClassifier(_gestation_records, refinement_eps, steps_per_episode,
                           boundary_threshold, next_skill);
         std::cout << "Binary classifier trained." << std::endl;
-
-        _env->clearGoal(); // restore random-goal behavior for future training/evaluation
     }
 
     // Returns true if the given state is in this skill's initiation set.
@@ -98,6 +97,19 @@ public:
     {
         std::uniform_int_distribution<size_t> dist(0, _gestation_records.size() - 1);
         return _gestation_records[dist(_rng)].pos;
+    }
+
+    // Returns a random gestation-record position with Gaussian noise applied in x/y.
+    // Used to spawn the preceding skill's episodes near this skill's initiation set,
+    // rather than uniformly across the full arena.
+    std::array<float, 3> sampleStartPosition(float noise_radius = 2.0f) const
+    {
+        std::uniform_int_distribution<size_t> dist(0, _gestation_records.size() - 1);
+        std::normal_distribution<float> gauss(0.0f, noise_radius);
+        auto pos = _gestation_records[dist(_rng)].pos;
+        pos[0] += gauss(_rng);
+        pos[1] += gauss(_rng);
+        return pos;
     }
 
     // Save agent and classifier to files
@@ -175,7 +187,7 @@ private:
 
     // Phase 1: train policy until gestation_n successes; collect last_k states per success
     std::vector<GestationRecord> _gestation(int steps_per_episode, int gestation_n, int last_k,
-                                             const Skill *next_skill)
+                                             const Skill *next_skill, float start_noise_radius)
     {
         std::vector<GestationRecord> all_records; // storage for all collected gestation states across episodes
         int success_count = 0;
@@ -183,11 +195,24 @@ private:
 
         while (success_count < gestation_n)
         {
-            // Sample a fresh subgoal each episode so the policy experiences varied targets
+            // For non-terminal skills, sample a fresh subgoal each episode for reward shaping.
+            // The terminal skill's goal is the fixed global goal — already set by DSC before learn().
             if (next_skill != nullptr)
                 _env->setGoal(next_skill->sampleSubgoalPosition());
 
-            torch::Tensor state = _env->reset();
+            // Spawn near the target region:
+            // - non-terminal: near next skill's initiation set
+            // - terminal: near the fixed global goal
+            std::array<float, 3> target_pos = (next_skill != nullptr)
+                ? next_skill->sampleStartPosition(start_noise_radius)
+                : _env->getGoalPosition();
+            std::normal_distribution<float> gauss(0.0f, start_noise_radius);
+            std::array<float, 3> start_pos = {
+                target_pos[0] + gauss(_rng),
+                target_pos[1] + gauss(_rng),
+                target_pos[2]
+            };
+            torch::Tensor state = _env->resetTo(start_pos, {1.0f, 0.0f, 0.0f, 0.0f});
             std::deque<GestationRecord> window; // rolling window, max size last_k
 
             bool success = false;
