@@ -304,11 +304,11 @@ private:
         auto &goal_velocity         = goal.velocity;
         auto &goal_angular_velocity = goal.angular_velocity;
 
-        float cur_pos_error = std::sqrt(std::pow(state.position[0] - g_pos[0], 2) +
-                                      std::pow(state.position[1] - g_pos[1], 2));
+        float cur_pos_error = std::sqrt(std::pow(state.position[0] - goal_position[0], 2) +
+                                      std::pow(state.position[1] - goal_position[1], 2));
 
-        float cur_vel_error = std::sqrt(std::pow(state.velocity[0] - g_vel[0], 2) +
-                                      std::pow(state.velocity[1] - g_vel[1], 2));
+        float cur_vel_error = std::sqrt(std::pow(state.velocity[0] - goal_velocity[0], 2) +
+                                      std::pow(state.velocity[1] - goal_velocity[1], 2));
 
         float reward = 0;
         bool terminated = false;
