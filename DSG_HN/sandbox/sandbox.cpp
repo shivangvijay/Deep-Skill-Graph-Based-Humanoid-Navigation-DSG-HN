@@ -6,22 +6,24 @@
 #include <cmath>
 #include <csignal>
 #include <atomic>
+#include <string>
 
-#define SCENE_FILE "test_scene.xml"
+#define USE_WALL_CLOCK_TIME true
 
+#define SCENE_FILE "umaze_scene.xml"
 // Match policy training ranges from deploy.yaml
 // commands.base_velocity.ranges: lin_vel_x[-0.5,1.0], lin_vel_y[-0.3,0.3], ang_vel_z[-0.2,0.2]
-#define VX_MAX   1.0f
-#define VX_MIN  -0.5f
-#define VY_MAX   0.3f
-#define VY_MIN  -0.3f
-#define YAW_MAX  0.2f
+#define VX_MAX 1.0f
+#define VX_MIN -0.5f
+#define VY_MAX 0.3f
+#define VY_MIN -0.3f
+#define YAW_MAX 0.2f
 #define YAW_MIN -0.2f
 
 // Joystick device
-#define JS_DEVICE    "/dev/input/js0"
-#define JS_MAX_AXIS  32767.0f
-#define DEADZONE     0.05f
+#define JS_DEVICE "/dev/input/js0"
+#define JS_MAX_AXIS 32767.0f
+#define DEADZONE 0.05f
 
 static std::atomic<bool> running{true};
 
@@ -35,8 +37,8 @@ static float norm(int raw)
 }
 
 // Scale normalised joystick value asymmetrically to match policy range
-static float scale_vx(float n)  { return n >= 0.0f ? n * VX_MAX  : n * -VX_MIN;  }
-static float scale_vy(float n)  { return n >= 0.0f ? n * VY_MAX  : n * -VY_MIN;  }
+static float scale_vx(float n) { return n >= 0.0f ? n * VX_MAX : n * -VX_MIN; }
+static float scale_vy(float n) { return n >= 0.0f ? n * VY_MAX : n * -VY_MIN; }
 static float scale_yaw(float n) { return n >= 0.0f ? n * YAW_MAX : n * -YAW_MIN; }
 
 int main(int argc, char **argv)
@@ -101,19 +103,26 @@ int main(int argc, char **argv)
 
         // Keyboard takes priority when a movement key is held
         auto k = kb.key();
-        if      (k == "w") vx = VX_MAX;
-        else if (k == "s") vx = VX_MIN;
-        else if (k == "a") vy = VY_MAX;
-        else if (k == "d") vy = VY_MIN;
-        else if (k == "q") oz = YAW_MAX;
-        else if (k == "e") oz = YAW_MIN;
+        if (k == "w")
+            vx = VX_MAX;
+        else if (k == "s")
+            vx = VX_MIN;
+        else if (k == "a")
+            vy = VY_MAX;
+        else if (k == "d")
+            vy = VY_MIN;
+        else if (k == "q")
+            oz = YAW_MAX;
+        else if (k == "e")
+            oz = YAW_MIN;
         else if (has_joystick)
         {
             // Fallback to joystick axes; negate Y so stick-up = forward
-            vx = scale_vx ( -norm(js.axis_[1]));
-            vy = scale_vy (  norm(js.axis_[0]));
-            oz = scale_yaw(  norm(js.axis_[3]));
+            vx = scale_vx(-norm(js.axis_[1]));
+            vy = scale_vy(norm(js.axis_[0]));
+            oz = scale_yaw(norm(js.axis_[3]));
         }
+        auto t0 = std::chrono::steady_clock::now();
 
         robot_bridge->publishVelCommand({vx, vy, oz});
         robot_bridge->update();
@@ -121,6 +130,11 @@ int main(int argc, char **argv)
 
         std::cout << "Command: " << vx << ", " << vy << ", " << oz << std::endl;
         std::cout << "Velocity: " << state.velocity[0] << ", " << state.velocity[1] << ", " << state.velocity[2] << std::endl;
+
+        auto elapsed = std::chrono::steady_clock::now() - t0;
+        auto remaining = std::chrono::milliseconds(100) - elapsed;
+        if (remaining > std::chrono::milliseconds(0) && USE_WALL_CLOCK_TIME)
+            std::this_thread::sleep_for(remaining);
     }
 
     return 0;

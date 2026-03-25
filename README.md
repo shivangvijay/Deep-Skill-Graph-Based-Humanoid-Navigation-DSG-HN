@@ -115,6 +115,77 @@ Note that some of the flags are required due to not setting system paths, and ha
 
 ## Starting the application
 
+### Sandbox (Interactive MuJoCo Viewer)
+
+The sandbox lets you drive the robot around any MuJoCo scene using the full interactive MuJoCo viewer (mouse orbit/pan/zoom, pause/play, contact visualization) with WASD keyboard or joystick control.
+
+#### Build
+
+**Linux:**
+```bash
+cd DSG_HN/sandbox
+mkdir build && cd build
+cmake .. && make -j$(nproc)
+```
+
+**macOS:**
+```bash
+cd DSG_HN/sandbox/mac/build
+cmake .. && make -j$(sysctl -n hw.logicalcpu)
+```
+
+#### Run
+
+```bash
+./sandbox
+```
+
+The robot spawns at a fixed safe position. The full MuJoCo interactive viewer opens automatically.
+
+#### Controls
+
+| Key               | Action                        |
+| ----------------- | ----------------------------- |
+| `w` / `s`         | Forward / backward            |
+| `a` / `d`         | Strafe left / right           |
+| `q` / `e`         | Rotate left / right           |
+| `r`               | Reset robot to spawn position |
+| `0`               | Quit                          |
+| Mouse (in viewer) | Orbit / pan / zoom camera     |
+
+An Xbox/joystick controller is also supported if connected at `/dev/input/js0`. Left stick controls forward/strafe, right stick controls rotation, Back resets, Start quits.
+
+#### Changing the scene
+
+The sandbox scene is set by `SCENE_FILE` at the top of `DSG_HN/sandbox/sandbox.cpp` (currently `"umaze_scene.xml"`). To use a different scene:
+
+1. **Edit or create a scene XML** in `unitree_mujoco/unitree_robots/g1/`. The robot model is always loaded via `<include file="g1_29dof.xml"/>`. Two scene files are provided:
+
+   | File | Description |
+   |------|-------------|
+   | `test_scene.xml` | Small open arena (±5 m) with 3 cylinder obstacles |
+   | `umaze_scene.xml` | Large U-maze arena (±10 m) with a dividing wall and 7 obstacles |
+
+2. **Obstacle naming convention** — only `<geom>` elements whose `name` starts with `layout_` are parsed into the policy's obstacle state vector. Structural walls and boundary walls should use a different prefix (e.g. `maze_`, `boundary_`) so they are sensed via collision only and do not corrupt the state encoding.
+
+   ```xml
+   <!-- Counted as an obstacle in the state vector (policy can sense it): -->
+   <geom name="layout_cylinder1" type="cylinder" pos="4.0 -4.0 0.5" size="0.5 0.5" quat="1 0 0 0"/>
+
+   <!-- Structural wall — NOT in state vector, sensed via collision only: -->
+   <geom name="maze_wall" type="box" pos="-3.4 1.5 1" size="6.4 0.3 1" rgba="0.6 0.55 0.45 1"/>
+   ```
+
+   Each `layout_` obstacle contributes **4 floats** to the state vector (local relative x/y/z + radius), so adding or removing obstacles changes `state_dim` and requires retraining the policy.
+
+3. **Update `SCENE_FILE`** in `sandbox.cpp` and the arena bounds (`-10.0f, 10.0f` etc. in the `RobotBridgeTrain` constructor call) to match your new scene.
+
+4. **Rebuild** — `cmake ..` re-runs `file(COPY ...)` which copies all XML files from `unitree_mujoco/unitree_robots/g1/` into the build directory, so the new scene is picked up automatically.
+
+5. **Update the spawn position** — `SPAWN_POS` at the top of `sandbox.cpp` should be set to a location that is clear of all obstacles and walls in the new scene.
+
+---
+
 ### Training
 
 See DSG_HN/train for example training and testing files. Additionally, this repository contains an example gym environment and TD3 implementation that has been used to train a waypoint follower with 95%+ accuracy. To run the example training script, first navigate to build and uncomment the obstacles in the ai_maker_space_scene.xml file to simplify the env. Then run:

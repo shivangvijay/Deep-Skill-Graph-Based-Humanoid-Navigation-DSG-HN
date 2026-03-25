@@ -7,6 +7,36 @@ void silent_warning_handler(const char *msg)
     // Do nothing, effectively silencing warnings
 }
 
+void mouse_button(GLFWwindow* window, int button, int action, int mods) {
+    auto* eng = (MuJoCoEngine*)glfwGetWindowUserPointer(window);
+    eng->button_left   = (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT)   == GLFW_PRESS);
+    eng->button_middle = (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS);
+    eng->button_right  = (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT)  == GLFW_PRESS);
+    glfwGetCursorPos(window, &eng->lastx, &eng->lasty);
+}
+
+void mouse_move(GLFWwindow* window, double xpos, double ypos) {
+    auto* eng = (MuJoCoEngine*)glfwGetWindowUserPointer(window);
+    double dx = xpos - eng->lastx;
+    double dy = ypos - eng->lasty;
+    eng->lastx = xpos; eng->lasty = ypos;
+
+    if (!eng->button_left && !eng->button_right && !eng->button_middle) return;
+
+    int width, height;
+    glfwGetWindowSize(window, &width, &height);
+
+    mjtMouse action = eng->button_right ? mjMOUSE_MOVE_V : 
+                     (eng->button_left ? mjMOUSE_ROTATE_V : mjMOUSE_ZOOM);
+    
+    mjv_moveCamera(eng->m, action, dx/height, dy/height, &eng->scn, &eng->cam);
+}
+
+void scroll(GLFWwindow* window, double xoffset, double yoffset) {
+    auto* eng = (MuJoCoEngine*)glfwGetWindowUserPointer(window);
+    mjv_moveCamera(eng->m, mjMOUSE_ZOOM, 0, -0.05 * yoffset, &eng->scn, &eng->cam);
+}
+
 MuJoCoEngine::MuJoCoEngine(bool render_) : render_m(render_) {}
 
 void MuJoCoEngine::initialize(const std::string &xml_path)
@@ -46,6 +76,13 @@ void MuJoCoEngine::initViz()
     window = glfwCreateWindow(1200, 900, "MuJoCo Sim", NULL, NULL);
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
+
+
+    glfwSetWindowUserPointer(window, this);
+
+    glfwSetMouseButtonCallback(window, mouse_button);
+    glfwSetCursorPosCallback(window, mouse_move);
+    glfwSetScrollCallback(window, scroll);
 
     // Initialize MuJoCo visualization objects
     mjv_defaultCamera(&cam);
@@ -164,3 +201,4 @@ bool MuJoCoEngine::inCollision()
     }
     return false;
 }
+

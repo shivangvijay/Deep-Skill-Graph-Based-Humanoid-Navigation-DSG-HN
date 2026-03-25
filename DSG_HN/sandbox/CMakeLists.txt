@@ -36,10 +36,16 @@ link_libraries(
   glfw
 )
 
+file(GLOB SIMULATE_SOURCES
+  ${SIMULATE_SRC}/glfw_*.cc
+  ${SIMULATE_SRC}/platform_*.cc
+)
+
 add_executable(sandbox
   sandbox.cpp
   ${JOYSTICK_SRC}/joystick/joystick.cc
   ${PROJECT_SOURCE_DIR}/../robot_bridge/mujoco_utils/mujoco_engine.cpp
   ${PROJECT_SOURCE_DIR}/../robot_bridge/robot_bridge.cpp
   ${PROJECT_SOURCE_DIR}/../robot_bridge/robot_bridge_train.cpp
+  ${SIMULATE_SOURCES}
 )
