@@ -61,3 +61,6 @@ target_link_libraries(train PRIVATE ${COMMON_LIBS})
 
 add_executable(test ${TRAIN_DIR}/test.cpp ${COMMON_SOURCES})
 target_link_libraries(test PRIVATE ${COMMON_LIBS})
+
+add_executable(dsc ${TRAIN_DIR}/dsc.cpp ${COMMON_SOURCES})
+target_link_libraries(dsc PRIVATE ${COMMON_LIBS})
