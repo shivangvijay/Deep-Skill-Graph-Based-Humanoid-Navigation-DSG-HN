@@ -45,12 +45,13 @@ public:
     // next_skill=nullptr → terminal skill (success = reach global goal).
     // next_skill!=nullptr → non-terminal (success = next_skill->canStart()).
     void learn(int steps_per_episode,
-               int gestation_n          = 5,
-               int last_k               = 10,
-               int refinement_eps       = 20,
-               double nu                = 0.1,
-               const Skill *next_skill  = nullptr,
-               float start_noise_radius = 2.0f);
+               int train_steps_per_epoch = 5000,
+               int gestation_n           = 10,
+               int last_k                = 10,
+               int refinement_eps        = 20,
+               double nu                 = 0.1,
+               const Skill *next_skill   = nullptr,
+               float start_noise_radius  = 2.0f);
 
     bool canStart(const torch::Tensor &state) const;
     void setAlwaysAvailable();
@@ -94,8 +95,9 @@ private:
                                              const torch::Tensor &done,
                                              const Skill *next_skill) const;
 
-    // Phase 1: train policy until gestation_n successes; collect last_k states per success.
-    std::vector<GestationRecord> _gestation(int steps_per_episode, int gestation_n, int last_k,
+    // Phase 1: alternate training epochs and validation until gestation_n of 2N eval trials succeed.
+    std::vector<GestationRecord> _gestation(int steps_per_episode, int train_steps_per_epoch,
+                                             int gestation_n, int last_k,
                                              const Skill *next_skill, float start_noise_radius);
 
     // Phase 2: one-class SVM on collected gestation states.

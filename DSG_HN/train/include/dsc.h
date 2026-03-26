@@ -30,10 +30,11 @@ class DeepSkillChaining
 public:
     struct Config
     {
-        int steps_per_episode    = 1000;
-        int gestation_n          = 5;
-        int last_k               = 10;  // states collected per successful gestation episode
-        int refinement_eps       = 20;  // eval rollouts from SVM boundary for Phase 3
+        int steps_per_episode         = 1000;
+        int gestation_train_steps     = 5000; // TD3 training steps per epoch before validation
+        int gestation_n               = 10;   // successes required out of 2N validation trials
+        int last_k                    = 10;   // states collected per successful validation episode
+        int refinement_eps            = 20;   // eval rollouts from SVM boundary for Phase 3
         double nu                = 0.1; // one-class SVM outlier fraction
         int max_skills           = 6;
         float start_noise_radius = 2.0f;

@@ -17,6 +17,7 @@ Skill::Skill(
 
 void Skill::learn(
     int steps_per_episode,
+    int train_steps_per_epoch,
     int gestation_n,
     int last_k,
     int refinement_eps,
@@ -25,7 +26,7 @@ void Skill::learn(
     float start_noise_radius)
 {
     std::cout << "=== Phase 1: Gestation ===" << std::endl;
-    _gestation_records = _gestation(steps_per_episode, gestation_n, last_k, next_skill, start_noise_radius);
+    _gestation_records = _gestation(steps_per_episode, train_steps_per_epoch, gestation_n, last_k, next_skill, start_noise_radius);
 
     std::cout << "=== Phase 2: Training one-class classifier ("
               << _gestation_records.size() << " states) ===" << std::endl;
@@ -147,75 +148,104 @@ std::pair<bool, bool> Skill::_checkTermination(const torch::Tensor &next_state,
 }
 
 std::vector<GestationRecord> Skill::_gestation(
-    int steps_per_episode, int gestation_n, int last_k,
+    int steps_per_episode, int train_steps_per_epoch, int gestation_n, int last_k,
     const Skill *next_skill, float start_noise_radius)
 {
-    std::vector<GestationRecord> all_records;
-    int success_count = 0;
-    int episode = 0;
-
-    while (success_count < gestation_n)
-    {
+    // Spawn near the target region and set the subgoal for the episode.
+    auto spawn = [&]() -> torch::Tensor {
         if (next_skill != nullptr)
         {
             auto sg = next_skill->sampleSubgoalState();
             _env->setGoal(sg.position, sg.orientation, sg.velocity, sg.angular_velocity);
         }
-
         std::array<float, 3> target_pos = (next_skill != nullptr)
             ? next_skill->sampleStartPosition(start_noise_radius)
             : _env->getGoalPosition();
-
         std::normal_distribution<float> gauss(0.0f, start_noise_radius);
         std::array<float, 3> start_pos = {
             target_pos[0] + gauss(_rng),
             target_pos[1] + gauss(_rng),
             target_pos[2]
         };
+        return _env->resetTo(start_pos, {1.0f, 0.0f, 0.0f, 0.0f});
+    };
 
-        torch::Tensor state = _env->resetTo(start_pos, {1.0f, 0.0f, 0.0f, 0.0f});
-        std::deque<GestationRecord> window;
+    int epoch = 0;
+    while (true)
+    {
+        // === Training phase: train_steps_per_epoch steps with exploration ===
+        torch::Tensor state = spawn();
+        float total_reward   = 0.0f;
+        int train_episodes   = 0;
+        int train_successes  = 0;
 
-        bool success = false;
-        for (int step = 0; step < steps_per_episode; ++step)
+        for (int step = 0; step < train_steps_per_epoch; ++step)
         {
             auto [scaled_action, action] = _agent.getAction(state);
             auto [next_state, reward, done] = _env->step(scaled_action);
+            total_reward += reward.item<float>();
             _agent.addExperience(state, action, reward, next_state, done);
             _agent.learn();
 
-            auto [pos, quat] = _env->getRobotPose();
-            auto cv = _classifierVec(state, pos);
-            AbstractedState rec_state = {
-                pos,
-                quat,
-                {cv[3], cv[4], cv[5]},
-                {cv[10], cv[11], cv[12]}
-            };
-            window.push_back({cv, rec_state});
-            if ((int)window.size() > last_k)
-                window.pop_front();
-
-            auto [terminate, suc] = _checkTermination(next_state, reward, done, next_skill);
-            if (terminate)
+            if (done.data_ptr<float>()[0] > 0.5f)
             {
-                success = suc;
-                break;
+                train_episodes++;
+                auto [_, suc] = _checkTermination(next_state, reward, done, next_skill);
+                if (suc) train_successes++;
+                state = spawn();
             }
-            state = next_state;
+            else
+                state = next_state;
         }
 
-        if (success)
+        std::cout << "  Epoch " << epoch + 1
+                  << " | avg_reward=" << total_reward / train_steps_per_epoch
+                  << " | train_success=" << train_successes << "/" << train_episodes << std::endl;
+
+        // === Validation phase: 2*gestation_n eval episodes, policy frozen ===
+        int val_successes = 0;
+        std::vector<GestationRecord> epoch_records;
+
+        for (int trial = 0; trial < 2 * gestation_n; ++trial)
         {
-            for (auto &r : window)
-                all_records.push_back(std::move(r));
-            success_count++;
-            std::cout << "  Gestation success " << success_count << "/" << gestation_n
-                      << " (episode " << episode + 1 << ")" << std::endl;
+            state = spawn();
+            std::deque<GestationRecord> window;
+            bool success = false;
+
+            for (int step = 0; step < steps_per_episode; ++step)
+            {
+                auto [scaled_action, _] = _agent.getAction(state, /*eval=*/true);
+                auto [next_state, reward, done] = _env->step(scaled_action);
+
+                auto [pos, quat] = _env->getRobotPose();
+                auto cv = _classifierVec(state, pos);
+                AbstractedState rec_state = {pos, quat, {cv[3], cv[4], cv[5]}, {cv[10], cv[11], cv[12]}};
+                window.push_back({cv, rec_state});
+                if ((int)window.size() > last_k)
+                    window.pop_front();
+
+                auto [terminate, suc] = _checkTermination(next_state, reward, done, next_skill);
+                if (terminate) { success = suc; break; }
+                state = next_state;
+            }
+
+            if (success)
+            {
+                val_successes++;
+                for (auto &r : window)
+                    epoch_records.push_back(std::move(r));
+            }
         }
-        episode++;
+
+        std::cout << "  Validation: " << val_successes << "/" << (2 * gestation_n) << " successes";
+        if (val_successes >= gestation_n)
+        {
+            std::cout << " — gestation complete." << std::endl;
+            return epoch_records;
+        }
+        std::cout << " — training more." << std::endl;
+        epoch++;
     }
-    return all_records;
 }
 
 void Skill::_learnInitialClassifier(const std::vector<GestationRecord> &records, double nu)

@@ -46,7 +46,8 @@ int DeepSkillChaining::train()
     std::cout << "\n=== Training og1 (terminal chain skill) ===" << std::endl;
     _skills.emplace_back(_makeSkill());
     _skills[1].initFromSkill(_skills[0]);
-    _skills[1].learn(_cfg.steps_per_episode, _cfg.gestation_n, _cfg.last_k,
+    _skills[1].learn(_cfg.steps_per_episode, _cfg.gestation_train_steps,
+                     _cfg.gestation_n, _cfg.last_k,
                      _cfg.refinement_eps, _cfg.nu, /*next_skill=*/nullptr, _cfg.start_noise_radius);
     _env->setGoal(_global_goal);
     _poo.addOption(0.0f);
@@ -66,7 +67,8 @@ int DeepSkillChaining::train()
 
         _skills.emplace_back(_makeSkill());
         _skills[i].initFromSkill(_skills[0]);
-        _skills[i].learn(_cfg.steps_per_episode, _cfg.gestation_n, _cfg.last_k,
+        _skills[i].learn(_cfg.steps_per_episode, _cfg.gestation_train_steps,
+                         _cfg.gestation_n, _cfg.last_k,
                          _cfg.refinement_eps, _cfg.nu, next, _cfg.start_noise_radius);
         _env->setGoal(_global_goal);
         _poo.addOption(0.0f);
