@@ -170,46 +170,74 @@ std::vector<GestationRecord> Skill::_gestation(
         return _env->resetTo(start_pos, {1.0f, 0.0f, 0.0f, 0.0f}); // reset with start_pos and fixed orientation
     };
 
+    static constexpr int EPOCHS_PER_VALIDATION = 10;
+
+    float best_avg_reward = -std::numeric_limits<float>::infinity();
     int epoch = 0;
     while (true)
     {
-        // === Training phase: train_steps_per_epoch steps with exploration ===
-        torch::Tensor state = spawn();
-        float total_reward   = 0.0f;
-        int train_episodes   = 0;
-        int train_successes  = 0;
-
-        for (int step = 0; step < train_steps_per_epoch; ++step)
+        // === Training phase: EPOCHS_PER_VALIDATION epochs before each validation ===
+        for (int e = 0; e < EPOCHS_PER_VALIDATION; ++e)
         {
-            auto [scaled_action, action] = _agent.getAction(state);
-            auto [next_state, reward, done] = _env->step(scaled_action);
-            total_reward += reward.item<float>();
-            _agent.addExperience(state, action, reward, next_state, done);
-            _agent.learn();
+            torch::Tensor state = spawn();
+            float total_reward  = 0.0f;
+            int num_episodes    = 0;
+            int num_successes   = 0;
+            _agent.total_actor_loss  = 0.0;
+            _agent.total_critic_loss = 0.0;
 
-            if (done.data_ptr<float>()[0] > 0.5f)
+            for (int step = 0; step < train_steps_per_epoch; ++step)
             {
-                train_episodes++;
-                auto [_, suc] = _checkTermination(next_state, reward, done, next_skill);
-                if (suc) train_successes++;
-                state = spawn();
+                std::cout << "\r  [Train] epoch " << epoch + 1
+                          << "  step " << step + 1 << "/" << train_steps_per_epoch
+                          << "  buf=" << _agent.replay_buffer.getLength()
+                          << "  eps=" << num_episodes << "  suc=" << num_successes << std::flush;
+
+                auto [scaled_action, action] = _agent.getAction(state);
+                auto [next_state, reward, done] = _env->step(scaled_action);
+                total_reward += reward.item<float>();
+                _agent.addExperience(state, action, reward, next_state, done);
+                _agent.learn();
+
+                if (done.data_ptr<float>()[0] > 0.5f)
+                {
+                    num_episodes++;
+                    if (reward.data_ptr<float>()[0] > 90.0f)
+                        num_successes++;
+                    state = spawn();
+                }
+                else
+                    state = next_state;
             }
-            else
-                state = next_state;
+
+            float avg_reward = total_reward / train_steps_per_epoch;
+            int actor_updates = std::max(1, train_steps_per_epoch / _agent.actor_update_freq);
+            std::cout << "\n  Epoch " << epoch + 1
+                      << " | buf=" << _agent.replay_buffer.getLength()
+                      << " | avg_reward=" << avg_reward
+                      << " | actor_loss=" << _agent.total_actor_loss / actor_updates
+                      << " | critic_loss=" << _agent.total_critic_loss / train_steps_per_epoch
+                      << " | success=" << num_successes << "/" << num_episodes << std::endl;
+
+            if (avg_reward > best_avg_reward)
+            {
+                best_avg_reward = avg_reward;
+                _agent.hardCopy();
+            }
+            epoch++;
         }
 
-        std::cout << "  Epoch " << epoch + 1
-                  << " | avg_reward=" << total_reward / train_steps_per_epoch
-                  << " | train_success=" << train_successes << "/" << train_episodes << std::endl;
-
         // === Validation phase: 2*gestation_n eval episodes, policy frozen ===
+        std::cout << "  --- Validation after epoch " << epoch << " ---" << std::endl;
         int val_successes = 0;
         std::vector<GestationRecord> epoch_records;
 
-        // for now, validate for only 2*gestation_n episodes, but we should probably validate for gestation_n episodes and wait for all successes
         for (int trial = 0; trial < 2 * gestation_n; ++trial)
         {
-            state = spawn();
+            std::cout << "\r  [Val]   " << trial + 1 << "/" << (2 * gestation_n)
+                      << "  suc=" << val_successes << std::flush;
+
+            torch::Tensor state = spawn();
             std::deque<GestationRecord> window;
             bool success = false;
 
@@ -238,14 +266,13 @@ std::vector<GestationRecord> Skill::_gestation(
             }
         }
 
-        std::cout << "  Validation: " << val_successes << "/" << (2 * gestation_n) << " successes";
+        std::cout << "\n  Validation: " << val_successes << "/" << (2 * gestation_n) << " successes";
         if (val_successes >= gestation_n)
         {
             std::cout << " — gestation complete." << std::endl;
             return epoch_records;
         }
         std::cout << " — training more." << std::endl;
-        epoch++;
     }
 }
 
