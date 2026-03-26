@@ -41,9 +41,13 @@ public:
             goal = {rp, rq, rv, ra};
         }
         current_step = 0;
-        last_pos_error = 0;
-        last_vel_error = 0;
-
+        {
+            RobotState s = robot_bridge->getRobotState();
+            last_pos_error = std::sqrt(std::pow(s.position[0] - goal.position[0], 2) +
+                                       std::pow(s.position[1] - goal.position[1], 2));
+            last_vel_error = std::sqrt(std::pow(s.velocity[0] - goal.velocity[0], 2) +
+                                       std::pow(s.velocity[1] - goal.velocity[1], 2));
+        }
         return transformState(robot_bridge->getRobotState());
     }
 
@@ -69,7 +73,12 @@ public:
     // see note a top about how you need to set vel and ang vel
     torch::Tensor resetTo(const std::array<float, 3> &pos, const std::array<float, 4> &quat, const std::array<float, 3> &vel, const std::array<float, 3> &ang_vel)
     {
-        robot_bridge->resetRobot(pos, quat, vel, ang_vel);
+        std::array<float, 3> clamped_pos = {
+            std::max(robot_bridge->x_min + 0.5f, std::min(robot_bridge->x_max - 0.5f, pos[0])),
+            std::max(robot_bridge->y_min + 0.5f, std::min(robot_bridge->y_max - 0.5f, pos[1])),
+            pos[2]
+        };
+        robot_bridge->resetRobot(clamped_pos, quat, vel, ang_vel);
         obstacles = robot_bridge->getObstacles();
         if (!_goal_fixed)
         {
@@ -77,6 +86,13 @@ public:
             goal = {rp, rq, rv, ra};
         }
         current_step = 0;
+        {
+            RobotState s = robot_bridge->getRobotState();
+            last_pos_error = std::sqrt(std::pow(s.position[0] - goal.position[0], 2) +
+                                       std::pow(s.position[1] - goal.position[1], 2));
+            last_vel_error = std::sqrt(std::pow(s.velocity[0] - goal.velocity[0], 2) +
+                                       std::pow(s.velocity[1] - goal.velocity[1], 2));
+        }
         return transformState(robot_bridge->getRobotState());
     }
 
@@ -284,7 +300,7 @@ private:
     //     }
     //     else
     //     {
-    //         reward -= (pos_error / 10.0) + (vel_error / 10.0);
+    //         reward -= (pos_error / 100.0) + (vel_error / 10.0);
     //     }
     //     if (current_step >= max_steps ||
     //         state.position[0] > robot_bridge->x_max || state.position[0] < robot_bridge->x_min ||
