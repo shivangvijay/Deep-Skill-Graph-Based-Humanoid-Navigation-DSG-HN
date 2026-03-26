@@ -3,12 +3,6 @@
 DeepSkillChaining::DeepSkillChaining(
     std::shared_ptr<TrainEnvironment> env,
     torch::Device device,
-    std::array<float, 3> global_goal)
-    : DeepSkillChaining(env, device, global_goal, Config{}) {}
-
-DeepSkillChaining::DeepSkillChaining(
-    std::shared_ptr<TrainEnvironment> env,
-    torch::Device device,
     std::array<float, 3> global_goal,
     Config cfg)
     : _env(env)

@@ -54,10 +54,6 @@ public:
 
     DeepSkillChaining(std::shared_ptr<TrainEnvironment> env,
                       torch::Device device,
-                      std::array<float, 3> global_goal);
-
-    DeepSkillChaining(std::shared_ptr<TrainEnvironment> env,
-                      torch::Device device,
                       std::array<float, 3> global_goal,
                       Config cfg);
 
