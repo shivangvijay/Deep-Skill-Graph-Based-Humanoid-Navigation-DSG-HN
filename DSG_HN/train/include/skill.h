@@ -140,16 +140,21 @@ public:
         _classifier.load(classifier_path);
     }
 
-    // Load only the TD3 policy weights (no classifier). Marks this skill as having a
-    // pre-trained policy so that gestation runs in eval mode (no further TD3 updates).
-    void loadPolicy(const std::string &actor_path,
-                    const std::string &critic1_path,
-                    const std::string &critic2_path)
+    // Copy TD3 weights from another skill as a warm start.
+    // Called before learn() so gestation begins with an already-capable policy.
+    void initFromSkill(const Skill &other)
     {
-        torch::load(_agent.actor_local,    actor_path);
-        torch::load(_agent.critic_local_1, critic1_path);
-        torch::load(_agent.critic_local_2, critic2_path);
-        _policy_pretrained = true;
+        auto copy_params = [](auto &dst, const auto &src) {
+            torch::NoGradGuard no_grad;
+            auto dp = dst->parameters();
+            auto sp = src->parameters();
+            for (size_t i = 0; i < dp.size(); ++i)
+                dp[i].copy_(sp[i]);
+        };
+        copy_params(_agent.actor_local,    other._agent.actor_local);
+        copy_params(_agent.critic_local_1, other._agent.critic_local_1);
+        copy_params(_agent.critic_local_2, other._agent.critic_local_2);
+        _agent.hardCopy(); // sync target networks
     }
 
     TD3Agent &agent() { return _agent; }
@@ -227,8 +232,8 @@ private:
             // - terminal: near the fixed global goal
             std::array<float, 3> target_pos = (next_skill != nullptr)
                 ? next_skill->sampleStartPosition(start_noise_radius)
-                : _env->getGoalPosition();
-            std::normal_distribution<float> gauss(0.0f, start_noise_radius);
+                : _env->getGoalPosition(); // for the terminal skill, the target is the global goal
+            std::normal_distribution<float> gauss(0.0f, start_noise_radius); // make a noisy start position to encourage robustness and exploration of the initiation set boundary
             std::array<float, 3> start_pos = {
                 target_pos[0] + gauss(_rng),
                 target_pos[1] + gauss(_rng),

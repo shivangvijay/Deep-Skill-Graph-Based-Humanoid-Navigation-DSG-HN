@@ -62,8 +62,14 @@ public:
     DeepSkillChaining(
         std::shared_ptr<TrainEnvironment> env,
         torch::Device device,
+        std::array<float, 3> global_goal)
+        : DeepSkillChaining(env, device, global_goal, Config{}) {}
+
+    DeepSkillChaining(
+        std::shared_ptr<TrainEnvironment> env,
+        torch::Device device,
         std::array<float, 3> global_goal,
-        Config cfg = {})
+        Config cfg)
         : _env(env)
         , _device(device)
         , _global_goal(global_goal)
@@ -106,6 +112,7 @@ public:
         // === og1: first chain skill, terminates at global goal ===
         std::cout << "\n=== Training og1 (terminal chain skill) ===" << std::endl;
         _skills.emplace_back(_makeSkill());
+        _skills[1].initFromSkill(_skills[0]); // warm start from oG
         _skills[1].learn(
             _cfg.steps_per_episode, _cfg.gestation_n, _cfg.last_k,
             _cfg.refinement_eps, _cfg.nu,
@@ -127,6 +134,7 @@ public:
                       << " (terminates at og" << i - 1 << "'s initiation set) ===" << std::endl;
 
             _skills.emplace_back(_makeSkill());
+            _skills[i].initFromSkill(_skills[0]); // warm start from oG
             _skills[i].learn(
                 _cfg.steps_per_episode, _cfg.gestation_n, _cfg.last_k,
                 _cfg.refinement_eps, _cfg.nu,

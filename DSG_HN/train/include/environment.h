@@ -72,8 +72,10 @@ public:
         robot_bridge->resetRobot(pos, quat, vel, ang_vel);
         obstacles = robot_bridge->getObstacles();
         if (!_goal_fixed)
+        {
             auto [rp, rq, rv, ra] = robot_bridge->generateRandomPoseWithVel();
             goal = {rp, rq, rv, ra};
+        }
         current_step = 0;
         return transformState(robot_bridge->getRobotState());
     }
