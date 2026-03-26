@@ -153,21 +153,21 @@ std::vector<GestationRecord> Skill::_gestation(
 {
     // Spawn near the target region and set the subgoal for the episode.
     auto spawn = [&]() -> torch::Tensor {
-        if (next_skill != nullptr)
+        if (next_skill != nullptr) // non-terminal skill: spawn near next_skill's initiation set and set subgoal to next_skill's subgoal
         {
             auto sg = next_skill->sampleSubgoalState();
             _env->setGoal(sg.position, sg.orientation, sg.velocity, sg.angular_velocity);
         }
         std::array<float, 3> target_pos = (next_skill != nullptr)
-            ? next_skill->sampleStartPosition(start_noise_radius)
-            : _env->getGoalPosition();
+            ? next_skill->sampleStartPosition(start_noise_radius) // non-terminal skill: set subgoal to next_skill's initiation set + noise
+            : _env->getGoalPosition(); // terminal skill: set goal to global goal
         std::normal_distribution<float> gauss(0.0f, start_noise_radius);
         std::array<float, 3> start_pos = {
             target_pos[0] + gauss(_rng),
             target_pos[1] + gauss(_rng),
             target_pos[2]
-        };
-        return _env->resetTo(start_pos, {1.0f, 0.0f, 0.0f, 0.0f});
+        }; // start position with Gaussian noise around target_pos
+        return _env->resetTo(start_pos, {1.0f, 0.0f, 0.0f, 0.0f}); // reset with start_pos and fixed orientation
     };
 
     int epoch = 0;
@@ -206,6 +206,7 @@ std::vector<GestationRecord> Skill::_gestation(
         int val_successes = 0;
         std::vector<GestationRecord> epoch_records;
 
+        // for now, validate for only 2*gestation_n episodes, but we should probably validate for gestation_n episodes and wait for all successes
         for (int trial = 0; trial < 2 * gestation_n; ++trial)
         {
             state = spawn();
@@ -248,15 +249,17 @@ std::vector<GestationRecord> Skill::_gestation(
     }
 }
 
+// train initial one-class SVM with gestation_n trajectories' last k states as positives
 void Skill::_learnInitialClassifier(const std::vector<GestationRecord> &records, double nu)
 {
     std::vector<std::vector<float>> states;
     states.reserve(records.size());
     for (const auto &r : records)
         states.push_back(r.classifier_vec);
-    _classifier.trainOneClass(states, nu);
+    _classifier.trainOneClass(states, nu); 
 }
 
+// iteratively collects rollouts from the current SVM decision boundary and retrains a binary classifier until convergence or max refinement_eps episodes
 void Skill::_refineClassifier(const std::vector<GestationRecord> &records,
                                int refinement_eps, int steps_per_episode,
                                const Skill *next_skill)
@@ -313,6 +316,7 @@ void Skill::_refineClassifier(const std::vector<GestationRecord> &records,
         std::cerr << "Warning: no refinement data collected." << std::endl;
 }
 
+// Sample a support vector from the current SVM as a starting point for refinement rollouts. If no support vectors, sample gestation state closest to the decision boundary.
 AbstractedState Skill::_sampleSupportVector(const std::vector<GestationRecord> &records) const
 {
     auto svs = _classifier.getSupportVectors(13);

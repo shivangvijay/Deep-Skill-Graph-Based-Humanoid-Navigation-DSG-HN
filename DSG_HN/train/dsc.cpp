@@ -28,23 +28,25 @@ void DeepSkillChaining::loadGlobalOption(const std::string &actor_path,
 
 int DeepSkillChaining::train()
 {
-    if (_skills.empty())
+    if (_skills.empty()) // must have a global option loaded before training chain skills
     {
         std::cerr << "Error: call loadGlobalOption() before train()." << std::endl;
         return 0;
     }
 
-    _env->setGoal(_global_goal);
+    _env->setGoal(_global_goal); // set the default environment goal to be the global goal
 
     // === og1: terminal chain skill, β = reach global goal ===
     std::cout << "\n=== Training og1 (terminal chain skill) ===" << std::endl;
     _skills.emplace_back(_makeSkill());
-    _skills[1].initFromSkill(_skills[0]);
+    _skills[1].initFromSkill(_skills[0]); // copy global option weights as a warm start for og1
     _skills[1].learn(_cfg.steps_per_episode, _cfg.gestation_train_steps,
                      _cfg.gestation_n, _cfg.last_k,
                      _cfg.refinement_eps, _cfg.nu, /*next_skill=*/nullptr, _cfg.start_noise_radius);
-    _env->setGoal(_global_goal);
-    _poo.addOption(0.0f);
+    _env->setGoal(_global_goal); // reset goal to global goal 
+    _poo.addOption(0.0f); // add og1 to POO with initial value 0.0 (will be updated during POO learning)
+
+    // TODO: call poo.learn() here to update POO? 
 
     if (_startCovered())
     {
@@ -60,12 +62,13 @@ int DeepSkillChaining::train()
                   << " (terminates at og" << i - 1 << "'s initiation set) ===" << std::endl;
 
         _skills.emplace_back(_makeSkill());
-        _skills[i].initFromSkill(_skills[0]);
+        _skills[i].initFromSkill(_skills[0]); // every skill initialized from global option weights as a warm start
         _skills[i].learn(_cfg.steps_per_episode, _cfg.gestation_train_steps,
                          _cfg.gestation_n, _cfg.last_k,
                          _cfg.refinement_eps, _cfg.nu, next, _cfg.start_noise_radius);
         _env->setGoal(_global_goal);
         _poo.addOption(0.0f);
+        // TODO: call poo.learn() here to update POO? 
 
         if (_startCovered())
         {
@@ -78,6 +81,7 @@ int DeepSkillChaining::train()
     return (int)_skills.size();
 }
 
+// this is just to train poo
 float DeepSkillChaining::execute()
 {
     torch::Tensor state      = _env->reset();
