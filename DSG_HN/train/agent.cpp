@@ -85,6 +85,7 @@ void TD3Agent::learn()
     critic_optimizer_2.step();
 
     total_critic_loss += critic_loss.item<double>();
+    learn_step++;
     if (learn_step % actor_update_freq == 0)
     {
         auto actor_loss = -critic_local_1->forward(states, actor_local->forward(states)).mean();
