@@ -18,11 +18,12 @@ public:
         float tau,
         float gamma,
         int batch_size,
-        int actor_update_freq);
+        int actor_update_freq,
+        int max_obstacles,
+        int actor_warmup_steps);
 
     std::pair<torch::Tensor, torch::Tensor> getAction(torch::Tensor state, bool eval = false);
     void addExperience(torch::Tensor state, torch::Tensor action, torch::Tensor reward, torch::Tensor next_state, torch::Tensor done);
-
 
     void learn();
     void hardCopy();
@@ -54,8 +55,12 @@ private:
     int actor_update_freq;
     float lr_critic;
     float lr_actor;
+    int total_state_dim;
+    int actor_warmup_steps;
 
     void softUpdate();
+    torch::Tensor prepareLocalState(torch::Tensor state);
+
 };
 
 class PolicyOverOptionsAgent

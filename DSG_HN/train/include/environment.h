@@ -25,9 +25,9 @@ public:
         int gravity_dim = 3;                                // local_up
         int self_dyn_dim = 3 + 3 + 3;                       // local_vel, local_ang_vel, local_accel
         int goal_dim = 3 + 4 + 3 + 3;                       // relative_pos, releative_orientation, relative_vel, relative angular vel
-        int obstacle_dim = (int)obstacles.size() * 4;
+        obstacle_dim = (int)obstacles.size() * 4;
 
-        state_dim = proprio_dim + gravity_dim + self_dyn_dim + goal_dim + obstacle_dim;
+        state_dim = proprio_dim + gravity_dim + self_dyn_dim + goal_dim;
     }
 
     torch::Tensor reset() // if no arguments passed, just reset to random position. If goal fixed, use that, else sample randomly
@@ -41,8 +41,6 @@ public:
             goal = robot_bridge->generateRandomPoseWithVel();
         }
         current_step = 0;
-        last_pos_error = 0;
-        last_vel_error = 0;
 
         return transformState(robot_bridge->getRobotState());
     }
@@ -99,6 +97,7 @@ public:
     }
 
     int state_dim;
+    int obstacle_dim;
     int action_dim = 3;
     std::vector<float> action_limits = {0.5, 0.3, 0.2};
 
@@ -180,7 +179,7 @@ private:
         // however, the final policy output is velocity RELATIVE to the robot
 
         auto options = torch::TensorOptions().dtype(torch::kFloat32);
-        torch::Tensor tensor_state = torch::empty({(int64_t)state_dim}, options);
+        torch::Tensor tensor_state = torch::empty({(int64_t)state_dim+obstacle_dim}, options);
         float *data_ptr = tensor_state.data_ptr<float>();
         int offset = 0;
 
@@ -223,105 +222,84 @@ private:
         copy_to_ptr(ang_vel_err);
 
         // local obstacles
-        for (const auto &obs : obstacles)
+
+        std::vector<Obstacle> sorted_obs = obstacles;
+        std::sort(sorted_obs.begin(), sorted_obs.end(), [&](const Obstacle &a, const Obstacle &b)
+                  {
+        float distA = std::pow(a.position[0]-state.position[0], 2) + std::pow(a.position[1]-state.position[1], 2);
+        float distB = std::pow(b.position[0]-state.position[0], 2) + std::pow(b.position[1]-state.position[1], 2);
+        return distA < distB; });
+
+        // 2. Fill fixed slots
+        for (int i = 0; i < sorted_obs.size(); i++)
         {
-            std::array<float, 3> r_obs = {obs.position[0] - state.position[0], obs.position[1] - state.position[1], obs.position[2] - state.position[2]};
+            // if (i < sorted_obs.size())
+            // {
+            const auto &obs = sorted_obs[i];
+            std::array<float, 3> r_obs = {obs.position[0] - state.position[0],
+                                            obs.position[1] - state.position[1],
+                                            obs.position[2] - state.position[2]};
             copy_to_ptr(rotateVectorByQuat(r_obs, state.orientation, true));
             data_ptr[offset++] = obs.size[0];
+            // }
+            // else
+            // {
+            //     // Padding: Obstacle at "infinity" with 0 size
+            //     data_ptr[offset++] = 100.0f; // x
+            //     data_ptr[offset++] = 100.0f; // y
+            //     data_ptr[offset++] = 100.0f; // z
+            //     data_ptr[offset++] = 0.0f;   // size
+            // }
         }
+        // for (const auto &obs : obstacles)
+        // {
+        //     std::array<float, 3> r_obs = {obs.position[0] - state.position[0], obs.position[1] - state.position[1], obs.position[2] - state.position[2]};
+        //     copy_to_ptr(rotateVectorByQuat(r_obs, state.orientation, true));
+        //     data_ptr[offset++] = obs.size[0];
+        // }
 
         return tensor_state;
     }
 
     // formulation where we reward for moving towards target seems better than one that just has negative distances
 
-    // std::pair<float, bool> computeReward()
-    // {
-    //     RobotState state = robot_bridge->getRobotState();
-    //     bool collision = robot_bridge->inCollision();
-
-    //     auto &[goal_position, goal_orientation, goal_velocity, goal_angular_velocity] = goal;
-
-    //     float pos_error = std::sqrt((state.position[0] - goal_position[0]) * (state.position[0] - goal_position[0]) +
-    //                                 (state.position[1] - goal_position[1]) * (state.position[1] - goal_position[1]));
-
-    //     float vel_error = std::sqrt((state.velocity[0] - goal_velocity[0]) * (state.velocity[0] - goal_velocity[0]) +
-    //                                 (state.velocity[1] - goal_velocity[1]) * (state.velocity[1] - goal_velocity[1]));
-
-    //     // std::cout << " " << vel_error << std::endl;
-
-    //     float reward = 0;
-    //     bool terminated = false;
-    //     if (collision)
-    //     {
-    //         reward -= 10;
-    //         terminated = true;
-    //     }
-    //     else if (pos_error < 0.5 && vel_error < 0.25) // ignoring orientation for now
-    //     {
-    //         reward += 50;
-    //         terminated = true;
-    //     }
-    //     else
-    //     {
-    //         reward -= (pos_error / 10.0) + (vel_error / 10.0);
-    //     }
-    //     if (current_step >= max_steps ||
-    //         state.position[0] > robot_bridge->x_max || state.position[0] < robot_bridge->x_min ||
-    //         state.position[1] > robot_bridge->y_max || state.position[1] < robot_bridge->y_min)
-    //     {
-    //         terminated = true;
-    //     }
-    //     return {reward, terminated};
-    // }
-    float last_pos_error = 0;
-    float last_vel_error = 0;
     std::pair<float, bool> computeReward()
     {
         RobotState state = robot_bridge->getRobotState();
         bool collision = robot_bridge->inCollision();
-        auto &[g_pos, g_quat, g_vel, g_ang_vel] = goal;
 
-        float cur_pos_error = std::sqrt(std::pow(state.position[0] - g_pos[0], 2) +
-                                      std::pow(state.position[1] - g_pos[1], 2));
+        auto &[goal_position, goal_orientation, goal_velocity, goal_angular_velocity] = goal;
 
-        float cur_vel_error = std::sqrt(std::pow(state.velocity[0] - g_vel[0], 2) +
-                                      std::pow(state.velocity[1] - g_vel[1], 2));
+        float pos_error = std::sqrt((state.position[0] - goal_position[0]) * (state.position[0] - goal_position[0]) +
+                                    (state.position[1] - goal_position[1]) * (state.position[1] - goal_position[1]));
+
+        float vel_error = std::sqrt((state.velocity[0] - goal_velocity[0]) * (state.velocity[0] - goal_velocity[0]) +
+                                    (state.velocity[1] - goal_velocity[1]) * (state.velocity[1] - goal_velocity[1]));
+
+        // std::cout << " " << vel_error << std::endl;
 
         float reward = 0;
         bool terminated = false;
-
         if (collision)
         {
-            reward = -20.0f;
+            reward -= 10;
             terminated = true;
         }
-        else if (cur_pos_error < 0.5 && cur_vel_error < 0.25)
+        else if (pos_error < 0.5 && vel_error < 0.25) // ignoring orientation for now
         {
-            reward = 100.0f;
+            reward += 50;
             terminated = true;
         }
         else
         {
-            // moving 1m closer = +5.0 reward
-            float pos_progress = (last_pos_error - cur_pos_error) * 5.0f;
-
-            // closing the velocity gap by 1m/s = +10.0 reward
-            float vel_progress = (last_vel_error - cur_vel_error) * 10.0f;
-
-            reward = pos_progress + vel_progress - 0.01f;
+            reward -= (pos_error / 100.0) + (vel_error / 10.0);
         }
-
         if (current_step >= max_steps ||
             state.position[0] > robot_bridge->x_max || state.position[0] < robot_bridge->x_min ||
             state.position[1] > robot_bridge->y_max || state.position[1] < robot_bridge->y_min)
         {
             terminated = true;
         }
-
-        last_pos_error = cur_pos_error;
-        last_vel_error = cur_vel_error;
-
         return {reward, terminated};
     }
 };

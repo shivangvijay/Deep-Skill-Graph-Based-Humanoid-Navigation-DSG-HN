@@ -11,7 +11,7 @@
 #include "agent.h"
 #include <torch/torch.h>
 
-#define SCENE_FILE "../config/scene/umaze_scene.xml"
+#define SCENE_FILE "../config/scene/test_scene.xml"
 #define POLICY_DIR "config/policy/velocity"
 #define CONFIG_PATH "config/config.yaml"
 
@@ -20,15 +20,18 @@
 #define Y_MIN -5.0f
 #define Y_MAX 5.0f
 
-#define CRITIC_LR 3e-4
-#define ACTOR_LR 1e-4
+#define CRITIC_LR 3e-4 // lowered from 3e-3
+#define ACTOR_LR 1e-4 // lowered from 1e-4 for fine tuning
 #define TAU 0.005
 #define GAMMA 0.99
 #define BATCH_SIZE 256
-#define ACTOR_UPDATE_FREQ 4
-#define CRITIC_LAYER_SIZES {128, 256, 128}
-#define ACTOR_LAYER_SIZES {128, 256, 128}
+#define ACTOR_UPDATE_FREQ 2
+#define CRITIC_LAYER_SIZES {256, 256, 256}
+#define ACTOR_LAYER_SIZES {256, 256, 256}
 #define RENDER false
+#define MAX_OBSTACLES 8
+#define PRETRAIN true
+#define ACTOR_WARMUP_STEPS 40000
 
 /*
 TODO: VERIFY THAT TD3 CAN STIL LEARN
@@ -41,8 +44,8 @@ int main(int argc, char **argv)
     std::string rel_path = param::config["FSM"]["Velocity"]["policy_dir"].as<std::string>();
     auto policy_dir = param::parser_policy_dir(rel_path);
 
-    std::shared_ptr<RobotBridgeTrain> robot_bridge = std::make_shared<RobotBridgeTrain>(SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, render); //eng, std::move(env), render);
-    std::shared_ptr<TrainEnvironment> train_env = std::make_shared<TrainEnvironment>(robot_bridge, 2000);
+    std::shared_ptr<RobotBridgeTrain> robot_bridge = std::make_shared<RobotBridgeTrain>(SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, render); // eng, std::move(env), render);
+    std::shared_ptr<TrainEnvironment> train_env = std::make_shared<TrainEnvironment>(robot_bridge, 1000);
 
     torch::Device device(torch::kCPU);
     if (torch::cuda::is_available())
@@ -54,7 +57,15 @@ int main(int argc, char **argv)
     std::vector<int> critic_layer_sizes = CRITIC_LAYER_SIZES;
     std::vector<int> actor_layer_sizes = ACTOR_LAYER_SIZES;
 
-    TD3Agent agent(train_env, actor_layer_sizes, critic_layer_sizes, device, ACTOR_LR, CRITIC_LR, TAU, GAMMA, BATCH_SIZE, ACTOR_UPDATE_FREQ);
+    TD3Agent agent(train_env, actor_layer_sizes, critic_layer_sizes, device, ACTOR_LR, CRITIC_LR, TAU, GAMMA, BATCH_SIZE, ACTOR_UPDATE_FREQ, MAX_OBSTACLES, ACTOR_WARMUP_STEPS);
+
+    if (PRETRAIN)
+    {
+        torch::load(agent.actor_local, "../models/best_actor.pt"); // start with existing model if you want
+        torch::load(agent.critic_local_1, "../models/best_critic_1.pt");
+        torch::load(agent.critic_local_2, "../models/best_critic_2.pt");
+        agent.hardCopy();
+    }
 
     int num_frames = 0;
     auto start_time = std::chrono::high_resolution_clock::now();
@@ -80,9 +91,9 @@ int main(int argc, char **argv)
 
         for (int step = 0; step < num_steps; step++)
         {
-            if (step == 10000){
-                option_agent.addOption(-1.0);
-            }
+            // if (step == 10000){
+            //     option_agent.addOption(-1.0);
+            // }
             std::cout << "\rStep: " << step + 1 << "/" << num_steps << std::flush;
             // auto option = option_agent.getOption(state);
             torch::Tensor action;
@@ -93,7 +104,7 @@ int main(int argc, char **argv)
             scaled_action = std::get<0>(actions);
             action = std::get<1>(actions);
             // }
-            // else 
+            // else
             // {
             //     action = torch::randn(3);
             //     scaled_action = action * torch::tensor(train_env->action_limits);
@@ -107,10 +118,10 @@ int main(int argc, char **argv)
             agent.learn();
             // option_agent.addExperience(state, option, reward, next_state, done, 1);
             // option_agent.learn();
-            if (done.data_ptr<float>()[0] > 0.5)
+            if (done.item<float>() > 0.5)
             {
                 num_episodes++;
-                if (reward.data_ptr<float>()[0] > 90)
+                if (reward.data_ptr<float>()[0] > 45)
                     num_success++;
                 state = train_env->reset();
             }
