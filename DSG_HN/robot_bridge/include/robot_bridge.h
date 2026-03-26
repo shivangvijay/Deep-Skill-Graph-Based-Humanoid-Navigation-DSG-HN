@@ -11,7 +11,17 @@
 #include <math.h>
 
 #define DOF 35                 // note that the actual DOF is 29, but the msg has 35 motors, so just going to read all 35
-#define VELOCITY_POLICY_DT 0.1 // 10 Hz, this we can change later on though
+#define VELOCITY_POLICY_DT 0.02 // matches low-level locomotion policy (50 Hz)
+
+// Navigation-level abstraction of robot state.
+// Excludes joint-level proprioception (q, dq) — used for skill subgoals and initiation-set classification.
+struct AbstractedState
+{
+    std::array<float, 3> position;
+    std::array<float, 4> orientation;
+    std::array<float, 3> velocity;
+    std::array<float, 3> angular_velocity;
+};
 
 // note: pos, vel, and orientation are given in the context of the global reference frame
 // everything else is given w.r.t to the local frame of the robot

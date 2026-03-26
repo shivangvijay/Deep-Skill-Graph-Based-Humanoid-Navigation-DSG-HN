@@ -35,6 +35,8 @@ public:
     Actor actor_local;
     Critic critic_local_1;
     Critic critic_local_2;
+    ReplayBuffer replay_buffer;
+    int actor_update_freq;
 
 private:
     Actor actor_target;
@@ -45,14 +47,12 @@ private:
     torch::optim::Adam critic_optimizer_1;
     torch::optim::Adam critic_optimizer_2;
 
-    ReplayBuffer replay_buffer;
     torch::Device device;
     torch::Tensor action_limits;
 
     float tau;
     float gamma;
     int batch_size;
-    int actor_update_freq;
     float lr_critic;
     float lr_actor;
     int total_state_dim;

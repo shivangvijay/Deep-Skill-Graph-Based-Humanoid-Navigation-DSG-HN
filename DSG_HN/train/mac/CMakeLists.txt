@@ -39,6 +39,7 @@ file(CREATE_LINK ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/models 
 
 set(COMMON_SOURCES
   ${TRAIN_DIR}/agent.cpp
+  ${TRAIN_DIR}/skill.cpp
   ${TRAIN_DIR}/../robot_bridge/mujoco_utils/mujoco_engine.cpp
   ${TRAIN_DIR}/../robot_bridge/robot_bridge.cpp
   ${TRAIN_DIR}/../robot_bridge/robot_bridge_train.cpp
@@ -61,3 +62,6 @@ target_link_libraries(train PRIVATE ${COMMON_LIBS})
 
 add_executable(test ${TRAIN_DIR}/test.cpp ${COMMON_SOURCES})
 target_link_libraries(test PRIVATE ${COMMON_LIBS})
+
+add_executable(dsc ${TRAIN_DIR}/dsc.cpp ${COMMON_SOURCES})
+target_link_libraries(dsc PRIVATE ${COMMON_LIBS})

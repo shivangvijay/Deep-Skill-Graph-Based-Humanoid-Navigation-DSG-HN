@@ -4,7 +4,6 @@
 #include <vector>
 #include <math.h>
 
-using AbstractedState = std::tuple<std::array<float, 3>, std::array<float, 4>, std::array<float, 3>, std::array<float, 3>>;
 
 /*
 
@@ -38,7 +37,8 @@ public:
 
         if (!_goal_fixed)
         {
-            goal = robot_bridge->generateRandomPoseWithVel();
+            auto [rp, rq, rv, ra] = robot_bridge->generateRandomPoseWithVel();
+            goal = {rp, rq, rv, ra};
         }
         current_step = 0;
 
@@ -67,13 +67,30 @@ public:
     // see note a top about how you need to set vel and ang vel
     torch::Tensor resetTo(const std::array<float, 3> &pos, const std::array<float, 4> &quat, const std::array<float, 3> &vel, const std::array<float, 3> &ang_vel)
     {
-        robot_bridge->resetRobot(pos, quat, vel, ang_vel);
+        std::array<float, 3> clamped_pos = {
+            std::max(robot_bridge->x_min + 0.5f, std::min(robot_bridge->x_max - 0.5f, pos[0])),
+            std::max(robot_bridge->y_min + 0.5f, std::min(robot_bridge->y_max - 0.5f, pos[1])),
+            pos[2]
+        };
+        robot_bridge->resetRobot(clamped_pos, quat, vel, ang_vel);
         obstacles = robot_bridge->getObstacles();
         if (!_goal_fixed)
-            goal = robot_bridge->generateRandomPoseWithVel();
+        {
+            auto [rp, rq, rv, ra] = robot_bridge->generateRandomPoseWithVel();
+            goal = {rp, rq, rv, ra};
+        }
         current_step = 0;
+        {
+            RobotState s = robot_bridge->getRobotState();
+            last_pos_error = std::sqrt(std::pow(s.position[0] - goal.position[0], 2) +
+                                       std::pow(s.position[1] - goal.position[1], 2));
+            last_vel_error = std::sqrt(std::pow(s.velocity[0] - goal.velocity[0], 2) +
+                                       std::pow(s.velocity[1] - goal.velocity[1], 2));
+        }
         return transformState(robot_bridge->getRobotState());
     }
+
+    std::array<float, 3> getGoalPosition() const { return goal.position; }
 
     std::pair<std::array<float, 3>, std::array<float, 4>> getRobotPose() const
     {
@@ -87,8 +104,20 @@ public:
     // see note a top about how you need to set vel and ang vel
     void setGoal(const std::array<float, 3> &pos, const std::array<float, 4> &quat, const std::array<float, 3> &vel, const std::array<float, 3> &ang_vel)
     {
-        goal = {pos, quat, vel, ang_vel};
+        goal = {pos, quat, vel, ang_vel};  // AbstractedState aggregate init
         _goal_fixed = true;
+    }
+
+    // Convenience: goal position only, zero velocity, identity orientation
+    void setGoal(const std::array<float, 3> &pos)
+    {
+        setGoal(pos, {1.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f});
+    }
+
+    // Convenience: reset to pos + quat, zero velocity
+    torch::Tensor resetTo(const std::array<float, 3> &pos, const std::array<float, 4> &quat)
+    {
+        return resetTo(pos, quat, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f});
     }
 
     void clearGoal()
@@ -103,7 +132,7 @@ public:
 
 private:
     std::shared_ptr<RobotBridgeTrain> robot_bridge;
-    AbstractedState goal = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}};
+    AbstractedState goal = {{0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
     bool _goal_fixed = false;
     int max_steps;
     int current_step = 0;
@@ -202,7 +231,10 @@ private:
         copy_to_ptr(state.accel);                                                 // Already local
 
         // relative values
-        auto &[g_pos, g_quat, g_vel, g_ang_vel] = goal;
+        auto &g_pos     = goal.position;
+        auto &g_quat    = goal.orientation;
+        auto &g_vel     = goal.velocity;
+        auto &g_ang_vel = goal.angular_velocity;
 
         std::array<float, 3> r_pos = {g_pos[0] - state.position[0], g_pos[1] - state.position[1], g_pos[2] - state.position[2]};
         copy_to_ptr(rotateVectorByQuat(r_pos, state.orientation, true));
