@@ -11,17 +11,19 @@ TD3Agent::TD3Agent(
     float tau,
     float gamma,
     int batch_size,
-    int actor_update_freq) : device(device_),
-                             actor_local(env->state_dim, env->action_dim, actor_layer_sizes, device_),
-                             actor_target(env->state_dim, env->action_dim, actor_layer_sizes, device_),
-                             critic_local_1(env->state_dim, env->action_dim, critic_layer_sizes, device_),
-                             critic_target_1(env->state_dim, env->action_dim, critic_layer_sizes, device_),
-                             critic_local_2(env->state_dim, env->action_dim, critic_layer_sizes, device_),
-                             critic_target_2(env->state_dim, env->action_dim, critic_layer_sizes, device_),
-                             actor_optimizer(actor_local->parameters(), torch::optim::AdamOptions(lr_actor)),
-                             critic_optimizer_1(critic_local_1->parameters(), torch::optim::AdamOptions(lr_critic)),
-                             critic_optimizer_2(critic_local_2->parameters(), torch::optim::AdamOptions(lr_critic)),
-                             tau(tau), gamma(gamma), batch_size(batch_size), actor_update_freq(actor_update_freq), lr_actor(lr_actor), lr_critic(lr_critic)
+    int actor_update_freq,
+    int max_obstacles_,
+    int actor_warmup_steps_) : device(device_), total_state_dim(max_obstacles_ * 4 + env->state_dim), actor_warmup_steps(actor_warmup_steps_),
+                               actor_local(env->state_dim + max_obstacles_ * 4, env->action_dim, actor_layer_sizes, device_),
+                               actor_target(env->state_dim + max_obstacles_ * 4, env->action_dim, actor_layer_sizes, device_),
+                               critic_local_1(env->state_dim + max_obstacles_ * 4, env->action_dim, critic_layer_sizes, device_),
+                               critic_target_1(env->state_dim + max_obstacles_ * 4, env->action_dim, critic_layer_sizes, device_),
+                               critic_local_2(env->state_dim + max_obstacles_ * 4, env->action_dim, critic_layer_sizes, device_),
+                               critic_target_2(env->state_dim + max_obstacles_ * 4, env->action_dim, critic_layer_sizes, device_),
+                               actor_optimizer(actor_local->parameters(), torch::optim::AdamOptions(lr_actor)),
+                               critic_optimizer_1(critic_local_1->parameters(), torch::optim::AdamOptions(lr_critic)),
+                               critic_optimizer_2(critic_local_2->parameters(), torch::optim::AdamOptions(lr_critic)),
+                               tau(tau), gamma(gamma), batch_size(batch_size), actor_update_freq(actor_update_freq), lr_actor(lr_actor), lr_critic(lr_critic)
 {
     action_limits = torch::tensor(env->action_limits);
     hardCopy();
@@ -29,9 +31,20 @@ TD3Agent::TD3Agent(
 
 std::pair<torch::Tensor, torch::Tensor> TD3Agent::getAction(torch::Tensor state, bool eval)
 {
+    int64_t pad_size = total_state_dim - state.size(-1);
+    torch::Tensor augmented_state;
+    if (pad_size > 0)
+    {
+        augmented_state = torch::constant_pad_nd(state, {0, pad_size}, 0);
+    }
+    else
+    {
+        augmented_state = state.narrow(-1, 0, total_state_dim);
+    }
+
     actor_local->eval();
     torch::NoGradGuard no_grad;
-    auto action = actor_local->forward(state).to(torch::kCPU);
+    auto action = actor_local->forward(augmented_state).to(torch::kCPU);
     if (!eval)
     {
         auto noise = (torch::randn_like(action) * 0.1).clamp(-0.2, 0.2); // Add some noise for exploration. Need to respect action limits
@@ -45,7 +58,29 @@ std::pair<torch::Tensor, torch::Tensor> TD3Agent::getAction(torch::Tensor state,
 
 void TD3Agent::addExperience(torch::Tensor state, torch::Tensor action, torch::Tensor reward, torch::Tensor next_state, torch::Tensor done)
 {
-    replay_buffer.addExperienceState(state, action, reward, next_state, done);
+    int64_t pad_size = total_state_dim - state.size(-1);
+    torch::Tensor augmented_state;
+    if (pad_size > 0)
+    {
+        augmented_state = torch::constant_pad_nd(state, {0, pad_size}, 0);
+    }
+    else
+    {
+        augmented_state = state.narrow(-1, 0, total_state_dim);
+    }
+
+    pad_size = total_state_dim - next_state.size(-1);
+    torch::Tensor augmented_next_state;
+    if (pad_size > 0)
+    {
+        augmented_next_state = torch::constant_pad_nd(next_state, {0, pad_size}, 0);
+    }
+    else
+    {
+        augmented_next_state = next_state.narrow(-1, 0, total_state_dim);
+    }
+
+    replay_buffer.addExperienceState(augmented_state, action, reward, augmented_next_state, done);
 }
 
 void TD3Agent::learn()
@@ -85,8 +120,7 @@ void TD3Agent::learn()
     critic_optimizer_2.step();
 
     total_critic_loss += critic_loss.item<double>();
-    learn_step++;
-    if (learn_step % actor_update_freq == 0)
+    if (learn_step % actor_update_freq == 0 && learn_step > actor_warmup_steps)
     {
         auto actor_loss = -critic_local_1->forward(states, actor_local->forward(states)).mean();
 
@@ -100,6 +134,7 @@ void TD3Agent::learn()
 
         softUpdate();
     }
+    learn_step++;
 }
 
 void TD3Agent::hardCopy()
@@ -135,8 +170,8 @@ PolicyOverOptionsAgent::PolicyOverOptionsAgent(
     float gamma_,
     int batch_size_) : device(device_),
                        lr(lr_), tau(tau_), gamma(gamma_), batch_size(batch_size_),
-                       q(env->state_dim, layer_sizes, device_),
-                       target_q(env->state_dim, layer_sizes, device_)
+                       q(env->state_dim + env->obstacle_dim, layer_sizes, device_),
+                       target_q(env->state_dim + env->obstacle_dim, layer_sizes, device_)
 {
     optimizer = std::make_unique<torch::optim::Adam>(q->parameters(), torch::optim::AdamOptions(lr));
     hardCopy();
