@@ -2,12 +2,17 @@
 #include "param.h"
 #include "joystick/joystick.h"
 #include "isaaclab/devices/keyboard/keyboard.h"
+#include <chrono>
+#include <fstream>
 #include <iostream>
 #include <cmath>
 #include <csignal>
 #include <atomic>
+#include <iomanip>
+#include <sstream>
 
 #define SCENE_FILE "ai_maker_space_scene.xml"
+static constexpr const char *DEFAULT_OUTPUT = "transitions.csv";
 
 // Match policy training ranges from deploy.yaml
 // commands.base_velocity.ranges: lin_vel_x[-0.5,1.0], lin_vel_y[-0.3,0.3], ang_vel_z[-0.2,0.2]
@@ -27,6 +32,62 @@ static std::atomic<bool> running{true};
 
 static void sigint_handler(int) { running = false; }
 
+static std::string make_csv_header()
+{
+    std::ostringstream header;
+    header << "timestamp_s,"
+           << "x,y,z,qw,qx,qy,qz,vx,vy,vz,omega_x,omega_y,omega_z,";
+
+    for (int i = 0; i < DOF; ++i)
+    {
+        header << "joint_pos_" << std::setw(2) << std::setfill('0') << i << ',';
+    }
+
+    for (int i = 0; i < DOF; ++i)
+    {
+        header << "joint_vel_" << std::setw(2) << std::setfill('0') << i << ',';
+    }
+
+    header << "cmd_vx,cmd_vy,cmd_yaw,"
+           << "next_x,next_y,next_z,next_qw,next_qx,next_qy,next_qz,"
+           << "next_vx,next_vy,next_vz,next_omega_x,next_omega_y,next_omega_z,";
+
+    for (int i = 0; i < DOF; ++i)
+    {
+        header << "next_joint_pos_" << std::setw(2) << std::setfill('0') << i << ',';
+    }
+
+    for (int i = 0; i < DOF; ++i)
+    {
+        header << "next_joint_vel_" << std::setw(2) << std::setfill('0') << i;
+        if (i + 1 < DOF)
+            header << ',';
+    }
+
+    header << '\n';
+    return header.str();
+}
+
+static void write_state_row(std::ostream &csv, const RobotState &state)
+{
+    csv << state.position[0] << ',' << state.position[1] << ',' << state.position[2] << ','
+        << state.orientation[0] << ',' << state.orientation[1] << ',' << state.orientation[2] << ',' << state.orientation[3] << ','
+        << state.velocity[0] << ',' << state.velocity[1] << ',' << state.velocity[2] << ','
+        << state.angular_velocity[0] << ',' << state.angular_velocity[1] << ',' << state.angular_velocity[2] << ',';
+
+    for (int i = 0; i < DOF; ++i)
+    {
+        csv << state.q[i] << ',';
+    }
+
+    for (int i = 0; i < DOF; ++i)
+    {
+        csv << state.dq[i];
+        if (i + 1 < DOF)
+            csv << ',';
+    }
+}
+
 // Normalise raw joystick axis to [-1, 1] with deadzone
 static float norm(int raw)
 {
@@ -43,7 +104,7 @@ int main(int argc, char **argv)
 {
     std::signal(SIGINT, sigint_handler);
 
-    auto vm = param::helper(argc, argv);
+    [[maybe_unused]] auto vm = param::helper(argc, argv);
 
     std::string rel_path = param::config["FSM"]["Velocity"]["policy_dir"].as<std::string>();
     auto policy_dir = param::parser_policy_dir(rel_path);
@@ -60,6 +121,15 @@ int main(int argc, char **argv)
     // Keyboard (same mapping as deploy/robots/g1_29dof)
     Keyboard kb;
 
+    std::ofstream csv(DEFAULT_OUTPUT);
+    if (!csv.is_open())
+    {
+        std::cerr << "Failed to open output file: " << DEFAULT_OUTPUT << '\n';
+        return 1;
+    }
+    csv << std::fixed << std::setprecision(6);
+    csv << make_csv_header();
+
     std::cout << "\nSandbox ready.\n"
               << "Keyboard:\n"
               << "  w / s       → forward / backward (vx)\n"
@@ -74,7 +144,11 @@ int main(int argc, char **argv)
               << "  Start       → quit\n"
               << "  Ctrl+C      → quit\n\n";
 
+    std::cout << "Recording transitions to " << DEFAULT_OUTPUT << "...\n";
+
     robot_bridge->resetRobot();
+
+    size_t count = 0;
 
     while (running)
     {
@@ -113,9 +187,26 @@ int main(int argc, char **argv)
             oz = scale_yaw(  norm(js.axis_[3]));
         }
 
+        auto s0 = robot_bridge->getRobotState();
         robot_bridge->publishVelCommand({vx, vy, oz});
         robot_bridge->update();
+        auto s1 = robot_bridge->getRobotState();
+
+        auto epoch = std::chrono::system_clock::now().time_since_epoch();
+        double timestamp = std::chrono::duration<double>(epoch).count();
+
+        csv << timestamp << ',';
+        write_state_row(csv, s0);
+        csv << ',' << vx << ',' << vy << ',' << oz << ',';
+        write_state_row(csv, s1);
+        csv << '\n';
+
+        ++count;
+        if (count % 20 == 0)
+            std::cout << "Recorded " << count << " transitions\r" << std::flush;
     }
+
+    std::cout << "\nSaved " << count << " transitions to " << DEFAULT_OUTPUT << '\n';
 
     return 0;
 }
