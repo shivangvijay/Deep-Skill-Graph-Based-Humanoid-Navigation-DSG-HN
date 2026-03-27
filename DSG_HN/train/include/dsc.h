@@ -30,31 +30,39 @@ class DeepSkillChaining
 public:
     struct Config
     {
-        int steps_per_episode         = 1000;
-        int gestation_train_steps     = 5000; // TD3 training steps per epoch before validation
-        int gestation_n               = 10;   // successes required out of 2N validation trials
-        int last_k                    = 10;   // states collected per successful validation episode
-        int refinement_eps            = 20;   // eval rollouts from SVM boundary for Phase 3
-        double nu                = 0.1; // one-class SVM outlier fraction
-        int max_skills           = 6;
+        int warmup_episodes = 20; // episodes where you just train the global option. The better the pretrained option is, the lower this can be
+        int steps_per_episode = 1000;
+        int gestation_train_steps = 5000; // TD3 training steps per epoch before validation
+        int gestation_n = 10;             // successes required out of 2N validation trials
+        int last_k = 10;                  // states collected per successful validation episode
+        int refinement_eps = 20;          // eval rollouts from SVM boundary for Phase 3
+        double nu = 0.1;                  // one-class SVM outlier fraction
+        int max_option_steps = 20;        // how long an option can execute for
+        int max_skills = 6;
         float start_noise_radius = 2.0f;
 
-        std::vector<int> actor_layers  = {128, 256, 128};
-        std::vector<int> critic_layers = {128, 256, 128};
-        std::vector<int> poo_layers    = {128, 256, 128};
+        std::vector<int> actor_layers = {256, 256, 256};
+        std::vector<int> critic_layers = {256, 256, 256};
+        std::vector<int> poo_layers = {256, 256, 256};
 
-        float lr_actor          = 1e-4f;
-        float lr_critic         = 3e-4f;
-        float lr_poo            = 1e-4f;
-        float tau               = 0.005f;
-        float gamma             = 0.99f;
-        int   batch_size        = 256;
-        int   actor_update_freq = 4;
+        float lr_actor = 1e-4f;
+        float lr_critic = 3e-4f;
+        int max_obstacles = 8;
+        int actor_warmup_steps = 10000;
+        float lr_poo = 1e-4f;
+        float tau = 0.005f;
+        float gamma = 0.99f;
+        int batch_size = 256;
+        int actor_update_freq = 4;
     };
 
-    DeepSkillChaining(std::shared_ptr<TrainEnvironment> env,
+    DeepSkillChaining(std::shared_ptr<RobotBridgeTrain> robot_bridge,
                       torch::Device device,
-                      std::array<float, 3> global_goal,
+                      AbstractedState global_goal,
+                      AbstractedState global_start,
+                      const std::string &pretrain_actor_path,
+                      const std::string &pretrain_critic1_path,
+                      const std::string &pretrain_critic2_path,
                       Config cfg);
 
     // Load a pre-trained TD3 policy as oG. Must be called before train().
@@ -63,24 +71,33 @@ public:
                           const std::string &critic2_path);
 
     // Train the chain backward from the global goal. Returns total skill count including oG.
-    int train();
+    int train(int max_episodes);
 
     // Execute one episode using πO over the trained chain. Returns cumulative reward.
-    float execute();
+    // float execute();
 
-    void save(const std::string &dir) const;
-    void load(const std::string &dir, int num_skills);
+    // void save(const std::string &dir) const;
+    // void load(const std::string &dir, int num_skills);
 
     int numSkills() const;
 
 private:
+    std::shared_ptr<RobotBridgeTrain> _robot_bridge;
     std::shared_ptr<TrainEnvironment> _env;
-    torch::Device                     _device;
-    std::array<float, 3>              _global_goal;
-    Config                            _cfg;
-    std::deque<Skill>                 _skills;
-    PolicyOverOptionsAgent            _poo;
+    torch::Device _device;
+    AbstractedState _global_goal;
+    AbstractedState _global_start;
 
-    Skill _makeSkill();
-    bool  _startCovered();
+    Config _cfg;
+    std::vector<std::shared_ptr<Skill>> _skills;
+    PolicyOverOptionsAgent _poo;
+
+    int _global_option_idx = 0;
+    int _unfinished_option_idx = 0;
+
+    void _warmupRollout();
+    void _dscRollout();
+    std::pair<int, AbstractedState> _pickOption();
+    bool _containsGlobalStartState();
+    std::shared_ptr<Skill> _makeSkill(bool is_global, std::shared_ptr<Skill> parent);
 };

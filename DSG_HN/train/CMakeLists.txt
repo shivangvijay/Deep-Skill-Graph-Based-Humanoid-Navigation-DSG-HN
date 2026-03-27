@@ -72,6 +72,7 @@ add_executable(test
 add_executable(dsc
   dsc.cpp
   agent.cpp
+  skill.cpp
   ${PROJECT_SOURCE_DIR}/../robot_bridge/mujoco_utils/mujoco_engine.cpp
   ${PROJECT_SOURCE_DIR}/../robot_bridge/robot_bridge.cpp
   ${PROJECT_SOURCE_DIR}/../robot_bridge/robot_bridge_train.cpp

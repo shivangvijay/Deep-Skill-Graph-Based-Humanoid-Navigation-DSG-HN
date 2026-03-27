@@ -5,7 +5,7 @@
 TD3Agent::TD3Agent(
     std::shared_ptr<TrainEnvironment> env,
     const std::vector<int> &actor_layer_sizes,
-    std::vector<int> &critic_layer_sizes,
+    const std::vector<int> &critic_layer_sizes,
     torch::Device device_, float lr_actor,
     float lr_critic,
     float tau,
@@ -185,17 +185,14 @@ void PolicyOverOptionsAgent::addOption(float initial_bias)
     optimizer = std::make_unique<torch::optim::Adam>(q->parameters(), torch::optim::AdamOptions(lr)); // reset optimizer to include new parameters
 }
 
-int PolicyOverOptionsAgent::getOption(torch::Tensor state)
+torch::Tensor PolicyOverOptionsAgent::getOptions(torch::Tensor state)
 {
-    auto options = q->forward(state).to(torch::kCPU);
-    auto best_option = options.argmax(-1).item<int>();
-    // std::cout << "Max Q-Value: " << std::get<0>(options.max(-1)).item<float>() << std::endl;
-    return best_option;
+    return q->forward(state).to(torch::kCPU).squeeze();
 }
 
-void PolicyOverOptionsAgent::addExperience(torch::Tensor state, int option, torch::Tensor cumulative_reward, torch::Tensor next_state, torch::Tensor done, int num_steps)
+void PolicyOverOptionsAgent::addExperience(torch::Tensor state, int option, float cumulative_reward, torch::Tensor next_state, bool done, int num_steps)
 {
-    addExperience(state, torch::tensor({(float)option}, torch::kInt64), cumulative_reward, next_state, done, torch::tensor({(float)num_steps}));
+    addExperience(state, torch::tensor({(float)option}, torch::kInt64), torch::tensor({(float)cumulative_reward}), next_state, torch::tensor({(float)done}), torch::tensor({(float)num_steps}));
 }
 
 void PolicyOverOptionsAgent::addExperience(torch::Tensor state, torch::Tensor option, torch::Tensor cumulative_reward, torch::Tensor next_state, torch::Tensor done, torch::Tensor num_steps)

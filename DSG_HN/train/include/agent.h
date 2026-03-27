@@ -12,7 +12,7 @@ public:
     TD3Agent(
         std::shared_ptr<TrainEnvironment> env,
         const std::vector<int> &actor_layer_sizes,
-        std::vector<int> &critic_layer_sizes,
+        const std::vector<int> &critic_layer_sizes,
         torch::Device device, float lr_actor,
         float lr_critic,
         float tau,
@@ -78,9 +78,9 @@ public:
     void addOption(float initial_bias);
     void learn();
     void hardCopy();
-    int getOption(torch::Tensor state);
+    torch::Tensor getOptions(torch::Tensor state);
     void addExperience(torch::Tensor state, torch::Tensor option, torch::Tensor cumulative_reward, torch::Tensor next_state, torch::Tensor done, torch::Tensor num_steps);
-    void addExperience(torch::Tensor state, int option, torch::Tensor cumulative_reward, torch::Tensor next_state, torch::Tensor done, int num_steps);
+    void addExperience(torch::Tensor state, int option, float cumulative_reward, torch::Tensor next_state, bool done, int num_steps);
 
 private:
     void softUpdate();

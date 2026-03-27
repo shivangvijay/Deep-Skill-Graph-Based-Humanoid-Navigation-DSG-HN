@@ -11,7 +11,7 @@
 #include <math.h>
 
 #define DOF 35                 // note that the actual DOF is 29, but the msg has 35 motors, so just going to read all 35
-#define VELOCITY_POLICY_DT 0.02 // matches low-level locomotion policy (50 Hz)
+#define VELOCITY_POLICY_DT 0.1 // 10 Hz
 
 // Navigation-level abstraction of robot state.
 // Excludes joint-level proprioception (q, dq) — used for skill subgoals and initiation-set classification.
