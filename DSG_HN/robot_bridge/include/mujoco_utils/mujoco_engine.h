@@ -67,6 +67,5 @@ public:
     mjrContext con;  // custom GPU context
     mjvPerturb pert; // mouse perturbation
 
-private:
     void initViz();
 };

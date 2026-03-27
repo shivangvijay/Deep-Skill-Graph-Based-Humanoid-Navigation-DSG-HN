@@ -193,3 +193,10 @@ bool RobotBridgeTrain::inCollision()
 {
     return eng->inCollision();
 }
+
+void RobotBridgeTrain::startRender()
+{
+    if (render) return;
+    render = true;
+    eng->initViz();
+}

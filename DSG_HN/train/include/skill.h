@@ -32,7 +32,7 @@ public:
           torch::Device device,
           float lr_actor, float lr_critic,
           float tau, float gamma, int max_obstacles, int actor_warmup_steps,
-          int batch_size, int actor_update_freq, int k, int max_steps,
+          int batch_size, int actor_update_freq, int k, int max_steps, double nu,
           std::shared_ptr<Skill> parent, int gestation_period, bool is_global, AbstractedState global_goal);
 
     AbstractedState getLocalGoal();
@@ -70,7 +70,11 @@ private:
     bool _is_global;
     TD3Agent _agent;
     InitiationSetClassifier _classifier;
-    std::vector<GestationRecord> _gestation_records;
+    std::vector<GestationRecord> _positive_gestation_records;
+    std::vector<std::vector<float>> _gestation_vecs;
+    std::vector<int> _gestation_labels;
+    bool _has_negative_gestation = false;
+    bool _classifier_trained = false;
     AbstractedState _global_goal;
     mutable std::mt19937 _rng;
     bool _always_available = false;
@@ -78,6 +82,7 @@ private:
     int _gestation_period;
     int _max_steps = 0;
     int _k = 0;
+    double _nu;
 
     // Build 13-dim classifier feature: [abs_pos(3), vel(3), quat(4), ang_vel(3)]
     std::vector<float> _classifierVec(const RobotState &state) const;

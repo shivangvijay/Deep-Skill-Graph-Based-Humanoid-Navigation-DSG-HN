@@ -12,7 +12,7 @@ class RobotBridgeTrain : public RobotBridge
 {
 public:
     // Pass in your existing env and engine pointers. TODO: unify this and other RobotBridge by just passing in vm
-    RobotBridgeTrain(std::string scene_file, float x_min, float x_max, float y_min, float y_max, std::filesystem::path policy_dir, bool dir); // std::shared_ptr<MuJoCoEngine> eng, std::unique_ptr<isaaclab::ManagerBasedRLEnv> env, bool render);
+    RobotBridgeTrain(std::string scene_file, float x_min, float x_max, float y_min, float y_max, std::filesystem::path policy_dir, bool render); // std::shared_ptr<MuJoCoEngine> eng, std::unique_ptr<isaaclab::ManagerBasedRLEnv> env, bool render);
 
     virtual ~RobotBridgeTrain() = default;
 
@@ -22,6 +22,7 @@ public:
     RobotState getRobotState() override;
     void update() override;
     bool inCollision();
+    void startRender(); // lets you start rendering even after you activated robot bridge (useful for cases when you want to train without rendering, but validate with it)
 
     mjModel* getModel() const { return eng->getModel(); }
     mjData*  getData()  const { return eng->getData(); }

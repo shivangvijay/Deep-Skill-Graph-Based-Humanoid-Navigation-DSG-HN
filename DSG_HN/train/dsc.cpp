@@ -1,5 +1,9 @@
 #include "dsc.h"
 
+/*
+TODO: need to normalize SVM dimensions
+*/
+
 DeepSkillChaining::DeepSkillChaining(
     std::shared_ptr<RobotBridgeTrain> robot_bridge,
     torch::Device device,
@@ -10,8 +14,8 @@ DeepSkillChaining::DeepSkillChaining(
     const std::string &pretrain_critic2_path,
     Config cfg)
     : _robot_bridge(robot_bridge), _device(device), _global_goal(global_goal), _global_start(global_start), _cfg(std::move(cfg)),
-        _env(std::make_shared<TrainEnvironment>(_robot_bridge, cfg.steps_per_episode)), 
-        _poo(_env, _cfg.poo_layers, device, _cfg.lr_poo, _cfg.tau, _cfg.gamma, _cfg.batch_size)
+      _env(std::make_shared<TrainEnvironment>(_robot_bridge, cfg.steps_per_episode)),
+      _poo(_env, _cfg.poo_layers, device, _cfg.lr_poo, _cfg.tau, _cfg.gamma, _cfg.batch_size), _rng(std::random_device{}())
 {
     loadGlobalOption(pretrain_actor_path, pretrain_critic1_path, pretrain_critic2_path);
 
@@ -39,10 +43,13 @@ void DeepSkillChaining::_warmupRollout()
 {
     int step = 0;
     bool env_done = false;
+    auto [pos, quat, vel, ang_vel] = _robot_bridge->generateRandomPoseWithVel();
+
+    AbstractedState goal = {pos, quat, vel, ang_vel};
 
     while (step < _cfg.steps_per_episode && !env_done)
     {
-        auto [steps_taken, cum_reward, done, first_state_poo, last_state_poo] = _skills[_global_option_idx]->rollout(_global_goal); // when warming up, just use global goal
+        auto [steps_taken, cum_reward, done, first_state_poo, last_state_poo] = _skills[_global_option_idx]->rollout(goal); // when warming up, just use global goal
         env_done = done;
         step += steps_taken;
 
@@ -104,17 +111,23 @@ std::pair<int, AbstractedState> DeepSkillChaining::_pickOption()
     }
 }
 
-void DeepSkillChaining::_dscRollout()
+float DeepSkillChaining::_dscRollout()
 {
     int step = 0;
     bool env_done = false;
+    float total_reward = 0;
     while (step < _cfg.steps_per_episode && !env_done)
     {
         auto [option, goal] = _pickOption();
         auto [steps_taken, cum_reward, done, first_state_poo, last_state_poo] = _skills[option]->rollout(goal);
 
+        // std::cout << " " << steps_taken << " " << option << " " << done << std::endl;
+        if (steps_taken == 0) // this condition occurs when we just finished training a new skill, but then find ourselves in the initiation set of that skill while trying to train the new skill
+            break;
+
         env_done = done;
         step += steps_taken;
+        total_reward += cum_reward;
 
         _poo.addExperience(first_state_poo, option, cum_reward, last_state_poo, done, steps_taken);
         _poo.learn();
@@ -130,11 +143,12 @@ void DeepSkillChaining::_dscRollout()
             std::cout << "Making New Skill With ID: " << _unfinished_option_idx << std::endl;
         }
     }
+    return total_reward;
 }
 
 bool DeepSkillChaining::_containsGlobalStartState()
 {
-    for (int o = _global_option_idx + 1; o < _unfinished_option_idx; o++)
+    for (int o = _global_option_idx + 1; o < _skills.size(); o++)
     {
         if (_skills[o]->getTrainingPhase() != "gestation" && _skills[o]->canStart(_global_start))
             return true;
@@ -148,7 +162,7 @@ std::shared_ptr<Skill> DeepSkillChaining::_makeSkill(bool is_global, std::shared
                                                                _cfg.actor_layers, _cfg.critic_layers, _device,
                                                                _cfg.lr_actor, _cfg.lr_critic, _cfg.tau, _cfg.gamma, _cfg.max_obstacles, _cfg.actor_warmup_steps,
                                                                _cfg.batch_size, _cfg.actor_update_freq, _cfg.last_k,
-                                                               _cfg.max_option_steps, parent, _cfg.gestation_n, is_global, _global_goal);
+                                                               _cfg.max_option_steps, _cfg.nu, parent, _cfg.gestation_n, is_global, _global_goal);
     if (!is_global)
         new_skill->initFromSkill(_skills[_global_option_idx]);
     return new_skill;
@@ -158,9 +172,17 @@ int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout wh
 {
     for (int episode = 0; episode < max_episodes; episode++)
     {
-        // TODO: maybe add some goal biased sampling here
-        auto [pos, quat, vel, ang_vel] = _robot_bridge->generateRandomPoseWithVel();
-        _env->resetTo(pos, quat, vel, ang_vel); // could just do this with env->reset, but want to make a bit more explicit.
+        std::uniform_real_distribution<float> dis(0.0f, 1.0f);
+        float p = dis(_rng);
+        if (p < 0.5) // bit of goal biased sampling, may want to do even more intelligent sampling going forward
+        {
+            _env->resetTo(_global_start.position, _global_start.orientation, _global_start.velocity, _global_start.angular_velocity);
+        }
+        else
+        {
+            auto [pos, quat, vel, ang_vel] = _robot_bridge->generateRandomPoseWithVel();
+            _env->resetTo(pos, quat, vel, ang_vel); // could just do this with env->reset, but want to make a bit more explicit.
+        }
 
         if (episode < _cfg.warmup_episodes)
         {
@@ -176,7 +198,13 @@ int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout wh
             break;
         }
     }
-    return _skills.size();
+    return _skills.size() - 1;
+}
+
+float DeepSkillChaining::execute()
+{
+    _env->resetTo(_global_start.position, _global_start.orientation, _global_start.velocity, _global_start.angular_velocity);
+    return _dscRollout();
 }
 
 // void DeepSkillChaining::save(const std::string &dir) const
@@ -217,7 +245,7 @@ int DeepSkillChaining::numSkills() const
 
 /************************************** main **************************************/
 
-#define SCENE_FILE "../config/scene/test_scene_obs_free.xml"
+#define SCENE_FILE "../config/scene/test_scene.xml"
 #define OG_ACTOR "best_actor.pt"
 #define OG_CRITIC1 "best_critic_1.pt"
 #define OG_CRITIC2 "best_critic_2.pt"
@@ -246,31 +274,36 @@ int main(int argc, char **argv)
         SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, /*render=*/false);
 
     DeepSkillChaining::Config cfg;
-    cfg.gestation_n = 10;
-    cfg.last_k = 10;
+    cfg.gestation_n = 30;
+    cfg.last_k = 20;
+    cfg.max_option_steps = 20;
     cfg.refinement_eps = 20;
     cfg.nu = 0.1;
     cfg.max_skills = 6;
+    cfg.warmup_episodes = 20;
 
     AbstractedState global_goal = {{3, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
-    AbstractedState global_start = {{-1, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    AbstractedState global_start = {{-3, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 
     DeepSkillChaining dsc(robot_bridge, device, global_goal, global_start, "../models/best_actor.pt", "../models/best_critic_1.pt", "../models/best_critic_2.pt", cfg);
 
-    int n = dsc.train(20);
+    int n = dsc.train(200);
     std::cout << "\nTraining complete: " << n << " skill(s) in chain." << std::endl;
+
+    // TODO: implement this stuff to visualize the output and see if things are succesful or not!
 
     // dsc.save("dsc_models");
 
     // std::cout << "\n=== Evaluation (20 episodes) ===" << std::endl;
-    // float total = 0.0f;
-    // for (int i = 0; i < 20; ++i)
-    // {
-    //     float r = dsc.execute();
-    //     total += r;
-    //     std::cout << "  Episode " << i + 1 << ": reward = " << r << std::endl;
-    // }
-    // std::cout << "Mean reward: " << (total / 20.0f) << std::endl;
+    float total = 0.0f;
+    robot_bridge->startRender();
+    for (int i = 0; i < 20; ++i)
+    {
+        float r = dsc.execute();
+        total += r;
+        std::cout << "  Episode " << i + 1 << ": reward = " << r << std::endl;
+    }
+    std::cout << "Mean reward: " << (total / 20.0f) << std::endl;
 
     return 0;
 }

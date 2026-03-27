@@ -7,17 +7,19 @@ Skill::Skill(
     torch::Device device,
     float lr_actor, float lr_critic,
     float tau, float gamma, int max_obstacles, int actor_warmup_steps,
-    int batch_size, int actor_update_freq, int k, int max_steps,
+    int batch_size, int actor_update_freq, int k, int max_steps, double nu,
     std::shared_ptr<Skill> parent, int gestation_period, bool is_global, AbstractedState global_goal)
     : _env(env), _parent(parent), _is_global(is_global), _gestation_period(gestation_period), _k(k), _max_steps(max_steps), _agent(env, actor_layer_sizes, critic_layer_sizes, device,
                                                                                                                                    lr_actor, lr_critic, tau, gamma, batch_size, actor_update_freq, max_obstacles, actor_warmup_steps),
-      _rng(std::random_device{}()), _global_goal(global_goal)
+      _rng(std::random_device{}()), _global_goal(global_goal), _nu(nu)
 {
 }
 
+// TODO: perhaps we need something where instead of just tracking goal hits, we only mark it as ready
+// when it meets a certain success percentage
 std::string Skill::getTrainingPhase() const
 {
-    if (_goal_hits < _gestation_period)
+    if (_goal_hits < _gestation_period || !_classifier_trained) // last two terms make sure SVM is trained
     {
         return "gestation";
     }
@@ -39,7 +41,7 @@ AbstractedState Skill::getLocalGoal()
 std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const AbstractedState &goal)
 {
     // need to get start and end states w.r.t the global goal, which is what is expected as the input to the policy over options
-    _env->setGoal(goal);
+    _env->setGoal(_global_goal);
     torch::Tensor start_state_poo = _env->getState();
 
     _env->setGoal(goal);
@@ -88,6 +90,7 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
 
     if (!_is_global && _atTermination(reward, done)) // can not reach goal, but still reach next option
     {
+        std::cout << "Traj Success" << std::endl;
         _goal_hits++;
     }
 
@@ -96,32 +99,54 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
         _fitClassifier(visited, _atTermination(reward, done));
     }
 
-    _env->setGoal(goal);
+    _env->setGoal(_global_goal);
     torch::Tensor end_state_poo = _env->getState();
 
     return {num_steps, total_reward, _atLocalGoal(reward, done), start_state_poo, end_state_poo};
 }
 
+// TODO: add max buffer size at which we start to pop off the front
+// TODO: generally, this logic will need to really be refined
 void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool term_success)
 {
-    std::vector<int> labels(visited.size(), -1);
-    std::vector<std::vector<float>> class_vecs;
 
     if (term_success)
     {
         for (int t = visited.size() - 1; t >= std::max(0, (int)visited.size() - _k); t--)
         {
-            labels[t] = 1;
-            _gestation_records.push_back(visited[t]); // save this is a positive example which you can sample from
+            _positive_gestation_records.push_back(visited[t]); // save this is a positive example which you can sample from
+            _gestation_vecs.push_back(visited[t].classifier_vec);
+            _gestation_labels.push_back(1);
         }
+        // for (int t = 0; t < (int)(visited.size() - _k); t++)
+        // {
+        //     _gestation_vecs.push_back(visited[t].classifier_vec);
+        //     _gestation_labels.push_back(-1);
+        //     if (!_has_negative_gestation)
+        //         _has_negative_gestation = true;
+        // }
     }
-
-    for (const auto &v : visited)
+    else
     {
-        class_vecs.push_back(v.classifier_vec);
+        // try and make SVM a bit more optimistic by not putting the entire traj in the negative catagory
+        _gestation_vecs.push_back(visited.front().classifier_vec);
+        _gestation_labels.push_back(-1);
+        _has_negative_gestation = true;
+
+        // for (int t = 0; t < visited.size(); t++)
+        // {
+        //     _gestation_vecs.push_back(visited[t].classifier_vec);
+        //     _gestation_labels.push_back(-1);
+        //     if (!_has_negative_gestation)
+        //         _has_negative_gestation = true;
+        // }
     }
 
-    _classifier.train(class_vecs, labels);
+    if ((_positive_gestation_records.size() > 0 && _has_negative_gestation) || _classifier_trained)
+    {
+        _classifier.train(_gestation_vecs, _gestation_labels);
+        _classifier_trained = true;
+    }
 }
 
 bool Skill::canStart(const RobotState &state) const
@@ -184,10 +209,11 @@ void Skill::initFromSkill(std::shared_ptr<Skill> other)
     _agent.hardCopy();
 }
 
+// TODO: maybe want to improve the sampling logic for greater training efficiency
 AbstractedState Skill::sampleSubgoalState() const
 {
-    std::uniform_int_distribution<size_t> dist(0, _gestation_records.size() - 1);
-    return _gestation_records[dist(_rng)].state;
+    std::uniform_int_distribution<size_t> dist(0, _positive_gestation_records.size() - 1);
+    return _positive_gestation_records[dist(_rng)].state;
 }
 
 void Skill::save(const std::string &actor_path,
@@ -218,52 +244,140 @@ TD3Agent &Skill::agent()
 }
 
 /*** Private ***/
+// std::vector<float> Skill::_classifierVec(const AbstractedState &state) const
+// {
+//     std::vector<float> out;
+//     out.reserve(13);
+//     // global pos
+//     out.push_back(state.position[0]);
+//     out.push_back(state.position[1]);
+//     out.push_back(state.position[2]);
+//     // global vel
+//     out.push_back(state.velocity[0]);
+//     out.push_back(state.velocity[1]);
+//     out.push_back(state.velocity[2]);
+//     // orientation
+//     if (state.orientation[0] < 0)
+//     {
+//         out.push_back(-state.orientation[0]);
+//         out.push_back(-state.orientation[1]);
+//         out.push_back(-state.orientation[2]);
+//         out.push_back(-state.orientation[3]);
+//     }
+//     else
+//     {
+//         out.push_back(state.orientation[0]);
+//         out.push_back(state.orientation[1]);
+//         out.push_back(state.orientation[2]);
+//         out.push_back(state.orientation[3]);
+//     }
+//     // ang vel
+//     out.push_back(state.angular_velocity[0]);
+//     out.push_back(state.angular_velocity[1]);
+//     out.push_back(state.angular_velocity[2]);
+//     return out;
+// }
 
+// std::vector<float> Skill::_classifierVec(const RobotState &state) const
+// {
+//     std::vector<float> out;
+//     out.reserve(13);
+//     // global pos
+//     out.push_back(state.position[0]);
+//     out.push_back(state.position[1]);
+//     out.push_back(state.position[2]);
+//     // global vel
+//     out.push_back(state.velocity[0]);
+//     out.push_back(state.velocity[1]);
+//     out.push_back(state.velocity[2]);
+//     // orientation
+//     if (state.orientation[0] < 0)
+//     {
+//         out.push_back(-state.orientation[0]);
+//         out.push_back(-state.orientation[1]);
+//         out.push_back(-state.orientation[2]);
+//         out.push_back(-state.orientation[3]);
+//     }
+//     else
+//     {
+//         out.push_back(state.orientation[0]);
+//         out.push_back(state.orientation[1]);
+//         out.push_back(state.orientation[2]);
+//         out.push_back(state.orientation[3]);
+//     }
+//     // ang vel
+//     out.push_back(state.angular_velocity[0]);
+//     out.push_back(state.angular_velocity[1]);
+//     out.push_back(state.angular_velocity[2]);
+//     return out;
+// }
 std::vector<float> Skill::_classifierVec(const AbstractedState &state) const
 {
     std::vector<float> out;
+    auto scaling_factors = _env->env_scaling_factors;
     out.reserve(13);
     // global pos
-    out.push_back(state.position[0]);
-    out.push_back(state.position[1]);
-    out.push_back(state.position[2]);
+    out.push_back(state.position[0] / scaling_factors.position[0]);
+    out.push_back(state.position[1] / scaling_factors.position[1]);
+    out.push_back(state.position[2] / scaling_factors.position[2]);
     // global vel
-    out.push_back(state.velocity[0]);
-    out.push_back(state.velocity[1]);
-    out.push_back(state.velocity[2]);
+    out.push_back(state.velocity[0] / scaling_factors.velocity[0]);
+    out.push_back(state.velocity[1] / scaling_factors.velocity[1]);
+    out.push_back(state.velocity[2] / scaling_factors.velocity[2]);
     // orientation
-    out.push_back(state.orientation[0]);
-    out.push_back(state.orientation[1]);
-    out.push_back(state.orientation[2]);
-    out.push_back(state.orientation[3]);
+    if (state.orientation[0] < 0)
+    {
+        out.push_back(-state.orientation[0] / scaling_factors.orientation[0]);
+        out.push_back(-state.orientation[1] / scaling_factors.orientation[1]);
+        out.push_back(-state.orientation[2] / scaling_factors.orientation[2]);
+        out.push_back(-state.orientation[3] / scaling_factors.orientation[3]);
+    }
+    else
+    {
+        out.push_back(state.orientation[0] / scaling_factors.orientation[0]);
+        out.push_back(state.orientation[1] / scaling_factors.orientation[1]);
+        out.push_back(state.orientation[2] / scaling_factors.orientation[2]);
+        out.push_back(state.orientation[3] / scaling_factors.orientation[3]);
+    }
     // ang vel
-    out.push_back(state.angular_velocity[0]);
-    out.push_back(state.angular_velocity[1]);
-    out.push_back(state.angular_velocity[2]);
+    out.push_back(state.angular_velocity[0] / scaling_factors.angular_velocity[0]);
+    out.push_back(state.angular_velocity[1] / scaling_factors.angular_velocity[1]);
+    out.push_back(state.angular_velocity[2] / scaling_factors.angular_velocity[2]);
     return out;
 }
 
 std::vector<float> Skill::_classifierVec(const RobotState &state) const
 {
     std::vector<float> out;
+    auto scaling_factors = _env->env_scaling_factors;
     out.reserve(13);
     // global pos
-    out.push_back(state.position[0]);
-    out.push_back(state.position[1]);
-    out.push_back(state.position[2]);
+    out.push_back(state.position[0] / scaling_factors.position[0]);
+    out.push_back(state.position[1] / scaling_factors.position[1]);
+    out.push_back(state.position[2] / scaling_factors.position[2]);
     // global vel
-    out.push_back(state.velocity[0]);
-    out.push_back(state.velocity[1]);
-    out.push_back(state.velocity[2]);
+    out.push_back(state.velocity[0] / scaling_factors.velocity[0]);
+    out.push_back(state.velocity[1] / scaling_factors.velocity[1]);
+    out.push_back(state.velocity[2] / scaling_factors.velocity[2]);
     // orientation
-    out.push_back(state.orientation[0]);
-    out.push_back(state.orientation[1]);
-    out.push_back(state.orientation[2]);
-    out.push_back(state.orientation[3]);
+    if (state.orientation[0] < 0)
+    {
+        out.push_back(-state.orientation[0] / scaling_factors.orientation[0]);
+        out.push_back(-state.orientation[1] / scaling_factors.orientation[1]);
+        out.push_back(-state.orientation[2] / scaling_factors.orientation[2]);
+        out.push_back(-state.orientation[3] / scaling_factors.orientation[3]);
+    }
+    else
+    {
+        out.push_back(state.orientation[0] / scaling_factors.orientation[0]);
+        out.push_back(state.orientation[1] / scaling_factors.orientation[1]);
+        out.push_back(state.orientation[2] / scaling_factors.orientation[2]);
+        out.push_back(state.orientation[3] / scaling_factors.orientation[3]);
+    }
     // ang vel
-    out.push_back(state.angular_velocity[0]);
-    out.push_back(state.angular_velocity[1]);
-    out.push_back(state.angular_velocity[2]);
+    out.push_back(state.angular_velocity[0] / scaling_factors.angular_velocity[0]);
+    out.push_back(state.angular_velocity[1] / scaling_factors.angular_velocity[1]);
+    out.push_back(state.angular_velocity[2] / scaling_factors.angular_velocity[2]);
     return out;
 }
 
@@ -295,12 +409,11 @@ float Skill::_euclideanDistance(const std::array<float, 4> &a, const std::array<
     return dist;
 }
 
-
 float Skill::distanceToState(const AbstractedState &state) const
 {
     float max_dist = 0; // gonna just do euclidian distance between vectors
 
-    for (const auto &start : _gestation_records)
+    for (const auto &start : _positive_gestation_records)
     {
         float dist = 0;
         // doing this euclid distance metric is not really right, but I am lazy so am just leaving it for now

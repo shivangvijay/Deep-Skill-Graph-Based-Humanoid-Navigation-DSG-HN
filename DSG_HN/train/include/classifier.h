@@ -5,10 +5,15 @@
 #include <vector>
 #include <stdexcept>
 
+static void print_null(const char *s) {}
+
 class InitiationSetClassifier
 {
 public:
-    InitiationSetClassifier() = default;
+    InitiationSetClassifier()
+    {
+        svm_set_print_string_function(&print_null);
+    }
 
     ~InitiationSetClassifier()
     {
@@ -53,10 +58,11 @@ public:
         param.probability = 0;
         param.nr_weight = 0;
 
-        Problem p = _make_problem(states, labels);
+        _make_problem(states, labels);
+
         if (_model)
             svm_free_and_destroy_model(&_model);
-        _model = svm_train(&p.prob, &param); // svm_train internally copies the problem data, so we can safely let p go out of scope
+        _model = svm_train(&_p.prob, &param); // svm_train does not internally copy the problem data
     }
 
     // Train one-class SVM (positive examples only — no labels needed)
@@ -78,10 +84,11 @@ public:
 
         // ONE_CLASS ignores labels; pass zeros
         std::vector<int> dummy_labels(states.size(), 0);
-        Problem p = _make_problem(states, dummy_labels);
+        _make_problem(states, dummy_labels);
+
         if (_model)
             svm_free_and_destroy_model(&_model);
-        _model = svm_train(&p.prob, &param);
+        _model = svm_train(&_p.prob, &param);
     }
 
     // Returns the raw signed decision value (distance to hyperplane).
@@ -166,25 +173,27 @@ private:
         std::vector<svm_node *> x_ptrs;
         std::vector<std::vector<svm_node>> x_nodes;
     };
+    
+    Problem _p; // keep as global to ensure it does not go out of scope
 
-    Problem _make_problem(const std::vector<std::vector<float>> &states,
+
+    void _make_problem(const std::vector<std::vector<float>> &states,
                           const std::vector<int> &labels)
     {
-        Problem p;
-        p.prob.l = static_cast<int>(states.size());
-        p.y.resize(states.size());
-        p.x_nodes.resize(states.size());
-        p.x_ptrs.resize(states.size());
+        // Problem p;
+        _p.prob.l = static_cast<int>(states.size());
+        _p.y.resize(states.size());
+        _p.x_nodes.resize(states.size());
+        _p.x_ptrs.resize(states.size());
 
         for (size_t i = 0; i < states.size(); ++i)
         {
-            p.y[i] = static_cast<double>(labels[i]);
-            p.x_nodes[i] = _make_nodes(states[i]);
-            p.x_ptrs[i] = p.x_nodes[i].data();
+            _p.y[i] = static_cast<double>(labels[i]);
+            _p.x_nodes[i] = _make_nodes(states[i]);
+            _p.x_ptrs[i] = _p.x_nodes[i].data();
         }
 
-        p.prob.y = p.y.data();
-        p.prob.x = p.x_ptrs.data();
-        return p;
+        _p.prob.y = _p.y.data();
+        _p.prob.x = _p.x_ptrs.data();
     }
 };

@@ -15,6 +15,7 @@
 #include <torch/torch.h>
 #include <filesystem>
 #include <iostream>
+#include <random>
 
 // DeepSkillChaining — backward chains skills from the global goal toward the start.
 //
@@ -30,7 +31,7 @@ class DeepSkillChaining
 public:
     struct Config
     {
-        int warmup_episodes = 20; // episodes where you just train the global option. The better the pretrained option is, the lower this can be
+        int warmup_episodes = 5; // episodes where you just train the global option. The better the pretrained option is, the lower this can be
         int steps_per_episode = 1000;
         int gestation_train_steps = 5000; // TD3 training steps per epoch before validation
         int gestation_n = 10;             // successes required out of 2N validation trials
@@ -45,8 +46,8 @@ public:
         std::vector<int> critic_layers = {256, 256, 256};
         std::vector<int> poo_layers = {256, 256, 256};
 
-        float lr_actor = 1e-4f;
-        float lr_critic = 3e-4f;
+        float lr_actor = 1e-5f;
+        float lr_critic = 1e-4f;
         int max_obstacles = 8;
         int actor_warmup_steps = 10000;
         float lr_poo = 1e-4f;
@@ -70,11 +71,11 @@ public:
                           const std::string &critic1_path,
                           const std::string &critic2_path);
 
-    // Train the chain backward from the global goal. Returns total skill count including oG.
+    // Train the chain backward from the global goal. Returns total skill count excluding the global option
     int train(int max_episodes);
 
     // Execute one episode using πO over the trained chain. Returns cumulative reward.
-    // float execute();
+    float execute();
 
     // void save(const std::string &dir) const;
     // void load(const std::string &dir, int num_skills);
@@ -92,11 +93,13 @@ private:
     std::vector<std::shared_ptr<Skill>> _skills;
     PolicyOverOptionsAgent _poo;
 
+    mutable std::mt19937 _rng;
+
     int _global_option_idx = 0;
     int _unfinished_option_idx = 0;
 
     void _warmupRollout();
-    void _dscRollout();
+    float _dscRollout();
     std::pair<int, AbstractedState> _pickOption();
     bool _containsGlobalStartState();
     std::shared_ptr<Skill> _makeSkill(bool is_global, std::shared_ptr<Skill> parent);
