@@ -22,10 +22,10 @@ namespace po = boost::program_options;
 static constexpr int kRawStateDim = 13;
 static constexpr int kJointDim = 35;
 static constexpr int kFullStateDim = kRawStateDim + (2 * kJointDim);
-static constexpr int kInputStateDim = 7;
+static constexpr int kInputStateDim = 7 + (2 * kJointDim);
 static constexpr int kActionDim = 3;
 static constexpr int kInputDim = kInputStateDim + kActionDim;
-static constexpr int kOutputDim = 6;
+static constexpr int kOutputDim = 6 + (2 * kJointDim);
 
 static constexpr int IDX_X = 0;
 static constexpr int IDX_Y = 1;
@@ -166,13 +166,18 @@ static LoadedCsv load_csv(const std::string &csv_path)
 
 static torch::Tensor state_to_input_gaussian(const torch::Tensor &states)
 {
-    return torch::stack({states.select(1, IDX_QW),
-                         states.select(1, IDX_QX),
-                         states.select(1, IDX_QY),
-                         states.select(1, IDX_QZ),
-                         states.select(1, IDX_VX),
-                         states.select(1, IDX_VY),
-                         states.select(1, IDX_OZ)}, 1);
+    std::vector<torch::Tensor> features = {
+        states.select(1, IDX_QW),
+        states.select(1, IDX_QX),
+        states.select(1, IDX_QY),
+        states.select(1, IDX_QZ),
+        states.select(1, IDX_VX),
+        states.select(1, IDX_VY),
+        states.select(1, IDX_OZ)
+    };
+    for (int i = 0; i < kJointDim; ++i) features.push_back(states.select(1, kRawStateDim + i));
+    for (int i = 0; i < kJointDim; ++i) features.push_back(states.select(1, kRawStateDim + kJointDim + i));
+    return torch::stack(features, 1);
 }
 
 static torch::Tensor compute_deltas(const torch::Tensor &states, const torch::Tensor &next_states)
@@ -197,7 +202,12 @@ static torch::Tensor compute_deltas(const torch::Tensor &states, const torch::Te
     auto dvy = next_states.select(1, IDX_VY) - states.select(1, IDX_VY);
     auto doz = next_states.select(1, IDX_OZ) - states.select(1, IDX_OZ);
 
-    return torch::stack({dx, dy, dyaw, dvx, dvy, doz}, 1);
+    std::vector<torch::Tensor> deltas = {dx, dy, dyaw, dvx, dvy, doz};
+    for (int i = 0; i < kJointDim; ++i)
+        deltas.push_back(next_states.select(1, kRawStateDim + i) - states.select(1, kRawStateDim + i));
+    for (int i = 0; i < kJointDim; ++i)
+        deltas.push_back(next_states.select(1, kRawStateDim + kJointDim + i) - states.select(1, kRawStateDim + kJointDim + i));
+    return torch::stack(deltas, 1);
 }
 
 struct Normaliser
@@ -321,6 +331,8 @@ static torch::Tensor make_output_weights(torch::Device device)
     weights[0] = 2.0f;
     weights[1] = 2.0f;
     weights[2] = 2.0f;
+    for (int i = 6; i < 6 + kJointDim; ++i) weights[i] = 0.5f;
+    for (int i = 6 + kJointDim; i < kOutputDim; ++i) weights[i] = 0.2f;
     return weights;
 }
 

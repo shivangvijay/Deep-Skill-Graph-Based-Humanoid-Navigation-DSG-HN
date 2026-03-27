@@ -20,10 +20,10 @@ namespace po = boost::program_options;
 static constexpr int kRawStateDim = 13;
 static constexpr int kJointDim = 35;
 static constexpr int kFullStateDim = kRawStateDim + (2 * kJointDim);
-static constexpr int kInputStateDim = 7;
+static constexpr int kInputStateDim = 7 + (2 * kJointDim);
 static constexpr int kActionDim = 3;
 static constexpr int kInputDim = kInputStateDim + kActionDim;
-static constexpr int kOutputDim = 6;
+static constexpr int kOutputDim = 6 + (2 * kJointDim);
 static constexpr double kBoundaryGapSeconds = 0.15;
 
 static constexpr int IDX_X = 0;
@@ -298,6 +298,8 @@ struct RolloutState
     double vx = 0.0;
     double vy = 0.0;
     double oz = 0.0;
+    std::vector<double> joint_pos;
+    std::vector<double> joint_vel;
 };
 
 static RolloutState state_from_row(const torch::Tensor &row)
@@ -309,6 +311,13 @@ static RolloutState state_from_row(const torch::Tensor &row)
     state.vx = row[IDX_VX].item<double>();
     state.vy = row[IDX_VY].item<double>();
     state.oz = row[IDX_OZ].item<double>();
+    state.joint_pos.resize(kJointDim);
+    state.joint_vel.resize(kJointDim);
+    for (int i = 0; i < kJointDim; ++i)
+    {
+        state.joint_pos[i] = row[kRawStateDim + i].item<double>();
+        state.joint_vel[i] = row[kRawStateDim + kJointDim + i].item<double>();
+    }
     return state;
 }
 
@@ -320,16 +329,25 @@ static void apply_delta(RolloutState &state, const torch::Tensor &delta)
     state.vx += delta[3].item<double>();
     state.vy += delta[4].item<double>();
     state.oz += delta[5].item<double>();
+    for (int i = 0; i < kJointDim; ++i)
+        state.joint_pos[i] += delta[6 + i].item<double>();
+    for (int i = 0; i < kJointDim; ++i)
+        state.joint_vel[i] += delta[6 + kJointDim + i].item<double>();
 }
 
 static torch::Tensor rollout_state_to_input(const RolloutState &state)
 {
     const float qw = static_cast<float>(std::cos(state.yaw * 0.5));
     const float qz = static_cast<float>(std::sin(state.yaw * 0.5));
-    return torch::tensor({qw, 0.0f, 0.0f, qz,
-                          static_cast<float>(state.vx),
-                          static_cast<float>(state.vy),
-                          static_cast<float>(state.oz)}, torch::TensorOptions().dtype(torch::kFloat32)).unsqueeze(0);
+    std::vector<float> features = {
+        qw, 0.0f, 0.0f, qz,
+        static_cast<float>(state.vx),
+        static_cast<float>(state.vy),
+        static_cast<float>(state.oz)
+    };
+    for (double value : state.joint_pos) features.push_back(static_cast<float>(value));
+    for (double value : state.joint_vel) features.push_back(static_cast<float>(value));
+    return torch::tensor(features, torch::TensorOptions().dtype(torch::kFloat32)).unsqueeze(0);
 }
 
 struct Metrics
@@ -338,6 +356,8 @@ struct Metrics
     double vel_xy = 0.0;
     double heading = 0.0;
     double omega_z = 0.0;
+    double joint_pos_sq = 0.0;
+    double joint_vel_sq = 0.0;
     int count = 0;
 };
 
@@ -352,6 +372,13 @@ static void accumulate_metrics(Metrics &metrics, const RolloutState &pred, const
     metrics.vel_xy += std::sqrt(dvx * dvx + dvy * dvy);
     metrics.heading += std::abs(wrap_angle(pred.yaw - gt.yaw));
     metrics.omega_z += std::abs(pred.oz - gt.oz);
+    for (int i = 0; i < kJointDim; ++i)
+    {
+        const double pos_err = pred.joint_pos[i] - gt.joint_pos[i];
+        const double vel_err = pred.joint_vel[i] - gt.joint_vel[i];
+        metrics.joint_pos_sq += pos_err * pos_err;
+        metrics.joint_vel_sq += vel_err * vel_err;
+    }
     ++metrics.count;
 }
 
@@ -500,6 +527,8 @@ int main(int argc, char **argv)
         std::cout << "  Vel error     = " << (metrics.vel_xy / metrics.count) << " m/s\n";
         std::cout << "  Heading error = " << (metrics.heading / metrics.count) << " rad\n";
         std::cout << "  Omega_z error = " << (metrics.omega_z / metrics.count) << " rad/s\n";
+        std::cout << "  Joint pos RMSE = " << std::sqrt(metrics.joint_pos_sq / (metrics.count * kJointDim)) << " rad\n";
+        std::cout << "  Joint vel RMSE = " << std::sqrt(metrics.joint_vel_sq / (metrics.count * kJointDim)) << " rad/s\n";
     }
 
     return 0;
