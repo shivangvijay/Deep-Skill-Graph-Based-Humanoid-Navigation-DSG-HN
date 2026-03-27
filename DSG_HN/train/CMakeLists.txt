@@ -43,21 +43,21 @@ include_directories(
 file(COPY ${SCENE_XML_DIR}/ DESTINATION ${PROJECT_SOURCE_DIR}/config/scene)
 file(COPY ${POLICY_CONFIG_DIR}/ DESTINATION ${PROJECT_SOURCE_DIR}/config)
 
-add_executable(transition_train
-  transition_train.cpp
-)
-
-target_link_libraries(transition_train PRIVATE
-  ${TORCH_LIBRARIES}
-  libboost_program_options.a
-  fmt
-)
-
 add_executable(transition_train_gaussian
   transition_train_gaussian.cpp
 )
 
 target_link_libraries(transition_train_gaussian PRIVATE
+  ${TORCH_LIBRARIES}
+  libboost_program_options.a
+  fmt
+)
+
+add_executable(transition_train_gaussian_delta
+  transition_train_gaussian_delta.cpp
+)
+
+target_link_libraries(transition_train_gaussian_delta PRIVATE
   ${TORCH_LIBRARIES}
   libboost_program_options.a
   fmt
@@ -78,6 +78,16 @@ add_executable(transition_rollout_eval
 )
 
 target_link_libraries(transition_rollout_eval PRIVATE
+  ${TORCH_LIBRARIES}
+  libboost_program_options.a
+  fmt
+)
+
+add_executable(transition_rollout_eval_delta
+  transition_rollout_eval_delta.cpp
+)
+
+target_link_libraries(transition_rollout_eval_delta PRIVATE
   ${TORCH_LIBRARIES}
   libboost_program_options.a
   fmt
