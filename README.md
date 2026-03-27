@@ -129,6 +129,25 @@ To run the testing script:
 ./test
 ```
 
+### Transition Data Workflow
+
+Collect data:
+```bash
+cd DSG_HN/sandbox/build
+./sandbox
+```
+
+Train the Gaussian model:
+```bash
+cd DSG_HN/train/build
+./transition_train_gaussian --csv /path/to/transitions.csv --output-dir ./output_gaussian
+```
+
+Evaluate the model:
+```bash
+./transition_rollout_eval --csv /path/to/transitions.csv --checkpoint ./output_gaussian/transition_gaussian_model_best.pt --model-type gaussian --horizons 1,5
+```
+
 ### Deployment
 
 #### 1. (If using a Xbox Joystick) Connect the Xbox joystick
