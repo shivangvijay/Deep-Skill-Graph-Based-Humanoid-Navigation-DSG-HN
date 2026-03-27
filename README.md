@@ -137,16 +137,18 @@ cd DSG_HN/sandbox/build
 ./sandbox
 ```
 
-Train the Gaussian model:
+Train the Gaussian delta model:
 ```bash
 cd DSG_HN/train/build
-./transition_train_gaussian --csv /path/to/transitions.csv --output-dir ./output_gaussian
+./transition_train_gaussian_delta --csv /path/to/transitions.csv --output-dir ./output_gaussian_delta_joint
 ```
 
-Evaluate the model:
+Evaluate the delta model at 1 s and 5 s horizons:
 ```bash
-./transition_rollout_eval --csv /path/to/transitions.csv --checkpoint ./output_gaussian/transition_gaussian_model_best.pt --model-type gaussian --horizons 1,5
+./transition_rollout_eval_delta --csv /path/to/transitions.csv --checkpoint ./output_gaussian_delta_joint/transition_gaussian_delta_model_best.pt --horizons 1,5
 ```
+
+The delta model predicts full-state deltas, including base motion, joint position deltas, and joint velocity deltas.
 
 ### Deployment
 
