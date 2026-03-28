@@ -36,15 +36,17 @@ public:
 
     torch::Tensor reset() // if no arguments passed, just reset to random position. If goal fixed, use that, else sample randomly
     {
-        auto [pos, quat, vel, ang_vel] = robot_bridge->generateRandomPoseWithVel();
-        robot_bridge->resetRobot(pos, quat, vel, ang_vel);
-        obstacles = robot_bridge->getObstacles();
-
+        // pick random valid goal position
         if (!_goal_fixed)
         {
-            auto [rp, rq, rv, ra] = robot_bridge->generateRandomPoseWithVel();
-            goal = {rp, rq, rv, ra};
+            goal = robot_bridge->generateRandomValidConfiguration();
         }
+
+        auto start = robot_bridge->generateRandomValidConfiguration();
+        robot_bridge->resetRobot(start.position, start.orientation, start.velocity, start.angular_velocity);
+
+        obstacles = robot_bridge->getObstacles();
+
         current_step = 0;
 
         return transformState(robot_bridge->getRobotState());
@@ -56,7 +58,7 @@ public:
     }
 
     // this logic maybe can get cleaned up if we pass the goal into the transformState
-    torch::Tensor getStateRelativeToGoal(const AbstractedState& query_goal)
+    torch::Tensor getStateRelativeToGoal(const AbstractedState &query_goal)
     {
         AbstractedState prev_goal = goal; // temporarily swap this queried goal with the actual goal, such that the transformState calc can be done correctly
         goal = query_goal;
@@ -70,6 +72,11 @@ public:
         RobotState full_state = robot_bridge->getRobotState();
         AbstractedState abs_state = {full_state.position, full_state.orientation, full_state.velocity, full_state.angular_velocity};
         return abs_state;
+    }
+
+    AbstractedState getRandomValidAbstractedState()
+    {
+        return robot_bridge->generateRandomValidConfiguration();
     }
 
     std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> step(const torch::Tensor &action)
@@ -90,7 +97,7 @@ public:
             terminated};
     }
 
-    torch::Tensor resetTo(const AbstractedState& state)
+    torch::Tensor resetTo(const AbstractedState &state)
     {
         return resetTo(state.position, state.orientation, state.velocity, state.angular_velocity);
     }
@@ -98,17 +105,20 @@ public:
     // see note a top about how you need to set vel and ang vel
     torch::Tensor resetTo(const std::array<float, 3> &pos, const std::array<float, 4> &quat, const std::array<float, 3> &vel, const std::array<float, 3> &ang_vel)
     {
+        // if required, pick random goal
+        if (!_goal_fixed)
+        {
+            goal = robot_bridge->generateRandomValidConfiguration();
+        }
+
         std::array<float, 3> clamped_pos = {
             std::max(robot_bridge->x_min + 0.5f, std::min(robot_bridge->x_max - 0.5f, pos[0])),
             std::max(robot_bridge->y_min + 0.5f, std::min(robot_bridge->y_max - 0.5f, pos[1])),
             pos[2]};
+
         robot_bridge->resetRobot(clamped_pos, quat, vel, ang_vel);
         obstacles = robot_bridge->getObstacles();
-        if (!_goal_fixed)
-        {
-            auto [rp, rq, rv, ra] = robot_bridge->generateRandomPoseWithVel();
-            goal = {rp, rq, rv, ra};
-        }
+
         current_step = 0;
         return transformState(robot_bridge->getRobotState());
     }

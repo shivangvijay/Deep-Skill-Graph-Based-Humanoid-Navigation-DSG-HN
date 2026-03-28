@@ -26,22 +26,21 @@ struct GestationRecord
 class Skill
 {
 public:
-    Skill(std::shared_ptr<TrainEnvironment> env, 
-          const std::vector<int> &actor_layer_sizes,
-          const std::vector<int> &critic_layer_sizes,
-          torch::Device device,
-          float lr_actor, float lr_critic,
-          float tau, float gamma, int max_obstacles, int actor_warmup_steps,
-          int batch_size, int actor_update_freq, int k, int max_steps, double nu,
-          std::shared_ptr<Skill> parent, int gestation_period, bool is_global, AbstractedState global_goal);
+    Skill(int id, std::shared_ptr<TrainEnvironment> env,
+        const std::vector<int> &actor_layer_sizes,
+        const std::vector<int> &critic_layer_sizes,
+        torch::Device device,
+        float lr_actor, float lr_critic,
+        float tau, float gamma, int max_obstacles, int actor_warmup_steps,
+        int batch_size, int actor_update_freq, int k, int max_steps, double nu,
+        std::shared_ptr<Skill> parent, int gestation_period, bool is_global, AbstractedState global_goal);
 
     AbstractedState getLocalGoal();
 
-    std::tuple<int, float, bool, torch::Tensor, torch::Tensor> rollout(const AbstractedState& goal);
+    std::tuple<int, float, bool, torch::Tensor, torch::Tensor> rollout(const AbstractedState &goal);
 
     bool canStart(const RobotState &state) const;
     bool canStart(const AbstractedState &state) const;
-
 
     float distanceToState(const AbstractedState &state) const;
 
@@ -84,20 +83,20 @@ private:
     int _k = 0;
     double _nu;
 
+    int _id;
+
     // Build 13-dim classifier feature: [abs_pos(3), vel(3), quat(4), ang_vel(3)]
     std::vector<float> _classifierVec(const RobotState &state) const;
     std::vector<float> _classifierVec(const AbstractedState &state) const;
 
-
     // Unified termination check for gestation and refinement rollouts.
     bool _atLocalGoal(const torch::Tensor &reward,
-                                            const torch::Tensor &done) const;
+                      const torch::Tensor &done) const;
 
     bool _atTermination(const torch::Tensor &reward, const torch::Tensor &done) const;
 
-    void _fitClassifier(const std::vector<GestationRecord>& states, bool term_success);      
-                    
-    float _euclideanDistance(const std::array<float, 3>& a, const std::array<float, 3>& b, bool sqrt) const;
-    float _euclideanDistance(const std::array<float, 4>& a, const std::array<float, 4>& b, bool sqrt) const;
+    void _fitClassifier(const std::vector<GestationRecord> &states, bool term_success);
 
+    float _euclideanDistance(const std::array<float, 3> &a, const std::array<float, 3> &b, bool sqrt) const;
+    float _euclideanDistance(const std::array<float, 4> &a, const std::array<float, 4> &b, bool sqrt) const;
 };

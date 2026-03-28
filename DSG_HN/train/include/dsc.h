@@ -97,6 +97,6 @@ private:
     float _dscRollout();
     std::pair<int, AbstractedState> _pickOption();
     bool _containsGlobalStartState();
-    std::shared_ptr<Skill> _makeSkill(bool is_global, std::shared_ptr<Skill> parent);
+    void _makeSkill(bool is_global, std::shared_ptr<Skill> parent);
     void _loadGlobalOption(const std::string &actor_path, const std::string &critic1_path, const std::string &critic2_path);
 };

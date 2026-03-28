@@ -12,7 +12,7 @@ namespace isaaclab
     }
 }
 
-RobotBridgeTrain::RobotBridgeTrain(std::string scene_file, float x_min, float x_max, float y_min, float y_max, std::filesystem::path policy_dir, bool render_) //std::shared_ptr<MuJoCoEngine> eng_, std::unique_ptr<isaaclab::ManagerBasedRLEnv> env_, bool render_)
+RobotBridgeTrain::RobotBridgeTrain(std::string scene_file, float x_min, float x_max, float y_min, float y_max, std::filesystem::path policy_dir, bool render_) // std::shared_ptr<MuJoCoEngine> eng_, std::unique_ptr<isaaclab::ManagerBasedRLEnv> env_, bool render_)
     : RobotBridge(scene_file, x_min, x_max, y_min, y_max), render(render_)
 {
     ptr = this;
@@ -74,6 +74,30 @@ void RobotBridgeTrain::update()
             std::this_thread::sleep_for(std::chrono::milliseconds(int(LOCMOTION_POLICY_DT * 1000)));
         }
     }
+}
+
+AbstractedState RobotBridgeTrain::generateRandomValidConfiguration()
+{
+    mjModel *m_orig = eng->getModel();
+    mjData *d_orig = eng->getData();
+
+    int attempts = 0;
+    std::array<float, 3> pos;
+    std::array<float, 4> quat;
+    std::array<float, 3> vel;
+    std::array<float, 3> ang_vel;
+    do
+    {
+        if (attempts++ > 100)
+            throw std::runtime_error("Could Not Generate Valid Random Configuration");
+        std::tie(pos, quat, vel, ang_vel) = generateRandomPoseWithVel();
+        eng->reset(pos, quat, vel, ang_vel);
+    } while (eng->inCollision());
+
+    eng->m = m_orig;
+    eng->d = d_orig;
+    mj_forward(m_orig, d_orig);
+    return {pos, quat, vel, ang_vel};
 }
 
 RobotState RobotBridgeTrain::getRobotState()
@@ -196,7 +220,8 @@ bool RobotBridgeTrain::inCollision()
 
 void RobotBridgeTrain::startRender()
 {
-    if (render) return;
+    if (render)
+        return;
     render = true;
     eng->initViz();
 }

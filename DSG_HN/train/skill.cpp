@@ -1,7 +1,7 @@
 #include "skill.h"
 
-
 Skill::Skill(
+    int id,
     std::shared_ptr<TrainEnvironment> env,
     const std::vector<int> &actor_layer_sizes,
     const std::vector<int> &critic_layer_sizes,
@@ -10,8 +10,8 @@ Skill::Skill(
     float tau, float gamma, int max_obstacles, int actor_warmup_steps,
     int batch_size, int actor_update_freq, int k, int max_steps, double nu,
     std::shared_ptr<Skill> parent, int gestation_period, bool is_global, AbstractedState global_goal)
-    : _env(env), _parent(parent), _is_global(is_global), _gestation_period(gestation_period), _k(k), _max_steps(max_steps), _agent(env, actor_layer_sizes, critic_layer_sizes, device,
-                                                                                                                                   lr_actor, lr_critic, tau, gamma, batch_size, actor_update_freq, max_obstacles, actor_warmup_steps),
+    : _id(id), _env(env), _parent(parent), _is_global(is_global), _gestation_period(gestation_period), _k(k), _max_steps(max_steps), _agent(env, actor_layer_sizes, critic_layer_sizes, device,
+                                                                                                                                            lr_actor, lr_critic, tau, gamma, batch_size, actor_update_freq, max_obstacles, actor_warmup_steps),
       _rng(std::random_device{}()), _global_goal(global_goal), _nu(nu)
 {
 }
@@ -92,8 +92,9 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
 
     if (!_is_global && _atTermination(reward, done)) // can not reach goal, but still reach next option
     {
-        std::cout << "Traj Success" << std::endl;
         _goal_hits++;
+        if (train)
+            std::cout << "\rOption: " << _id << " | Success: " << _goal_hits << "/" << _gestation_period << std::flush;
     }
 
     if (!_is_global)

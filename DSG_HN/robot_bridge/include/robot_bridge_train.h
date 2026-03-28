@@ -24,8 +24,7 @@ public:
     bool inCollision();
     void startRender(); // lets you start rendering even after you activated robot bridge (useful for cases when you want to train without rendering, but validate with it)
 
-    mjModel* getModel() const { return eng->getModel(); }
-    mjData*  getData()  const { return eng->getData(); }
+    AbstractedState generateRandomValidConfiguration();
 
 private:
     std::shared_ptr<MuJoCoEngine> eng;

@@ -23,12 +23,10 @@ DeepSkillChaining::DeepSkillChaining(
       _poo(_env, _cfg.poo_layers, device, _cfg.lr_poo, _cfg.tau, _cfg.gamma, _cfg.batch_size), _rng(std::random_device{}())
 {
     _loadGlobalOption(pretrain_actor_path, pretrain_critic1_path, pretrain_critic2_path);
+    _unfinished_option_idx = _global_option_idx;
 
     // todo: put new skill here
-    _skills.push_back(_makeSkill(false, nullptr)); // this is the goal option getting pushed
-    _poo.addOption(0.0f);
-    _poo.hardCopy();
-    _unfinished_option_idx = _global_option_idx + 1;
+    _makeSkill(false, nullptr); // this is the goal option getting pushed
 }
 
 int DeepSkillChaining::numSkills() const
@@ -50,8 +48,7 @@ int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout wh
         }
         else
         {
-            auto [pos, quat, vel, ang_vel] = _robot_bridge->generateRandomPoseWithVel();
-            _env->resetTo(pos, quat, vel, ang_vel); // could just do this with env->reset, but want to make a bit more explicit.
+            _env->reset(); // random start
         }
 
         if (episode < _cfg.warmup_episodes)
@@ -83,9 +80,8 @@ void DeepSkillChaining::_warmupRollout()
 {
     int step = 0;
     bool env_done = false;
-    auto [pos, quat, vel, ang_vel] = _robot_bridge->generateRandomPoseWithVel();
-
-    AbstractedState goal = {pos, quat, vel, ang_vel};
+    
+    AbstractedState goal = _env->getRandomValidAbstractedState();
 
     while (step < _cfg.steps_per_episode && !env_done)
     {
@@ -100,12 +96,10 @@ void DeepSkillChaining::_warmupRollout()
 
 std::pair<int, AbstractedState> DeepSkillChaining::_pickOption()
 {
-    _env->setGoal(_global_goal); // need to set global goal so that the state calculation is correct
-
-    auto state = _env->getState();
+    auto poo_state = _env->getStateRelativeToGoal(_global_goal);
     auto global_state = _env->getAbstractedState();
 
-    torch::Tensor q_vals = _poo.getOptions(state);
+    torch::Tensor q_vals = _poo.getOptions(poo_state);
 
     int best_option = _global_option_idx;
     float best_option_q = -1e5; // TODO: better way to set this
@@ -172,15 +166,10 @@ float DeepSkillChaining::_dscRollout()
         _poo.addExperience(first_state_poo, option, cum_reward, last_state_poo, done, steps_taken);
         _poo.learn();
 
-        // make a new skill if we hae finished training the current option, but still have not reached the end goal
+        // make a new skill if we have finished training the current option, but still have not reached the end goal
         if (option == _unfinished_option_idx && _skills[_unfinished_option_idx]->getTrainingPhase() != "gestation" && !_containsGlobalStartState())
         {
-            // make new skill
-            _skills.push_back(_makeSkill(false, _skills.back()));
-            _poo.addOption(0.0f);
-            _poo.hardCopy();
-            _unfinished_option_idx++;
-            std::cout << "Making New Skill With ID: " << _unfinished_option_idx << std::endl;
+            _makeSkill(false, _skills.back());
         }
     }
     return total_reward;
@@ -196,16 +185,22 @@ bool DeepSkillChaining::_containsGlobalStartState()
     return false;
 }
 
-std::shared_ptr<Skill> DeepSkillChaining::_makeSkill(bool is_global, std::shared_ptr<Skill> parent)
+void DeepSkillChaining::_makeSkill(bool is_global, std::shared_ptr<Skill> parent)
 {
-    std::shared_ptr<Skill> new_skill = std::make_shared<Skill>(_env,
+    int id = (is_global) ? _global_option_idx : _unfinished_option_idx+1;
+    std::shared_ptr<Skill> new_skill = std::make_shared<Skill>(id, _env,
                                                                _cfg.actor_layers, _cfg.critic_layers, _device,
                                                                _cfg.lr_actor, _cfg.lr_critic, _cfg.tau, _cfg.gamma, _cfg.max_obstacles, _cfg.actor_warmup_steps,
                                                                _cfg.batch_size, _cfg.actor_update_freq, _cfg.last_k,
                                                                _cfg.max_option_steps, _cfg.nu, parent, _cfg.gestation_n, is_global, _global_goal);
     if (!is_global)
         new_skill->initFromSkill(_skills[_global_option_idx]);
-    return new_skill;
+    
+    _unfinished_option_idx = id;
+    std::cout << "Making New Skill With ID: " << id << std::endl;
+    _skills.push_back(new_skill); 
+    _poo.addOption(0.0f);
+    _poo.hardCopy();
 }
 
 
@@ -213,7 +208,7 @@ void DeepSkillChaining::_loadGlobalOption(const std::string &actor_path,
                                          const std::string &critic1_path,
                                          const std::string &critic2_path)
 {
-    _skills.push_back(_makeSkill(true, nullptr)); // TODO: replace this code for making the skill
+    _makeSkill(true, nullptr); // TODO: replace this code for making the skill
     torch::load(_skills[0]->agent().actor_local, actor_path);
     torch::load(_skills[0]->agent().critic_local_1, critic1_path);
     torch::load(_skills[0]->agent().critic_local_2, critic2_path);
@@ -285,14 +280,14 @@ int main(int argc, char **argv)
         SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, /*render=*/false);
 
     DeepSkillChaining::Config cfg;
-    cfg.gestation_n = 30;
+    cfg.gestation_n = 100;
     cfg.last_k = 10;
     cfg.max_option_steps = 10;
     cfg.refinement_eps = 20;
     cfg.nu = 0.1;
     cfg.max_skills = 6;
     cfg.actor_warmup_steps = 0; // gonna keep at zero for testing purposes as well
-    cfg.warmup_episodes = 0; // keep at zero since I am assuming we have done pretraining
+    cfg.warmup_episodes = 20; // keep at zero since I am assuming we have done pretraining
 
     AbstractedState global_goal = {{3, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
     AbstractedState global_start = {{-3, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};

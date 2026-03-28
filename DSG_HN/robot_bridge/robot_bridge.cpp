@@ -29,7 +29,8 @@ void RobotBridge::readScene() // assuming cylindrical obstacles!
                 size_t start = type_pos + 6; // move past name="
                 size_t end = line.find("\"", start);
                 obs.type = line.substr(start, end - start);
-                if (obs.type != "cylinder") continue;
+                if (obs.type != "cylinder")
+                    continue;
                 found_type = true;
             }
 
@@ -98,31 +99,21 @@ std::pair<std::array<float, 3>, std::array<float, 4>> RobotBridge::generateRando
 
 std::tuple<std::array<float, 3>, std::array<float, 4>, std::array<float, 3>, std::array<float, 3>> RobotBridge::generateRandomPoseWithVel() const
 {
-    std::array<float, 3> pos;
-    std::array<float, 4> quat;
-    std::array<float, 3> vel;
-    std::array<float, 3> ang_vel;
-    int attempts = 0;
-    do
-    {
-        if (attempts++ > 1000)
-            throw std::runtime_error("Could Not Respawn Robot");
-        pos = {
-            x_min + static_cast<float>(rand()) / (RAND_MAX / (x_max - x_min)),
-            y_min + static_cast<float>(rand()) / (RAND_MAX / (y_max - y_min)),
-            0.0f};
+    std::array<float, 3> pos = {
+        x_min + static_cast<float>(rand()) / (RAND_MAX / (x_max - x_min)),
+        y_min + static_cast<float>(rand()) / (RAND_MAX / (y_max - y_min)),
+        0.0f};
 
-        float yaw = (static_cast<float>(rand()) / RAND_MAX) * 2 * M_PI;
-        quat = {cosf(yaw / 2), 0, 0, sinf(yaw / 2)};
+    float yaw = (static_cast<float>(rand()) / RAND_MAX) * 2 * M_PI;
+    std::array<float, 4> quat = {cosf(yaw / 2), 0, 0, sinf(yaw / 2)};
 
-        vel = {
-            -vel_limits[0] + static_cast<float>(rand()) / (RAND_MAX / (2 * vel_limits[0])),
-            -vel_limits[1] + static_cast<float>(rand()) / (RAND_MAX / (2 * vel_limits[1])),
-            0.0f};
+    std::array<float, 3> vel = {
+        -vel_limits[0] + static_cast<float>(rand()) / (RAND_MAX / (2 * vel_limits[0])),
+        -vel_limits[1] + static_cast<float>(rand()) / (RAND_MAX / (2 * vel_limits[1])),
+        0.0f};
 
-        float ang_vel_yaw = -vel_limits[2] + static_cast<float>(rand()) / (RAND_MAX / (2 * vel_limits[2]));
-        ang_vel = {0.0, 0.0, ang_vel_yaw};
-    } while (distanceToNearestObstacle(pos, quat) < 0.5);
+    float ang_vel_yaw = -vel_limits[2] + static_cast<float>(rand()) / (RAND_MAX / (2 * vel_limits[2]));
+    std::array<float, 3> ang_vel = {0.0, 0.0, ang_vel_yaw};
 
     return {pos, quat, vel, ang_vel};
 }
