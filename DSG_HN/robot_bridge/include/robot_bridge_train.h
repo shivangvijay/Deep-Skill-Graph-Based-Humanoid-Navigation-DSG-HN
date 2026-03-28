@@ -25,6 +25,9 @@ public:
     void startRender(); // lets you start rendering even after you activated robot bridge (useful for cases when you want to train without rendering, but validate with it)
 
     AbstractedState generateRandomValidConfiguration();
+    bool isConfigurationValid(const AbstractedState& state);
+    bool isConfigurationValid(const std::array<float, 3> &pos, const std::array<float, 4> &quat, const std::array<float, 3> &vel, const std::array<float, 3> &ang_vel);
+
 
 private:
     std::shared_ptr<MuJoCoEngine> eng;

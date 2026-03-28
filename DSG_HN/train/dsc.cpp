@@ -9,6 +9,8 @@ MOST IMPORTANT FIXES:
 5) Figure out what to do with global option, so that we do not lose information gained when we train local options
 */
 
+// TODO: change vel limit to reflect that it can be assymetrical
+
 DeepSkillChaining::DeepSkillChaining(
     std::shared_ptr<RobotBridgeTrain> robot_bridge,
     torch::Device device,
@@ -46,6 +48,16 @@ int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout wh
         {
             _env->resetTo(_global_start);
         }
+        else if (p > 0.2 && p < 0.5)
+        {
+            auto start = _sampleStartNearObstacle();
+            _env->resetTo(start);
+        }
+        else if (p > 0.5 && p < 0.7)
+        {
+            auto start = _sampleStartInterpolated();
+            _env->resetTo(start);
+        }
         else
         {
             _env->reset(); // random start
@@ -80,7 +92,7 @@ void DeepSkillChaining::_warmupRollout()
 {
     int step = 0;
     bool env_done = false;
-    
+
     AbstractedState goal = _env->getRandomValidAbstractedState();
 
     while (step < _cfg.steps_per_episode && !env_done)
@@ -94,6 +106,7 @@ void DeepSkillChaining::_warmupRollout()
     }
 }
 
+// gonna do this the way they do in bagaria et al. code: pick earliest option
 std::pair<int, AbstractedState> DeepSkillChaining::_pickOption()
 {
     auto poo_state = _env->getStateRelativeToGoal(_global_goal);
@@ -102,17 +115,12 @@ std::pair<int, AbstractedState> DeepSkillChaining::_pickOption()
     torch::Tensor q_vals = _poo.getOptions(poo_state);
 
     int best_option = _global_option_idx;
-    float best_option_q = -1e5; // TODO: better way to set this
     for (int o = _global_option_idx + 1; o < _skills.size(); o++)
     {
-        if (_skills[o]->canStart(global_state))
+        if (_skills[o]->canStart(global_state)) // todo: add logic to not use if it is already in the TERMINATION set
         {
-            float current_q = q_vals[o].item<float>();
-            if (current_q > best_option_q)
-            {
-                best_option_q = current_q;
-                best_option = o;
-            }
+            best_option = o;
+            break;
         }
     }
 
@@ -187,7 +195,7 @@ bool DeepSkillChaining::_containsGlobalStartState()
 
 void DeepSkillChaining::_makeSkill(bool is_global, std::shared_ptr<Skill> parent)
 {
-    int id = (is_global) ? _global_option_idx : _unfinished_option_idx+1;
+    int id = (is_global) ? _global_option_idx : _unfinished_option_idx + 1;
     std::shared_ptr<Skill> new_skill = std::make_shared<Skill>(id, _env,
                                                                _cfg.actor_layers, _cfg.critic_layers, _device,
                                                                _cfg.lr_actor, _cfg.lr_critic, _cfg.tau, _cfg.gamma, _cfg.max_obstacles, _cfg.actor_warmup_steps,
@@ -195,18 +203,17 @@ void DeepSkillChaining::_makeSkill(bool is_global, std::shared_ptr<Skill> parent
                                                                _cfg.max_option_steps, _cfg.nu, parent, _cfg.gestation_n, is_global, _global_goal);
     if (!is_global)
         new_skill->initFromSkill(_skills[_global_option_idx]);
-    
+
     _unfinished_option_idx = id;
-    std::cout << "Making New Skill With ID: " << id << std::endl;
-    _skills.push_back(new_skill); 
+    std::cout << "\nMaking New Skill With ID: " << id << std::endl;
+    _skills.push_back(new_skill);
     _poo.addOption(0.0f);
     _poo.hardCopy();
 }
 
-
 void DeepSkillChaining::_loadGlobalOption(const std::string &actor_path,
-                                         const std::string &critic1_path,
-                                         const std::string &critic2_path)
+                                          const std::string &critic1_path,
+                                          const std::string &critic2_path)
 {
     _makeSkill(true, nullptr); // TODO: replace this code for making the skill
     torch::load(_skills[0]->agent().actor_local, actor_path);
@@ -215,6 +222,97 @@ void DeepSkillChaining::_loadGlobalOption(const std::string &actor_path,
     _poo.addOption(0.0f);
     _poo.hardCopy();
     std::cout << "=== Loaded global option oG from " << actor_path << " ===" << std::endl;
+}
+
+// sample random
+std::array<float, 4> DeepSkillChaining::_getGaussianQuaternionPerturbation(const std::array<float, 4> &q_orig, float sigma_rad)
+{
+    std::normal_distribution<float> dist(0.0f, sigma_rad);
+
+    float dx = dist(_rng);
+    float dy = dist(_rng);
+    float dz = dist(_rng);
+
+    // convert to a small-angle quaternion (w, x, y, z)
+    // for small angles: cos(theta/2) approx 1, sin(theta/2) approx theta/2
+    std::array<float, 4> dq = {1.0f, dx / 2.0f, dy / 2.0f, dz / 2.0f};
+
+    // multiply: q_new = q_orig * dq
+    std::array<float, 4> q_new;
+    q_new[0] = q_orig[0] * dq[0] - q_orig[1] * dq[1] - q_orig[2] * dq[2] - q_orig[3] * dq[3]; // w
+    q_new[1] = q_orig[0] * dq[1] + q_orig[1] * dq[0] + q_orig[2] * dq[3] - q_orig[3] * dq[2]; // x
+    q_new[2] = q_orig[0] * dq[2] - q_orig[1] * dq[3] + q_orig[2] * dq[0] + q_orig[3] * dq[1]; // y
+    q_new[3] = q_orig[0] * dq[3] + q_orig[1] * dq[2] - q_orig[2] * dq[1] + q_orig[3] * dq[0]; // z
+
+    // normalize to ensure it stays a unit quaternion
+    float norm = std::sqrt(q_new[0] * q_new[0] + q_new[1] * q_new[1] + q_new[2] * q_new[2] + q_new[3] * q_new[3]);
+    for (int i = 0; i < 4; ++i)
+        q_new[i] /= norm;
+
+    return q_new;
+}
+
+float DeepSkillChaining::_sampleGaussianDist(float mu, float std)
+{
+    std::normal_distribution<float> dist(mu, std);
+    return dist(_rng);
+}
+
+// simple implementation of gaussian sampling
+AbstractedState DeepSkillChaining::_sampleStartNearObstacle()
+{
+    float std_pos = 0.5; // adjust this param based on size/location of obstacles
+    float std_rot = 0.1;
+
+    for (int attempts = 0; attempts < 300; attempts++)
+    {
+        auto [p1, q1, v1, w1] = _robot_bridge->generateRandomPoseWithVel();
+
+        std::array<float, 3> p2;
+        p2[0] = p1[0] + _sampleGaussianDist(0.0f, std_pos); // TODO: need to clamp to be in bounds
+        p2[1] = p1[1] + _sampleGaussianDist(0.0f, std_pos);
+        p2[2] = p1[2];
+
+        std::array<float, 4> q2 = _getGaussianQuaternionPerturbation(q1, std_rot);
+        bool valid1 = _robot_bridge->isConfigurationValid(p1, q1, v1, w1);
+        bool valid2 = _robot_bridge->isConfigurationValid(p2, q2, v1, w1);
+
+        if (valid1 != valid2)
+        {
+            if (valid1)
+            {
+                return {p1, q1, v1, w1};
+            }
+            else
+            {
+                return {p2, q2, v1, w1};
+            }
+        }
+    }
+
+    std::cerr << "Warning: Could not generate valid gaussian sample, return random sample" << std::endl;
+    return _env->getRandomValidAbstractedState();
+}
+
+AbstractedState DeepSkillChaining::_sampleStartInterpolated()
+{
+    std::uniform_real_distribution<float> dist1(std::min(_global_goal.position[0], _global_start.position[0]), std::max(_global_goal.position[0], _global_start.position[0]));
+    std::uniform_real_distribution<float> dist2(std::min(_global_goal.position[1], _global_start.position[1]), std::max(_global_goal.position[1], _global_start.position[1]));
+
+    float pos_std = 1.0f; // tune this based on how much spread you want
+    for (int attempts = 0; attempts < 300; attempts++)
+    {
+        std::array<float, 3> pos;
+        pos[0] = dist1(_rng) + _sampleGaussianDist(0.0f, pos_std);
+        pos[1] = dist2(_rng) + _sampleGaussianDist(0.0f, pos_std);
+        pos[2] = _global_start.position[2];
+
+        auto [_, quat, vel, ang_vel] = _robot_bridge->generateRandomPoseWithVel();
+        if (_robot_bridge->isConfigurationValid(pos, quat, vel, ang_vel))
+            return {pos, quat, vel, ang_vel};
+    }
+    std::cerr << "Warning: Could not generate valid linearly interpolated sample, return random sample" << std::endl;
+    return _env->getRandomValidAbstractedState();
 }
 
 // void DeepSkillChaining::save(const std::string &dir) const
@@ -247,7 +345,6 @@ void DeepSkillChaining::_loadGlobalOption(const std::string &actor_path,
 //     _poo.hardCopy();
 //     std::cout << "Loaded " << num_skills << " skills from " << dir << std::endl;
 // }
-
 
 /************************************** main **************************************/
 
@@ -287,7 +384,7 @@ int main(int argc, char **argv)
     cfg.nu = 0.1;
     cfg.max_skills = 6;
     cfg.actor_warmup_steps = 0; // gonna keep at zero for testing purposes as well
-    cfg.warmup_episodes = 20; // keep at zero since I am assuming we have done pretraining
+    cfg.warmup_episodes = 200;   // keep at zero since I am assuming we have done pretraining
 
     AbstractedState global_goal = {{3, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
     AbstractedState global_start = {{-3, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};

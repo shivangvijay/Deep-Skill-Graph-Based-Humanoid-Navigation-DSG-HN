@@ -99,4 +99,11 @@ private:
     bool _containsGlobalStartState();
     void _makeSkill(bool is_global, std::shared_ptr<Skill> parent);
     void _loadGlobalOption(const std::string &actor_path, const std::string &critic1_path, const std::string &critic2_path);
+
+    float _sampleGaussianDist(float mu, float std); // utility function to sample a gaussian
+    std::array<float, 4> _getGaussianQuaternionPerturbation(const std::array<float, 4>& q_orig, float sigma_rad); // utility function to perturb quaternion by random noise
+
+    AbstractedState _sampleStartNearObstacle(); // gaussian sampling (see robot autonomy slides)
+    AbstractedState _sampleStartInterpolated(); // randomly sample position linearly interpolated between start and goal (with noise)
+
 };

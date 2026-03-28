@@ -57,7 +57,7 @@ public:
         return transformState(robot_bridge->getRobotState());
     }
 
-    // this logic maybe can get cleaned up if we pass the goal into the transformState
+    // TODO: this logic maybe can get cleaned up if we pass the goal into the transformState
     torch::Tensor getStateRelativeToGoal(const AbstractedState &query_goal)
     {
         AbstractedState prev_goal = goal; // temporarily swap this queried goal with the actual goal, such that the transformState calc can be done correctly
