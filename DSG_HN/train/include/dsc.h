@@ -46,15 +46,15 @@ public:
         std::vector<int> critic_layers = {256, 256, 256};
         std::vector<int> poo_layers = {256, 256, 256};
 
-        float lr_actor = 1e-5f;
-        float lr_critic = 1e-4f;
+        float lr_actor = 1e-4f;
+        float lr_critic = 3e-4f;
         int max_obstacles = 8;
-        int actor_warmup_steps = 10000;
+        int actor_warmup_steps = 0;
         float lr_poo = 1e-4f;
         float tau = 0.005f;
         float gamma = 0.99f;
         int batch_size = 256;
-        int actor_update_freq = 4;
+        int actor_update_freq = 2;
     };
 
     DeepSkillChaining(std::shared_ptr<RobotBridgeTrain> robot_bridge,
@@ -65,11 +65,6 @@ public:
                       const std::string &pretrain_critic1_path,
                       const std::string &pretrain_critic2_path,
                       Config cfg);
-
-    // Load a pre-trained TD3 policy as oG. Must be called before train().
-    void loadGlobalOption(const std::string &actor_path,
-                          const std::string &critic1_path,
-                          const std::string &critic2_path);
 
     // Train the chain backward from the global goal. Returns total skill count excluding the global option
     int train(int max_episodes);
@@ -103,4 +98,5 @@ private:
     std::pair<int, AbstractedState> _pickOption();
     bool _containsGlobalStartState();
     std::shared_ptr<Skill> _makeSkill(bool is_global, std::shared_ptr<Skill> parent);
+    void _loadGlobalOption(const std::string &actor_path, const std::string &critic1_path, const std::string &critic2_path);
 };

@@ -10,7 +10,7 @@
 
 #define USE_WALL_CLOCK_TIME true
 
-#define SCENE_FILE "umaze_scene.xml"
+#define SCENE_FILE "test_scene.xml"
 // Match policy training ranges from deploy.yaml
 // commands.base_velocity.ranges: lin_vel_x[-0.5,1.0], lin_vel_y[-0.3,0.3], ang_vel_z[-0.2,0.2]
 #define VX_MAX 1.0f
@@ -129,6 +129,8 @@ int main(int argc, char **argv)
         auto state = robot_bridge->getRobotState();
 
         std::cout << "Command: " << vx << ", " << vy << ", " << oz << std::endl;
+        std::cout << "Position: " << state.position[0] << ", " << state.position[1] << ", " << state.position[2] << std::endl;
+
         std::cout << "Velocity: " << state.velocity[0] << ", " << state.velocity[1] << ", " << state.velocity[2] << std::endl;
 
         auto elapsed = std::chrono::steady_clock::now() - t0;

@@ -1,5 +1,6 @@
 #include "skill.h"
 
+
 Skill::Skill(
     std::shared_ptr<TrainEnvironment> env,
     const std::vector<int> &actor_layer_sizes,
@@ -19,7 +20,7 @@ Skill::Skill(
 // when it meets a certain success percentage
 std::string Skill::getTrainingPhase() const
 {
-    if (_goal_hits < _gestation_period || !_classifier_trained) // last two terms make sure SVM is trained
+    if (_goal_hits < _gestation_period || !_classifier.trained()) // last two terms make sure SVM is trained
     {
         return "gestation";
     }
@@ -38,6 +39,8 @@ AbstractedState Skill::getLocalGoal()
     }
 }
 
+// This updates just the current agent. The agent gets initialized from the global agent, but maybe its worth
+// copying this back to the global agent, as otherwise we lose all the gradient updates
 std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const AbstractedState &goal)
 {
     // need to get start and end states w.r.t the global goal, which is what is expected as the input to the policy over options
@@ -105,50 +108,6 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
     return {num_steps, total_reward, _atLocalGoal(reward, done), start_state_poo, end_state_poo};
 }
 
-// TODO: add max buffer size at which we start to pop off the front
-// TODO: generally, this logic will need to really be refined
-void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool term_success)
-{
-
-    if (term_success)
-    {
-        for (int t = visited.size() - 1; t >= std::max(0, (int)visited.size() - _k); t--)
-        {
-            _positive_gestation_records.push_back(visited[t]); // save this is a positive example which you can sample from
-            _gestation_vecs.push_back(visited[t].classifier_vec);
-            _gestation_labels.push_back(1);
-        }
-        // for (int t = 0; t < (int)(visited.size() - _k); t++)
-        // {
-        //     _gestation_vecs.push_back(visited[t].classifier_vec);
-        //     _gestation_labels.push_back(-1);
-        //     if (!_has_negative_gestation)
-        //         _has_negative_gestation = true;
-        // }
-    }
-    else
-    {
-        // try and make SVM a bit more optimistic by not putting the entire traj in the negative catagory
-        _gestation_vecs.push_back(visited.front().classifier_vec);
-        _gestation_labels.push_back(-1);
-        _has_negative_gestation = true;
-
-        // for (int t = 0; t < visited.size(); t++)
-        // {
-        //     _gestation_vecs.push_back(visited[t].classifier_vec);
-        //     _gestation_labels.push_back(-1);
-        //     if (!_has_negative_gestation)
-        //         _has_negative_gestation = true;
-        // }
-    }
-
-    if ((_positive_gestation_records.size() > 0 && _has_negative_gestation) || _classifier_trained)
-    {
-        _classifier.train(_gestation_vecs, _gestation_labels);
-        _classifier_trained = true;
-    }
-}
-
 bool Skill::canStart(const RobotState &state) const
 {
     if (getTrainingPhase() == "gestation")
@@ -161,35 +120,6 @@ bool Skill::canStart(const AbstractedState &state) const
     if (getTrainingPhase() == "gestation")
         return true;
     return _classifier.classify(_classifierVec(state));
-}
-
-bool Skill::_atTermination(const torch::Tensor &reward, const torch::Tensor &done) const
-{
-    if (!_parent)
-    {
-        // if the goal option, return if we ended up at the goal
-        return (done.data_ptr<float>()[0] > 0.5f && reward.data_ptr<float>()[0] > 45);
-    }
-    else // return true if the current state is within the parents initiation set
-    {
-        return _parent->canStart(_env->getAbstractedState());
-    }
-}
-
-bool Skill::_atLocalGoal(const torch::Tensor &reward,
-                         const torch::Tensor &done) const
-{
-    bool env_done = done.data_ptr<float>()[0] > 0.5f;
-    bool in_next_set = env_done; // default case for when the parent is none or is in the global option
-    if (!_is_global && _parent)
-    {
-        in_next_set = _parent->canStart(_env->getAbstractedState());
-    }
-    float r = reward.data_ptr<float>()[0];
-    bool hard_done = env_done && (r < 45);
-    bool success = in_next_set && (r > 45);
-
-    return success || hard_done; // if we are succesful, but not in next set, should continue searching. Contrariliy, if the env has reached max steps, should just time out
 }
 
 void Skill::initFromSkill(std::shared_ptr<Skill> other)
@@ -244,73 +174,80 @@ TD3Agent &Skill::agent()
 }
 
 /*** Private ***/
-// std::vector<float> Skill::_classifierVec(const AbstractedState &state) const
-// {
-//     std::vector<float> out;
-//     out.reserve(13);
-//     // global pos
-//     out.push_back(state.position[0]);
-//     out.push_back(state.position[1]);
-//     out.push_back(state.position[2]);
-//     // global vel
-//     out.push_back(state.velocity[0]);
-//     out.push_back(state.velocity[1]);
-//     out.push_back(state.velocity[2]);
-//     // orientation
-//     if (state.orientation[0] < 0)
-//     {
-//         out.push_back(-state.orientation[0]);
-//         out.push_back(-state.orientation[1]);
-//         out.push_back(-state.orientation[2]);
-//         out.push_back(-state.orientation[3]);
-//     }
-//     else
-//     {
-//         out.push_back(state.orientation[0]);
-//         out.push_back(state.orientation[1]);
-//         out.push_back(state.orientation[2]);
-//         out.push_back(state.orientation[3]);
-//     }
-//     // ang vel
-//     out.push_back(state.angular_velocity[0]);
-//     out.push_back(state.angular_velocity[1]);
-//     out.push_back(state.angular_velocity[2]);
-//     return out;
-// }
 
-// std::vector<float> Skill::_classifierVec(const RobotState &state) const
-// {
-//     std::vector<float> out;
-//     out.reserve(13);
-//     // global pos
-//     out.push_back(state.position[0]);
-//     out.push_back(state.position[1]);
-//     out.push_back(state.position[2]);
-//     // global vel
-//     out.push_back(state.velocity[0]);
-//     out.push_back(state.velocity[1]);
-//     out.push_back(state.velocity[2]);
-//     // orientation
-//     if (state.orientation[0] < 0)
-//     {
-//         out.push_back(-state.orientation[0]);
-//         out.push_back(-state.orientation[1]);
-//         out.push_back(-state.orientation[2]);
-//         out.push_back(-state.orientation[3]);
-//     }
-//     else
-//     {
-//         out.push_back(state.orientation[0]);
-//         out.push_back(state.orientation[1]);
-//         out.push_back(state.orientation[2]);
-//         out.push_back(state.orientation[3]);
-//     }
-//     // ang vel
-//     out.push_back(state.angular_velocity[0]);
-//     out.push_back(state.angular_velocity[1]);
-//     out.push_back(state.angular_velocity[2]);
-//     return out;
-// }
+// TODO: add max buffer size at which we start to pop off the front
+// TODO: generally, this logic will need to really be refined to ensure that it is not too pessimistic/optimistic
+void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool term_success)
+{
+
+    if (term_success)
+    {
+        for (int t = visited.size() - 1; t >= std::max(0, (int)visited.size() - _k); t--)
+        {
+            _positive_gestation_records.push_back(visited[t]);
+            _gestation_vecs.push_back(visited[t].classifier_vec);
+            _gestation_labels.push_back(1);
+        }
+        // for (int t = 0; t < (int)(visited.size() - _k); t++)
+        // {
+        //     _gestation_vecs.push_back(visited[t].classifier_vec);
+        //     _gestation_labels.push_back(-1);
+        //     if (!_has_negative_gestation)
+        //         _has_negative_gestation = true;
+        // }
+    }
+    else
+    {
+        // try and make SVM a bit more optimistic by not putting the entire traj in the negative catagory
+        _gestation_vecs.push_back(visited.front().classifier_vec);
+        _gestation_labels.push_back(-1);
+        _has_negative_gestation = true;
+
+        // for (int t = 0; t < visited.size(); t++)
+        // {
+        //     _gestation_vecs.push_back(visited[t].classifier_vec);
+        //     _gestation_labels.push_back(-1);
+        //     if (!_has_negative_gestation)
+        //         _has_negative_gestation = true;
+        // }
+    }
+
+    if ((_positive_gestation_records.size() > 0 && _has_negative_gestation) || _classifier.trained())
+    {
+        _classifier.train(_gestation_vecs, _gestation_labels);
+    }
+}
+
+bool Skill::_atTermination(const torch::Tensor &reward, const torch::Tensor &done) const
+{
+    if (!_parent)
+    {
+        // if the goal option, return if we ended up at the goal
+        return (done.data_ptr<float>()[0] > 0.5f && reward.data_ptr<float>()[0] > 45);
+    }
+    else // return true if the current state is within the parents initiation set
+    {
+        // TODO: think about this some more, goal of second term is to not include as a success if it is in collisions
+        return _parent->canStart(_env->getAbstractedState()) && reward.data_ptr<float>()[0] > -5;
+    }
+}
+
+bool Skill::_atLocalGoal(const torch::Tensor &reward,
+                         const torch::Tensor &done) const
+{
+    bool env_done = done.data_ptr<float>()[0] > 0.5f;
+    bool in_next_set = env_done; // default case for when the parent is none or is in the global option
+    if (!_is_global && _parent)
+    {
+        in_next_set = _parent->canStart(_env->getAbstractedState());
+    }
+    float r = reward.data_ptr<float>()[0];
+    bool hard_done = env_done && (r < 45);
+    bool success = in_next_set && (r > 45);
+
+    return success || hard_done; // if we are succesful, but not in next set, should continue searching. Contrariliy, if the env has reached max steps, should just time out
+}
+
 std::vector<float> Skill::_classifierVec(const AbstractedState &state) const
 {
     std::vector<float> out;
@@ -409,6 +346,7 @@ float Skill::_euclideanDistance(const std::array<float, 4> &a, const std::array<
     return dist;
 }
 
+// TODO: perhaps should normalzie this?
 float Skill::distanceToState(const AbstractedState &state) const
 {
     float max_dist = 0; // gonna just do euclidian distance between vectors

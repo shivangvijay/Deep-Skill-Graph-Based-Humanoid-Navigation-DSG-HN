@@ -1,7 +1,11 @@
 #include "dsc.h"
 
 /*
-TODO: need to normalize SVM dimensions
+MOST IMPORTANT FIXES:
+1) Figure out clasifier fitting (need to ensure that it is not too pessimistic/optimistic)
+2) Improve RL formulation, should be getting pretty good success rate with vel goals (i.e. > 70%)
+3) Improve spawning logic
+4) Figure out what to do with global option, so that we do not lose information gained when we train local options
 */
 
 DeepSkillChaining::DeepSkillChaining(
@@ -17,7 +21,7 @@ DeepSkillChaining::DeepSkillChaining(
       _env(std::make_shared<TrainEnvironment>(_robot_bridge, cfg.steps_per_episode)),
       _poo(_env, _cfg.poo_layers, device, _cfg.lr_poo, _cfg.tau, _cfg.gamma, _cfg.batch_size), _rng(std::random_device{}())
 {
-    loadGlobalOption(pretrain_actor_path, pretrain_critic1_path, pretrain_critic2_path);
+    _loadGlobalOption(pretrain_actor_path, pretrain_critic1_path, pretrain_critic2_path);
 
     // todo: put new skill here
     _skills.push_back(_makeSkill(false, nullptr)); // this is the goal option getting pushed
@@ -26,18 +30,53 @@ DeepSkillChaining::DeepSkillChaining(
     _unfinished_option_idx = _global_option_idx + 1;
 }
 
-void DeepSkillChaining::loadGlobalOption(const std::string &actor_path,
-                                         const std::string &critic1_path,
-                                         const std::string &critic2_path)
+int DeepSkillChaining::numSkills() const
 {
-    _skills.push_back(_makeSkill(true, nullptr)); // TODO: replace this code for making the skill
-    torch::load(_skills[0]->agent().actor_local, actor_path);
-    torch::load(_skills[0]->agent().critic_local_1, critic1_path);
-    torch::load(_skills[0]->agent().critic_local_2, critic2_path);
-    _poo.addOption(0.0f);
-    _poo.hardCopy();
-    std::cout << "=== Loaded global option oG from " << actor_path << " ===" << std::endl;
+    return (int)_skills.size();
 }
+
+int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout where this will declare no success
+{
+    for (int episode = 0; episode < max_episodes; episode++)
+    {
+        // TODO: more intelligent sampling. The big thing is not just randomly sampling, but perhaps sampling in the
+        // area of the previously learned skill so that it has a bit of an easier time learning
+        std::uniform_real_distribution<float> dis(0.0f, 1.0f);
+        float p = dis(_rng);
+        if (p < 0.2) // bit of goal biased sampling, may want to do even more intelligent sampling going forward
+        {
+            _env->resetTo(_global_start.position, _global_start.orientation, _global_start.velocity, _global_start.angular_velocity);
+        }
+        else
+        {
+            auto [pos, quat, vel, ang_vel] = _robot_bridge->generateRandomPoseWithVel();
+            _env->resetTo(pos, quat, vel, ang_vel); // could just do this with env->reset, but want to make a bit more explicit.
+        }
+
+        if (episode < _cfg.warmup_episodes)
+        {
+            _warmupRollout();
+        }
+        else
+        {
+            _dscRollout();
+        }
+        if (_containsGlobalStartState())
+        {
+            std::cout << "Success!" << std::endl;
+            break;
+        }
+    }
+    return _skills.size() - 1;
+}
+
+float DeepSkillChaining::execute()
+{
+    _env->resetTo(_global_start.position, _global_start.orientation, _global_start.velocity, _global_start.angular_velocity);
+    return _dscRollout();
+}
+
+/*** Private ***/
 
 void DeepSkillChaining::_warmupRollout()
 {
@@ -168,43 +207,18 @@ std::shared_ptr<Skill> DeepSkillChaining::_makeSkill(bool is_global, std::shared
     return new_skill;
 }
 
-int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout where this will declare no success
-{
-    for (int episode = 0; episode < max_episodes; episode++)
-    {
-        std::uniform_real_distribution<float> dis(0.0f, 1.0f);
-        float p = dis(_rng);
-        if (p < 0.5) // bit of goal biased sampling, may want to do even more intelligent sampling going forward
-        {
-            _env->resetTo(_global_start.position, _global_start.orientation, _global_start.velocity, _global_start.angular_velocity);
-        }
-        else
-        {
-            auto [pos, quat, vel, ang_vel] = _robot_bridge->generateRandomPoseWithVel();
-            _env->resetTo(pos, quat, vel, ang_vel); // could just do this with env->reset, but want to make a bit more explicit.
-        }
 
-        if (episode < _cfg.warmup_episodes)
-        {
-            _warmupRollout();
-        }
-        else
-        {
-            _dscRollout();
-        }
-        if (_containsGlobalStartState())
-        {
-            std::cout << "Success!" << std::endl;
-            break;
-        }
-    }
-    return _skills.size() - 1;
-}
-
-float DeepSkillChaining::execute()
+void DeepSkillChaining::_loadGlobalOption(const std::string &actor_path,
+                                         const std::string &critic1_path,
+                                         const std::string &critic2_path)
 {
-    _env->resetTo(_global_start.position, _global_start.orientation, _global_start.velocity, _global_start.angular_velocity);
-    return _dscRollout();
+    _skills.push_back(_makeSkill(true, nullptr)); // TODO: replace this code for making the skill
+    torch::load(_skills[0]->agent().actor_local, actor_path);
+    torch::load(_skills[0]->agent().critic_local_1, critic1_path);
+    torch::load(_skills[0]->agent().critic_local_2, critic2_path);
+    _poo.addOption(0.0f);
+    _poo.hardCopy();
+    std::cout << "=== Loaded global option oG from " << actor_path << " ===" << std::endl;
 }
 
 // void DeepSkillChaining::save(const std::string &dir) const
@@ -238,14 +252,10 @@ float DeepSkillChaining::execute()
 //     std::cout << "Loaded " << num_skills << " skills from " << dir << std::endl;
 // }
 
-int DeepSkillChaining::numSkills() const
-{
-    return (int)_skills.size();
-}
 
 /************************************** main **************************************/
 
-#define SCENE_FILE "../config/scene/test_scene.xml"
+#define SCENE_FILE "../config/scene/test_scene_obs_free.xml"
 #define OG_ACTOR "best_actor.pt"
 #define OG_CRITIC1 "best_critic_1.pt"
 #define OG_CRITIC2 "best_critic_2.pt"
@@ -275,19 +285,20 @@ int main(int argc, char **argv)
 
     DeepSkillChaining::Config cfg;
     cfg.gestation_n = 30;
-    cfg.last_k = 20;
-    cfg.max_option_steps = 20;
+    cfg.last_k = 10;
+    cfg.max_option_steps = 10;
     cfg.refinement_eps = 20;
     cfg.nu = 0.1;
     cfg.max_skills = 6;
-    cfg.warmup_episodes = 20;
+    cfg.actor_warmup_steps = 0; // gonna keep at zero for testing purposes as well
+    cfg.warmup_episodes = 0; // keep at zero since I am assuming we have done pretraining
 
     AbstractedState global_goal = {{3, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
     AbstractedState global_start = {{-3, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 
     DeepSkillChaining dsc(robot_bridge, device, global_goal, global_start, "../models/best_actor.pt", "../models/best_critic_1.pt", "../models/best_critic_2.pt", cfg);
 
-    int n = dsc.train(200);
+    int n = dsc.train(2000);
     std::cout << "\nTraining complete: " << n << " skill(s) in chain." << std::endl;
 
     // TODO: implement this stuff to visualize the output and see if things are succesful or not!

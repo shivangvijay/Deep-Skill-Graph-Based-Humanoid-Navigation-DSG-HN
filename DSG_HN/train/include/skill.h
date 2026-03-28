@@ -74,7 +74,7 @@ private:
     std::vector<std::vector<float>> _gestation_vecs;
     std::vector<int> _gestation_labels;
     bool _has_negative_gestation = false;
-    bool _classifier_trained = false;
+
     AbstractedState _global_goal;
     mutable std::mt19937 _rng;
     bool _always_available = false;
