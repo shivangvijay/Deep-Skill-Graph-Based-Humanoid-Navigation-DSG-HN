@@ -2,10 +2,11 @@
 
 /*
 MOST IMPORTANT FIXES:
-1) Figure out clasifier fitting (need to ensure that it is not too pessimistic/optimistic)
-2) Improve RL formulation, should be getting pretty good success rate with vel goals (i.e. > 70%)
-3) Improve spawning logic
-4) Figure out what to do with global option, so that we do not lose information gained when we train local options
+1) Need ability to turn with low level policy, otherwise having velocity as part of goal is not going to work
+2) Figure out clasifier fitting (need to ensure that it is not too pessimistic/optimistic)
+3) Improve RL formulation, should be getting pretty good success rate with vel goals (i.e. > 70%)
+4) Improve spawning logic
+5) Figure out what to do with global option, so that we do not lose information gained when we train local options
 */
 
 DeepSkillChaining::DeepSkillChaining(
@@ -45,7 +46,7 @@ int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout wh
         float p = dis(_rng);
         if (p < 0.2) // bit of goal biased sampling, may want to do even more intelligent sampling going forward
         {
-            _env->resetTo(_global_start.position, _global_start.orientation, _global_start.velocity, _global_start.angular_velocity);
+            _env->resetTo(_global_start);
         }
         else
         {
@@ -72,7 +73,7 @@ int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout wh
 
 float DeepSkillChaining::execute()
 {
-    _env->resetTo(_global_start.position, _global_start.orientation, _global_start.velocity, _global_start.angular_velocity);
+    _env->resetTo(_global_start);
     return _dscRollout();
 }
 
@@ -99,7 +100,7 @@ void DeepSkillChaining::_warmupRollout()
 
 std::pair<int, AbstractedState> DeepSkillChaining::_pickOption()
 {
-    _env->setGoal(_global_goal.position, _global_goal.orientation, _global_goal.velocity, _global_goal.angular_velocity); // need to set global goal so that the state calculation is correct
+    _env->setGoal(_global_goal); // need to set global goal so that the state calculation is correct
 
     auto state = _env->getState();
     auto global_state = _env->getAbstractedState();
@@ -255,7 +256,7 @@ void DeepSkillChaining::_loadGlobalOption(const std::string &actor_path,
 
 /************************************** main **************************************/
 
-#define SCENE_FILE "../config/scene/test_scene_obs_free.xml"
+#define SCENE_FILE "../config/scene/test_scene.xml"
 #define OG_ACTOR "best_actor.pt"
 #define OG_CRITIC1 "best_critic_1.pt"
 #define OG_CRITIC2 "best_critic_2.pt"

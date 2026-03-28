@@ -55,6 +55,16 @@ public:
         return transformState(robot_bridge->getRobotState());
     }
 
+    // this logic maybe can get cleaned up if we pass the goal into the transformState
+    torch::Tensor getStateRelativeToGoal(const AbstractedState& query_goal)
+    {
+        AbstractedState prev_goal = goal; // temporarily swap this queried goal with the actual goal, such that the transformState calc can be done correctly
+        goal = query_goal;
+        auto relative_state = transformState(robot_bridge->getRobotState());
+        goal = prev_goal;
+        return relative_state;
+    }
+
     AbstractedState getAbstractedState() // return underlying robot bridge state (where things are in global)
     {
         RobotState full_state = robot_bridge->getRobotState();
@@ -78,6 +88,11 @@ public:
             transformState(robot_bridge->getRobotState()),
             reward,
             terminated};
+    }
+
+    torch::Tensor resetTo(const AbstractedState& state)
+    {
+        return resetTo(state.position, state.orientation, state.velocity, state.angular_velocity);
     }
 
     // see note a top about how you need to set vel and ang vel
@@ -109,7 +124,7 @@ public:
     // Fix goal_position to a specific point (e.g. next skill's subgoal).
     // reset() and resetTo() will not randomize goal_position while fixed.
 
-    void setGoal(const AbstractedState& state)
+    void setGoal(const AbstractedState &state)
     {
         goal = state;
     }
@@ -138,7 +153,7 @@ public:
         _goal_fixed = false;
     }
 
-      // formulation where we reward for moving towards target seems better than one that just has negative distances
+    // If we do not have the ability to turn, then velocity cannot be part of goal condition
     std::pair<torch::Tensor, torch::Tensor> computeReward()
     {
         RobotState state = robot_bridge->getRobotState();
@@ -161,7 +176,7 @@ public:
             reward -= 10;
             terminated = true;
         }
-        else if (pos_error < 0.5 && vel_error < 0.25) // ignoring orientation for now
+        else if (pos_error < 0.5) // && vel_error < 0.25) // commenting out vel for now cause of aformentioned issues. Also ignoring ang vel and orientation for the same reasons
         {
             reward += 50;
             terminated = true;
@@ -329,22 +344,7 @@ private:
                                           obs.position[2] - state.position[2]};
             copy_to_ptr(rotateVectorByQuat(r_obs, state.orientation, true));
             data_ptr[offset++] = obs.size[0];
-            // }
-            // else
-            // {
-            //     // Padding: Obstacle at "infinity" with 0 size
-            //     data_ptr[offset++] = 100.0f; // x
-            //     data_ptr[offset++] = 100.0f; // y
-            //     data_ptr[offset++] = 100.0f; // z
-            //     data_ptr[offset++] = 0.0f;   // size
-            // }
         }
-        // for (const auto &obs : obstacles)
-        // {
-        //     std::array<float, 3> r_obs = {obs.position[0] - state.position[0], obs.position[1] - state.position[1], obs.position[2] - state.position[2]};
-        //     copy_to_ptr(rotateVectorByQuat(r_obs, state.orientation, true));
-        //     data_ptr[offset++] = obs.size[0];
-        // }
 
         return tensor_state;
     }

@@ -44,8 +44,7 @@ AbstractedState Skill::getLocalGoal()
 std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const AbstractedState &goal)
 {
     // need to get start and end states w.r.t the global goal, which is what is expected as the input to the policy over options
-    _env->setGoal(_global_goal);
-    torch::Tensor start_state_poo = _env->getState();
+    torch::Tensor start_state_poo = _env->getStateRelativeToGoal(_global_goal);
 
     _env->setGoal(goal);
     torch::Tensor state = _env->getState();
@@ -102,8 +101,7 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
         _fitClassifier(visited, _atTermination(reward, done));
     }
 
-    _env->setGoal(_global_goal);
-    torch::Tensor end_state_poo = _env->getState();
+    torch::Tensor end_state_poo = _env->getStateRelativeToGoal(_global_goal);
 
     return {num_steps, total_reward, _atLocalGoal(reward, done), start_state_poo, end_state_poo};
 }
