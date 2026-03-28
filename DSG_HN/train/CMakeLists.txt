@@ -93,6 +93,16 @@ target_link_libraries(transition_rollout_eval_delta PRIVATE
   fmt
 )
 
+add_executable(transition_mpc_eval
+  transition_mpc_eval.cpp
+)
+
+target_link_libraries(transition_mpc_eval PRIVATE
+  ${TORCH_LIBRARIES}
+  libboost_program_options.a
+  fmt
+)
+
 link_libraries(
   unitree_sdk2 ddsc ddscxx rt pthread # dds
   libboost_program_options.a libyaml-cpp.a fmt
