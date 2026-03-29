@@ -39,6 +39,21 @@ AbstractedState Skill::getLocalGoal()
     }
 }
 
+bool Skill::atTermination(const AbstractedState& goal) const
+{
+    auto [reward, done] = _env->computeReward(goal);
+    if (!_parent)
+    {
+        // if the goal option, return if we ended up at the goal
+        return (done.data_ptr<float>()[0] > 0.5f && reward.data_ptr<float>()[0] > 45);
+    }
+    else // return true if the current state is within the parents initiation set
+    {
+        // TODO: think about this some more, goal of second term is to not include as a success if it is in collisions
+        return _parent->canStart(_env->getAbstractedState()) && reward.data_ptr<float>()[0] > -5;
+    }
+}
+
 // This updates just the current agent. The agent gets initialized from the global agent, but maybe its worth
 // copying this back to the global agent, as otherwise we lose all the gradient updates
 std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const AbstractedState &goal)
@@ -52,13 +67,6 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
     float total_reward = 0;
     bool should_terminate = false;
 
-    torch::Tensor reward;
-    torch::Tensor done;
-
-    auto initial_check = _env->computeReward();
-    reward = initial_check.first;
-    done = initial_check.second;
-
     bool train = getTrainingPhase() == "gestation" || _is_global;
 
     std::vector<GestationRecord> visited;
@@ -67,13 +75,10 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
         visited.push_back({_classifierVec(_env->getAbstractedState()), _env->getAbstractedState()});
     }
 
-    while (num_steps < _max_steps && !_atLocalGoal(reward, done))
+    while (num_steps < _max_steps && !_atLocalGoal(goal))
     {
         auto [scaled_action, action] = _agent.getAction(state, !train);
-        auto [next_state, next_reward, next_done] = _env->step(scaled_action);
-
-        reward = next_reward;
-        done = next_done;
+        auto [next_state, reward, done] = _env->step(scaled_action);
 
         if (train) // if training instability, perhaps look at putting this outside the while loop like they have it elsewhere
         {
@@ -90,7 +95,7 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
         total_reward += reward.data_ptr<float>()[0];
     }
 
-    if (!_is_global && _atTermination(reward, done)) // can not reach goal, but still reach next option
+    if (!_is_global && atTermination(goal)) // can not reach goal, but still reach next option
     {
         _goal_hits++;
         if (train)
@@ -99,12 +104,12 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
 
     if (!_is_global)
     {
-        _fitClassifier(visited, _atTermination(reward, done));
+        _fitClassifier(visited, atTermination(goal));
     }
 
     torch::Tensor end_state_poo = _env->getStateRelativeToGoal(_global_goal);
 
-    return {num_steps, total_reward, _atLocalGoal(reward, done), start_state_poo, end_state_poo};
+    return {num_steps, total_reward, _atLocalGoal(goal), start_state_poo, end_state_poo};
 }
 
 bool Skill::canStart(const RobotState &state) const
@@ -217,23 +222,9 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
     }
 }
 
-bool Skill::_atTermination(const torch::Tensor &reward, const torch::Tensor &done) const
+bool Skill::_atLocalGoal(const AbstractedState& goal) const
 {
-    if (!_parent)
-    {
-        // if the goal option, return if we ended up at the goal
-        return (done.data_ptr<float>()[0] > 0.5f && reward.data_ptr<float>()[0] > 45);
-    }
-    else // return true if the current state is within the parents initiation set
-    {
-        // TODO: think about this some more, goal of second term is to not include as a success if it is in collisions
-        return _parent->canStart(_env->getAbstractedState()) && reward.data_ptr<float>()[0] > -5;
-    }
-}
-
-bool Skill::_atLocalGoal(const torch::Tensor &reward,
-                         const torch::Tensor &done) const
-{
+    auto [reward, done] = _env->computeReward(goal);
     bool env_done = done.data_ptr<float>()[0] > 0.5f;
     bool in_next_set = env_done; // default case for when the parent is none or is in the global option
     if (!_is_global && _parent)

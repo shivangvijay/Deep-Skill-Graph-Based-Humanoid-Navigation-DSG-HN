@@ -117,7 +117,9 @@ std::pair<int, AbstractedState> DeepSkillChaining::_pickOption()
     int best_option = _global_option_idx;
     for (int o = _global_option_idx + 1; o < _skills.size(); o++)
     {
-        if (_skills[o]->canStart(global_state)) // todo: add logic to not use if it is already in the TERMINATION set
+        // pass global goal in here, as the only option that will use this is the first/goal option whose local
+        // goal is the same as the global goal
+        if (_skills[o]->canStart(global_state) && !_skills[o]->atTermination(_global_goal))
         {
             best_option = o;
             break;
