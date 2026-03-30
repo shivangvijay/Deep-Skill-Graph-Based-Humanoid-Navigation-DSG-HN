@@ -48,6 +48,11 @@ int main(int argc, char **argv)
         std::cout << "CUDA is available! Testing on GPU." << std::endl;
         device = torch::Device(torch::kCUDA);
     }
+    else if (torch::mps::is_available())
+    {
+        std::cout << "MPS is available! Testing on Apple GPU." << std::endl;
+        device = torch::Device(torch::kMPS);
+    }
 
     std::vector<int> critic_layer_sizes = CRITIC_LAYER_SIZES;
     std::vector<int> actor_layer_sizes = ACTOR_LAYER_SIZES;
@@ -57,6 +62,7 @@ int main(int argc, char **argv)
     torch::load(agent.actor_local, "../models/best_actor.pt");
     torch::load(agent.critic_local_1, "../models/best_critic_1.pt");
     torch::load(agent.critic_local_2, "../models/best_critic_2.pt");
+    agent.toDevice(device);
 
     torch::Tensor state = train_env->reset();
     while (true)

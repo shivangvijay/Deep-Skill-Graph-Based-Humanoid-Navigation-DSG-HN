@@ -51,7 +51,7 @@ std::pair<torch::Tensor, torch::Tensor> TD3Agent::getAction(torch::Tensor state,
 
     actor_local->eval();
     torch::NoGradGuard no_grad;
-    auto action = actor_local->forward(augmented_state).to(torch::kCPU);
+    auto action = actor_local->forward(augmented_state.to(device)).to(torch::kCPU);
     if (!eval)
     {
         auto noise = (torch::randn_like(action) * 0.1).clamp(-0.2, 0.2); // Add some noise for exploration. Need to respect action limits
@@ -142,6 +142,17 @@ void TD3Agent::learn()
         softUpdate();
     }
     learn_step++;
+}
+
+void TD3Agent::toDevice(torch::Device d)
+{
+    device = d;
+    actor_local->to(d);
+    actor_target->to(d);
+    critic_local_1->to(d);
+    critic_target_1->to(d);
+    critic_local_2->to(d);
+    critic_target_2->to(d);
 }
 
 void TD3Agent::hardCopy()

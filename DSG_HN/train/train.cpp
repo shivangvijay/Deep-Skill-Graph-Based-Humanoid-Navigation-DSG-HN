@@ -53,6 +53,11 @@ int main(int argc, char **argv)
         std::cout << "CUDA is available! Training on GPU." << std::endl;
         device = torch::Device(torch::kCUDA);
     }
+    else if (torch::mps::is_available())
+    {
+        std::cout << "MPS is available! Training on Apple GPU." << std::endl;
+        device = torch::Device(torch::kMPS);
+    }
 
     std::vector<int> critic_layer_sizes = CRITIC_LAYER_SIZES;
     std::vector<int> actor_layer_sizes = ACTOR_LAYER_SIZES;

@@ -27,6 +27,7 @@ public:
 
     void learn();
     void hardCopy();
+    void toDevice(torch::Device d);
 
     double total_actor_loss = 0.0;
     double total_critic_loss = 0.0;
