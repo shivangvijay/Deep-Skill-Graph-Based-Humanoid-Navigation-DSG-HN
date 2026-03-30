@@ -42,8 +42,8 @@ public:
         int max_skills = 6;
         float start_noise_radius = 2.0f;
 
-        std::vector<int> actor_layers = {256, 256, 256};
-        std::vector<int> critic_layers = {256, 256, 256};
+        std::vector<int> actor_layers = {64, 128, 64};
+        std::vector<int> critic_layers = {128, 256, 128};
         std::vector<int> poo_layers = {256, 256, 256};
 
         float lr_actor = 1e-4f;
@@ -99,4 +99,11 @@ private:
     bool _containsGlobalStartState();
     void _makeSkill(bool is_global, std::shared_ptr<Skill> parent);
     void _loadGlobalOption(const std::string &actor_path, const std::string &critic1_path, const std::string &critic2_path);
+
+    float _sampleGaussianDist(float mu, float std); // utility function to sample a gaussian
+    std::array<float, 4> _getGaussianQuaternionPerturbation(const std::array<float, 4>& q_orig, float sigma_rad); // utility function to perturb quaternion by random noise
+
+    AbstractedState _sampleStartNearObstacle(); // gaussian sampling (see robot autonomy slides)
+    AbstractedState _sampleStartInterpolated(); // randomly sample position linearly interpolated between start and goal (with noise)
+
 };

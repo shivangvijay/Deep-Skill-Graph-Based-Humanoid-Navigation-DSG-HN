@@ -27,13 +27,13 @@ class Skill
 {
 public:
     Skill(int id, std::shared_ptr<TrainEnvironment> env,
-        const std::vector<int> &actor_layer_sizes,
-        const std::vector<int> &critic_layer_sizes,
-        torch::Device device,
-        float lr_actor, float lr_critic,
-        float tau, float gamma, int max_obstacles, int actor_warmup_steps,
-        int batch_size, int actor_update_freq, int k, int max_steps, double nu,
-        std::shared_ptr<Skill> parent, int gestation_period, bool is_global, AbstractedState global_goal);
+          const std::vector<int> &actor_layer_sizes,
+          const std::vector<int> &critic_layer_sizes,
+          torch::Device device,
+          float lr_actor, float lr_critic,
+          float tau, float gamma, int max_obstacles, int actor_warmup_steps,
+          int batch_size, int actor_update_freq, int k, int max_steps, double nu,
+          std::shared_ptr<Skill> parent, int gestation_period, bool is_global, AbstractedState global_goal);
 
     AbstractedState getLocalGoal();
 
@@ -50,6 +50,7 @@ public:
     // Sample a random gestation record as a subgoal for the preceding skill.
     AbstractedState sampleSubgoalState() const;
     std::string getTrainingPhase() const;
+    bool atTermination(const AbstractedState &goal) const;
 
     void save(const std::string &actor_path,
               const std::string &critic1_path,
@@ -90,10 +91,7 @@ private:
     std::vector<float> _classifierVec(const AbstractedState &state) const;
 
     // Unified termination check for gestation and refinement rollouts.
-    bool _atLocalGoal(const torch::Tensor &reward,
-                      const torch::Tensor &done) const;
-
-    bool _atTermination(const torch::Tensor &reward, const torch::Tensor &done) const;
+    bool _atLocalGoal(const AbstractedState& goal) const;
 
     void _fitClassifier(const std::vector<GestationRecord> &states, bool term_success);
 

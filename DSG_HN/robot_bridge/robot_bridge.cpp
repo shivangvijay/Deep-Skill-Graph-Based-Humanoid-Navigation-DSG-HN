@@ -97,6 +97,7 @@ std::pair<std::array<float, 3>, std::array<float, 4>> RobotBridge::generateRando
     return {pos, quat};
 }
 
+// TODO: vel is global, not local, so when spawning need to make sure we are respecting the MINIMUM limit
 std::tuple<std::array<float, 3>, std::array<float, 4>, std::array<float, 3>, std::array<float, 3>> RobotBridge::generateRandomPoseWithVel() const
 {
     std::array<float, 3> pos = {
@@ -107,9 +108,10 @@ std::tuple<std::array<float, 3>, std::array<float, 4>, std::array<float, 3>, std
     float yaw = (static_cast<float>(rand()) / RAND_MAX) * 2 * M_PI;
     std::array<float, 4> quat = {cosf(yaw / 2), 0, 0, sinf(yaw / 2)};
 
+    float vel_limit = std::min(vel_limits[0], vel_limits[1]); // need to use minimum vel limit, since robot can have arbitray orientation and this vel is global
     std::array<float, 3> vel = {
-        -vel_limits[0] + static_cast<float>(rand()) / (RAND_MAX / (2 * vel_limits[0])),
-        -vel_limits[1] + static_cast<float>(rand()) / (RAND_MAX / (2 * vel_limits[1])),
+        -vel_limit + static_cast<float>(rand()) / (RAND_MAX / (2 * vel_limit)),
+        -vel_limit + static_cast<float>(rand()) / (RAND_MAX / (2 * vel_limit)),
         0.0f};
 
     float ang_vel_yaw = -vel_limits[2] + static_cast<float>(rand()) / (RAND_MAX / (2 * vel_limits[2]));

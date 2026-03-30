@@ -40,9 +40,21 @@ public:
         if (!_goal_fixed)
         {
             goal = robot_bridge->generateRandomValidConfiguration();
+            goal.velocity[0] = 0;
+            goal.velocity[1] = 0;
+            goal.velocity[2] = 0;
+            goal.angular_velocity[0] = 0;
+            goal.angular_velocity[1] = 0;
+            goal.angular_velocity[2] = 0;
         }
 
         auto start = robot_bridge->generateRandomValidConfiguration();
+        start.velocity[0] = 0;
+        start.velocity[1] = 0;
+        start.velocity[2] = 0;
+        start.angular_velocity[0] = 0;
+        start.angular_velocity[1] = 0;
+        start.angular_velocity[2] = 0;
         robot_bridge->resetRobot(start.position, start.orientation, start.velocity, start.angular_velocity);
 
         obstacles = robot_bridge->getObstacles();
@@ -57,14 +69,9 @@ public:
         return transformState(robot_bridge->getRobotState());
     }
 
-    // this logic maybe can get cleaned up if we pass the goal into the transformState
     torch::Tensor getStateRelativeToGoal(const AbstractedState &query_goal)
     {
-        AbstractedState prev_goal = goal; // temporarily swap this queried goal with the actual goal, such that the transformState calc can be done correctly
-        goal = query_goal;
-        auto relative_state = transformState(robot_bridge->getRobotState());
-        goal = prev_goal;
-        return relative_state;
+        return transformState(robot_bridge->getRobotState(), query_goal);
     }
 
     AbstractedState getAbstractedState() // return underlying robot bridge state (where things are in global)
@@ -89,7 +96,7 @@ public:
         robot_bridge->publishVelCommand(cmd);
         robot_bridge->update();
         current_step++;
-        auto [reward, terminated] = computeReward();
+        auto [reward, terminated] = computeReward(goal);
 
         return {
             transformState(robot_bridge->getRobotState()),
@@ -163,13 +170,22 @@ public:
         _goal_fixed = false;
     }
 
-    // If we do not have the ability to turn, then velocity cannot be part of goal condition
     std::pair<torch::Tensor, torch::Tensor> computeReward()
+    {
+        return computeReward(goal);
+    }
+
+    // If we do not have the ability to turn, then velocity cannot be part of goal condition
+    std::pair<torch::Tensor, torch::Tensor> computeReward(const AbstractedState &goal_)
     {
         RobotState state = robot_bridge->getRobotState();
         bool collision = robot_bridge->inCollision();
 
-        auto &[goal_position, goal_orientation, goal_velocity, goal_angular_velocity] = goal;
+        auto goal_position = goal_.position;
+        auto goal_orientation = goal_.orientation;
+        auto goal_velocity = goal_.velocity;
+        auto goal_angular_velocity = goal_.angular_velocity;
+        // auto &[goal_position, goal_orientation, goal_velocity, goal_angular_velocity] = goal_;
 
         float pos_error = std::sqrt((state.position[0] - goal_position[0]) * (state.position[0] - goal_position[0]) +
                                     (state.position[1] - goal_position[1]) * (state.position[1] - goal_position[1]));
@@ -193,11 +209,11 @@ public:
         }
         else
         {
-            reward -= (pos_error / 100.0) + (vel_error / 10.0);
+            reward -= (pos_error / 10.0); // + (vel_error / 10.0);
         }
-        if (current_step >= max_steps ||
-            state.position[0] > robot_bridge->x_max || state.position[0] < robot_bridge->x_min ||
-            state.position[1] > robot_bridge->y_max || state.position[1] < robot_bridge->y_min)
+        if (current_step >= max_steps || pos_error > 20) //||
+                                                         // state.position[0] > robot_bridge->x_max || state.position[0] < robot_bridge->x_min ||
+                                                         // state.position[1] > robot_bridge->y_max || state.position[1] < robot_bridge->y_min)
         {
             terminated = true;
         }
@@ -285,6 +301,12 @@ private:
 
     torch::Tensor transformState(const RobotState &state)
     {
+        return transformState(state, goal);
+    }
+
+    // TODO: this state representation is not able to learn too well
+    torch::Tensor transformState(const RobotState &state, const AbstractedState &goal_)
+    {
         // when designing this, note that the state is a mix of being in the global and local reference frame
         // however, the final policy output is velocity RELATIVE to the robot
 
@@ -312,10 +334,10 @@ private:
         copy_to_ptr(state.accel);                                                 // Already local
 
         // relative values
-        auto &g_pos = goal.position;
-        auto &g_quat = goal.orientation;
-        auto &g_vel = goal.velocity;
-        auto &g_ang_vel = goal.angular_velocity;
+        auto &g_pos = goal_.position;
+        auto &g_quat = goal_.orientation;
+        auto &g_vel = goal_.velocity;
+        auto &g_ang_vel = goal_.angular_velocity;
 
         std::array<float, 3> r_pos = {g_pos[0] - state.position[0], g_pos[1] - state.position[1], g_pos[2] - state.position[2]};
         copy_to_ptr(rotateVectorByQuat(r_pos, state.orientation, true));
@@ -336,19 +358,19 @@ private:
 
         // local obstacles
 
-        std::vector<Obstacle> sorted_obs = obstacles;
-        std::sort(sorted_obs.begin(), sorted_obs.end(), [&](const Obstacle &a, const Obstacle &b)
-                  {
-        float distA = std::pow(a.position[0]-state.position[0], 2) + std::pow(a.position[1]-state.position[1], 2);
-        float distB = std::pow(b.position[0]-state.position[0], 2) + std::pow(b.position[1]-state.position[1], 2);
-        return distA < distB; });
+        // std::vector<Obstacle> sorted_obs = obstacles;
+        // std::sort(sorted_obs.begin(), sorted_obs.end(), [&](const Obstacle &a, const Obstacle &b)
+        //           {
+        // float distA = std::pow(a.position[0]-state.position[0], 2) + std::pow(a.position[1]-state.position[1], 2);
+        // float distB = std::pow(b.position[0]-state.position[0], 2) + std::pow(b.position[1]-state.position[1], 2);
+        // return distA < distB; });
 
         // 2. Fill fixed slots
-        for (int i = 0; i < sorted_obs.size(); i++)
+        for (int i = 0; i < obstacles.size(); i++)
         {
             // if (i < sorted_obs.size())
             // {
-            const auto &obs = sorted_obs[i];
+            const auto &obs = obstacles[i];
             std::array<float, 3> r_obs = {obs.position[0] - state.position[0],
                                           obs.position[1] - state.position[1],
                                           obs.position[2] - state.position[2]};

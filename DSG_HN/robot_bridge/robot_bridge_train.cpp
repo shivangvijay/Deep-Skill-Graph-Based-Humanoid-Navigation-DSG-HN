@@ -100,6 +100,22 @@ AbstractedState RobotBridgeTrain::generateRandomValidConfiguration()
     return {pos, quat, vel, ang_vel};
 }
 
+bool RobotBridgeTrain::isConfigurationValid(const AbstractedState &state)
+{
+    return isConfigurationValid(state.position, state.orientation, state.velocity, state.angular_velocity);
+}
+
+bool RobotBridgeTrain::isConfigurationValid(const std::array<float, 3> &pos, const std::array<float, 4> &quat, const std::array<float, 3> &vel, const std::array<float, 3> &ang_vel)
+{
+    mjModel *m_orig = eng->getModel();
+    mjData *d_orig = eng->getData();
+    eng->reset(pos, quat, vel, ang_vel);
+    bool valid = !eng->inCollision() && pos[0] >= x_min && pos[0] <= x_max && pos[1] >= y_min && pos[1] <= y_max;
+    eng->m = m_orig;
+    eng->d = d_orig;
+    return valid;
+}
+
 RobotState RobotBridgeTrain::getRobotState()
 {
     RobotState s;

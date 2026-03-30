@@ -42,6 +42,13 @@ std::pair<torch::Tensor, torch::Tensor> TD3Agent::getAction(torch::Tensor state,
         augmented_state = state.narrow(-1, 0, total_state_dim);
     }
 
+    if (!eval && learn_step < actor_warmup_steps)
+    {
+        // Generates values between -1.0 and 1.0
+        torch::Tensor random_action = torch::rand({action_limits.size(0)}) * 2.0 - 1.0;
+        return {random_action * action_limits, random_action};
+    }
+
     actor_local->eval();
     torch::NoGradGuard no_grad;
     auto action = actor_local->forward(augmented_state).to(torch::kCPU);
