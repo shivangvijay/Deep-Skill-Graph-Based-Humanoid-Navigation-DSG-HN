@@ -199,7 +199,7 @@ public:
         bool terminated = false;
         if (collision)
         {
-            reward -= 10;
+            reward -= 30;
             terminated = true;
         }
         else if (pos_error < 0.5) // && vel_error < 0.25) // commenting out vel for now cause of aformentioned issues. Also ignoring ang vel and orientation for the same reasons
@@ -209,7 +209,7 @@ public:
         }
         else
         {
-            reward -= (pos_error / 10.0); // + (vel_error / 10.0);
+            reward -= (pos_error / 50.0); // + (vel_error / 10.0);
         }
         if (current_step >= max_steps || pos_error > 20) //||
                                                          // state.position[0] > robot_bridge->x_max || state.position[0] < robot_bridge->x_min ||
@@ -358,19 +358,16 @@ private:
 
         // local obstacles
 
-        // std::vector<Obstacle> sorted_obs = obstacles;
-        // std::sort(sorted_obs.begin(), sorted_obs.end(), [&](const Obstacle &a, const Obstacle &b)
-        //           {
-        // float distA = std::pow(a.position[0]-state.position[0], 2) + std::pow(a.position[1]-state.position[1], 2);
-        // float distB = std::pow(b.position[0]-state.position[0], 2) + std::pow(b.position[1]-state.position[1], 2);
-        // return distA < distB; });
+        std::vector<Obstacle> sorted_obs = obstacles;
+        std::sort(sorted_obs.begin(), sorted_obs.end(), [&](const Obstacle &a, const Obstacle &b)
+                  {
+        float distA = std::pow(a.position[0]-state.position[0], 2) + std::pow(a.position[1]-state.position[1], 2);
+        float distB = std::pow(b.position[0]-state.position[0], 2) + std::pow(b.position[1]-state.position[1], 2);
+        return distA < distB; });
 
-        // 2. Fill fixed slots
-        for (int i = 0; i < obstacles.size(); i++)
+        for (int i = 0; i < sorted_obs.size(); i++)
         {
-            // if (i < sorted_obs.size())
-            // {
-            const auto &obs = obstacles[i];
+            const auto &obs = sorted_obs[i];
             std::array<float, 3> r_obs = {obs.position[0] - state.position[0],
                                           obs.position[1] - state.position[1],
                                           obs.position[2] - state.position[2]};
