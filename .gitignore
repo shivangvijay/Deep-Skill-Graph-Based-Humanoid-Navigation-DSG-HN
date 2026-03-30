@@ -7,3 +7,4 @@
 unitree_mujoco/simulate/mujoco
 .cache
 **/thirdparty/
+**/.DS_Store
