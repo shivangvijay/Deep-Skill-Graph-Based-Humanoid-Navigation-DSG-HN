@@ -28,13 +28,13 @@
 #define ACTOR_UPDATE_FREQ 2
 #define CRITIC_LAYER_SIZES {256, 256, 256}
 #define ACTOR_LAYER_SIZES {256, 256, 256}
-#define RENDER true
+#define RENDER false
 #define MAX_OBSTACLES 8
 #define PRETRAIN false
-#define ACTOR_WARMUP_STEPS 0
+#define ACTOR_WARMUP_STEPS 10000
 
 /*
-TODO: VERIFY THAT TD3 CAN STIL LEARN
+TODO: MAKE SURE IT CAN LEARN TO AVOID OBSTACLES LIKE BEFORE (RECREATE PRIOR SUCCESS)
 */
 
 int main(int argc, char **argv)
@@ -121,7 +121,7 @@ int main(int argc, char **argv)
             if (done.item<float>() > 0.5)
             {
                 num_episodes++;
-                if (reward.data_ptr<float>()[0] > 45)
+                if (reward.data_ptr<float>()[0] > 0)
                     num_success++;
                 state = train_env->reset();
             }

@@ -42,8 +42,8 @@ public:
         int max_skills = 6;
         float start_noise_radius = 2.0f;
 
-        std::vector<int> actor_layers = {256, 256, 256};
-        std::vector<int> critic_layers = {256, 256, 256};
+        std::vector<int> actor_layers = {64, 128, 64};
+        std::vector<int> critic_layers = {128, 256, 128};
         std::vector<int> poo_layers = {256, 256, 256};
 
         float lr_actor = 1e-4f;
