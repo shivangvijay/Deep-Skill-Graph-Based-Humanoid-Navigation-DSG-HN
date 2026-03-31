@@ -50,8 +50,8 @@ bool Skill::atTermination(const AbstractedState& goal) const
     }
     else // return true if the current state is within the parents initiation set
     {
-        // TODO: think about this some more, goal of second term is to not include as a success if it is in collisions
-        // Use pessimistic boundary for termination — tighter, matches Python's is_term_true()
+        // TODO: collision check - but maybe that should be done when sampling a subgoal. can add it here for redundancy
+        // Use pessimistic boundary for termination — tighter condition for termination
         // which calls parent.pessimistic_is_init_true()
         return _parent->canStartPessimistic(_env->getAbstractedState()) && reward.data_ptr<float>()[0] > -5;
     }
@@ -166,7 +166,6 @@ void Skill::initFromSkill(std::shared_ptr<Skill> other)
 AbstractedState Skill::sampleSubgoalState() const
 {
     // Prefer states inside the pessimistic classifier (confident region) as subgoals.
-    // Matches Python's sample_from_initiation_region_fast_and_epsilon which uses pessimistic check.
     // Falls back to any positive record if pessimistic classifier has no confirmed samples.
     if (_pessimistic_classifier.trained())
     {
@@ -279,7 +278,6 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
     if (!_has_negative_gestation)
     {
         // Phase 1: only positive data available — use one-class SVMs on positive vecs only.
-        // Matches Python's train_one_class_svm(): pessimistic=nu, optimistic=nu/10.
         std::vector<std::vector<float>> pos_vecs;
         for (size_t i = 0; i < _gestation_vecs.size(); i++)
             if (_gestation_labels[i] == 1)
@@ -294,7 +292,6 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
     else
     {
         // Phase 2: binary SVC as optimistic, then one-class re-fit on SVC-positive predictions as pessimistic.
-        // Matches Python's train_two_class_classifier(): SVC balanced → pessimistic OneClassSVM on SVC-positives.
         _classifier.train(_gestation_vecs, _gestation_labels,
                           /*C=*/1.0, /*gamma=*/-1.0, /*balance_classes=*/true);
 
