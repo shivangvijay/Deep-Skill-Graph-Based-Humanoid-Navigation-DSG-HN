@@ -202,11 +202,15 @@ float DeepSkillChaining::_dscRollout()
                       << " phase=" << _skills[option]->getTrainingPhase()
                       << " steps=" << steps_taken
                       << " reward=" << cum_reward
-                      << " done=" << done << "\n";
+                      << " local_done=" << done
+                      << " global_done=" << env_done << "\n";
         if (steps_taken == 0) // this condition occurs when we just finished training a new skill, but then find ourselves in the initiation set of that skill while trying to train the new skill
             break;
 
-        env_done = done;
+        // Check global episode termination independently of local skill done.
+        // done from rollout() is the local termination condition and should not stop the episode.
+        auto [g_reward, g_done] = _env->computeReward(_global_goal);
+        env_done = g_done.data_ptr<float>()[0] > 0.5f;
         step += steps_taken;
         total_reward += cum_reward;
 
