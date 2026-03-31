@@ -320,16 +320,22 @@ bool Skill::_atLocalGoal(const AbstractedState& goal) const
 {
     auto [reward, done] = _env->computeReward(goal);
     bool env_done = done.data_ptr<float>()[0] > 0.5f;
-    bool in_next_set = env_done; // default case for when the parent is none or is in the global option
-    if (!_is_global && _parent)
-    {
-        in_next_set = _parent->canStart(_env->getAbstractedState());
-    }
     float r = reward.data_ptr<float>()[0];
-    bool hard_done = env_done && (r < 45);
-    bool success = in_next_set && (r > 45);
 
-    return success || hard_done; // if we are succesful, but not in next set, should continue searching. Contrariliy, if the env has reached max steps, should just time out
+    if (_is_global || !_parent)
+    {
+        // global option: success = reached the actual goal
+        bool success = env_done && (r > 45);
+        bool hard_done = env_done && (r < 45);
+        return success || hard_done;
+    }
+
+    // non-global: exit as soon as we enter the parent's pessimistic init set —
+    // matches Python's is_at_local_goal which uses is_term_true (pessimistic).
+    // This keeps the robot inside the region when atTermination() is called.
+    bool in_pessimistic_set = _parent->canStartPessimistic(_env->getAbstractedState());
+    bool hard_done = env_done && (r < 45);
+    return in_pessimistic_set || hard_done;
 }
 
 std::vector<float> Skill::_classifierVec(const AbstractedState &state) const
