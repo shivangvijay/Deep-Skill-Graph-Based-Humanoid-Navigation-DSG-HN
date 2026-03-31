@@ -21,10 +21,10 @@ Skill::Skill(
 // when it meets a certain success percentage
 std::string Skill::getTrainingPhase() const
 {
-    if (_goal_hits < _gestation_period || !_classifier.trained()) // last two terms make sure SVM is trained
-    {
+    if (_is_global)
+        return "global";
+    if (_goal_hits < _gestation_period || !_classifier.trained())
         return "gestation";
-    }
     return "mature";
 }
 
@@ -285,13 +285,17 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
 
         if (!pos_vecs.empty())
         {
+            bool first_phase1 = !_classifier.trained();
             _pessimistic_classifier.trainOneClass(pos_vecs, _nu);       // tight
             _classifier.trainOneClass(pos_vecs, _nu / 10.0);            // loose / optimistic
+            if (first_phase1)
+                std::cout << "\n[Skill " << _id << "] Classifier Phase 1: OneClass init. Pos=" << pos_vecs.size() << "\n";
         }
     }
     else
     {
         // Phase 2: binary SVC as optimistic, then one-class re-fit on SVC-positive predictions as pessimistic.
+        int neg_count = std::count(_gestation_labels.begin(), _gestation_labels.end(), -1);
         _classifier.train(_gestation_vecs, _gestation_labels,
                           /*C=*/1.0, /*gamma=*/-1.0, /*balance_classes=*/true);
 
@@ -303,6 +307,12 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
 
         if (!svc_positive_vecs.empty())
             _pessimistic_classifier.trainOneClass(svc_positive_vecs, _nu);
+
+        if (neg_count == 1) // first failure — log Phase 1→2 transition
+        {
+            int pos_count = std::count(_gestation_labels.begin(), _gestation_labels.end(), 1);
+            std::cout << "\n[Skill " << _id << "] Classifier Phase 1→2: binary SVC. Pos=" << pos_count << " Neg=1\n";
+        }
     }
 }
 

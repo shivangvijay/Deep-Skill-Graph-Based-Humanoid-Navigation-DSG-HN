@@ -55,6 +55,10 @@ public:
         float gamma = 0.99f;
         int batch_size = 256;
         int actor_update_freq = 2;
+
+        bool render_training = false; // if true, startRender() is called before the training loop (slows training)
+        bool verbose = false;         // per-rollout logging inside each episode
+        int log_interval = 50;        // print episode summary + skill status table every N episodes
     };
 
     DeepSkillChaining(std::shared_ptr<RobotBridgeTrain> robot_bridge,

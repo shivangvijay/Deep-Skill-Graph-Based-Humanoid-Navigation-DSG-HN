@@ -74,6 +74,9 @@ public:
 
     TD3Agent &agent();
 
+    int goalHits() const { return _goal_hits; }
+    int gestationPeriod() const { return _gestation_period; }
+
 private:
     std::shared_ptr<TrainEnvironment> _env;
     std::shared_ptr<Skill> _parent;

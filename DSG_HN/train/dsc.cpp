@@ -38,6 +38,9 @@ int DeepSkillChaining::numSkills() const
 
 int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout where this will declare no success
 {
+    if (_cfg.render_training)
+        _robot_bridge->startRender();
+
     for (int episode = 0; episode < max_episodes; episode++)
     {
         // TODO: more intelligent sampling. The big thing is not just randomly sampling, but perhaps sampling in the
@@ -63,14 +66,43 @@ int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout wh
             _env->reset(); // random start
         }
 
+        float ep_reward = 0.0f;
         if (episode < _cfg.warmup_episodes)
         {
-            _warmupRollout(); 
+            _warmupRollout();
         }
         else
         {
-            _dscRollout();
+            ep_reward = _dscRollout();
         }
+
+        if (_cfg.log_interval > 0 && (episode + 1) % _cfg.log_interval == 0)
+        {
+            std::cout << "\n[Episode " << (episode + 1) << "] reward=" << ep_reward << "\n";
+            std::cout << "=== Skill Status ===\n";
+            std::cout << "  ID      Phase       GoalHits\n";
+            for (size_t i = 0; i < _skills.size(); ++i)
+            {
+                std::string label;
+                if (i == (size_t)_global_option_idx)
+                    label = "global";
+                else if (i == (size_t)_global_option_idx + 1)
+                    label = "goal";
+                else
+                    label = "opt-" + std::to_string(i);
+
+                std::string phase = _skills[i]->getTrainingPhase();
+                if (i == (size_t)_global_option_idx)
+                    phase = "pre-trained";
+
+                std::cout << "  " << label << "   " << phase;
+                if (i == (size_t)_global_option_idx)
+                    std::cout << "\n";
+                else
+                    std::cout << "   " << _skills[i]->goalHits() << "/" << _skills[i]->gestationPeriod() << "\n";
+            }
+        }
+
         if (_containsGlobalStartState())
         {
             std::cout << "Success!" << std::endl;
@@ -165,7 +197,12 @@ float DeepSkillChaining::_dscRollout()
         auto [option, goal] = _pickOption();
         auto [steps_taken, cum_reward, done, first_state_poo, last_state_poo] = _skills[option]->rollout(goal);
 
-        // std::cout << " " << steps_taken << " " << option << " " << done << std::endl;
+        if (_cfg.verbose)
+            std::cout << "  [Rollout] option=" << option
+                      << " phase=" << _skills[option]->getTrainingPhase()
+                      << " steps=" << steps_taken
+                      << " reward=" << cum_reward
+                      << " done=" << done << "\n";
         if (steps_taken == 0) // this condition occurs when we just finished training a new skill, but then find ourselves in the initiation set of that skill while trying to train the new skill
             break;
 
@@ -179,6 +216,12 @@ float DeepSkillChaining::_dscRollout()
         // make a new skill if we have finished training the current option, but still have not reached the end goal
         if (option == _unfinished_option_idx && _skills[_unfinished_option_idx]->getTrainingPhase() != "gestation" && !_containsGlobalStartState())
         {
+            AbstractedState sample = _skills[_unfinished_option_idx]->sampleSubgoalState();
+            float dx = sample.position[0] - _global_start.position[0];
+            float dy = sample.position[1] - _global_start.position[1];
+            float dz = sample.position[2] - _global_start.position[2];
+            float dist = std::sqrt(dx*dx + dy*dy + dz*dz);
+            std::cout << "\n[Option " << _unfinished_option_idx << " matured] Distance of initiation region to start: " << dist << " m\n";
             _makeSkill(false, _skills.back());
         }
     }
@@ -207,7 +250,10 @@ void DeepSkillChaining::_makeSkill(bool is_global, std::shared_ptr<Skill> parent
         new_skill->initFromSkill(_skills[_global_option_idx]);
 
     _unfinished_option_idx = id;
-    std::cout << "\nMaking New Skill With ID: " << id << std::endl;
+    if (parent)
+        std::cout << "\nMaking New Skill With ID: " << id << " (parent=" << parent->goalHits() << "/" << parent->gestationPeriod() << " id=" << id - 1 << ")\n";
+    else
+        std::cout << "\nMaking New Skill With ID: " << id << "\n";
     _skills.push_back(new_skill);
     _poo.addOption(0.0f);
     _poo.hardCopy();
@@ -393,6 +439,9 @@ int main(int argc, char **argv)
     cfg.max_skills = 6;
     cfg.actor_warmup_steps = 0; // gonna keep at zero for testing purposes as well
     cfg.warmup_episodes = 200;   // keep at zero since I am assuming we have done pretraining
+    cfg.render_training = false; // set to true to watch rollouts during training (slower)
+    cfg.verbose = true;         // set to true for per-rollout console output
+    cfg.log_interval = 50;       // print skill status table every N episodes
 
     AbstractedState global_goal = {{3, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
     AbstractedState global_start = {{-3, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
