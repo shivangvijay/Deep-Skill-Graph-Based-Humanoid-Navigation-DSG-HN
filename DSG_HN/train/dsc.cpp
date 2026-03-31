@@ -25,7 +25,7 @@ DeepSkillChaining::DeepSkillChaining(
       _poo(_env, _cfg.poo_layers, device, _cfg.lr_poo, _cfg.tau, _cfg.gamma, _cfg.batch_size), _rng(std::random_device{}())
 {
     _loadGlobalOption(pretrain_actor_path, pretrain_critic1_path, pretrain_critic2_path);
-    _unfinished_option_idx = _global_option_idx;
+    _unfinished_option_idx = _global_option_idx; // assigning global option index to unfinished option index, as this is the index of the next option we will train, and we have only trained the global option at this point
 
     // todo: put new skill here
     _makeSkill(false, nullptr); // this is the goal option getting pushed
@@ -65,7 +65,7 @@ int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout wh
 
         if (episode < _cfg.warmup_episodes)
         {
-            _warmupRollout();
+            _warmupRollout(); 
         }
         else
         {
@@ -221,6 +221,7 @@ void DeepSkillChaining::_loadGlobalOption(const std::string &actor_path,
     torch::load(_skills[0]->agent().actor_local, actor_path);
     torch::load(_skills[0]->agent().critic_local_1, critic1_path);
     torch::load(_skills[0]->agent().critic_local_2, critic2_path);
+    _skills[0]->agent().toDevice(_device);
     _poo.addOption(0.0f);
     _poo.hardCopy();
     std::cout << "=== Loaded global option oG from " << actor_path << " ===" << std::endl;
@@ -373,6 +374,11 @@ int main(int argc, char **argv)
     {
         std::cout << "CUDA available — training on GPU." << std::endl;
         device = torch::Device(torch::kCUDA);
+    }
+    else if (torch::mps::is_available())
+    {
+        std::cout << "MPS is available! Training on Apple GPU." << std::endl;
+        device = torch::Device(torch::kMPS);
     }
 
     auto robot_bridge = std::make_shared<RobotBridgeTrain>(
