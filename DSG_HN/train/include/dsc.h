@@ -109,5 +109,7 @@ private:
 
     AbstractedState _sampleStartNearObstacle(); // gaussian sampling (see robot autonomy slides)
     AbstractedState _sampleStartInterpolated(); // randomly sample position linearly interpolated between start and goal (with noise)
+    void _validateOption();
+    bool _shouldCreateNewOption();
 
 };

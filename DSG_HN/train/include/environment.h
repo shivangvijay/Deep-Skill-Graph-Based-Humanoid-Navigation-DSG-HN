@@ -74,6 +74,11 @@ public:
         return transformState(robot_bridge->getRobotState(), query_goal);
     }
 
+    std::pair<RobotState, bool> getUnderlyingState()
+    {
+        return {robot_bridge->getRobotState(), robot_bridge->inCollision()};
+    }
+
     AbstractedState getAbstractedState() // return underlying robot bridge state (where things are in global)
     {
         RobotState full_state = robot_bridge->getRobotState();
@@ -175,12 +180,16 @@ public:
         return computeReward(goal);
     }
 
-    // If we do not have the ability to turn, then velocity cannot be part of goal condition
     std::pair<torch::Tensor, torch::Tensor> computeReward(const AbstractedState &goal_)
     {
         RobotState state = robot_bridge->getRobotState();
         bool collision = robot_bridge->inCollision();
+        return computeReward(state, collision, goal);
+    }
 
+    // If we do not have the ability to turn, then velocity cannot be part of goal condition
+    std::pair<torch::Tensor, torch::Tensor> computeReward(const RobotState& state, bool collision, const AbstractedState &goal_)
+    {
         auto goal_position = goal_.position;
         auto goal_orientation = goal_.orientation;
         auto goal_velocity = goal_.velocity;
@@ -202,7 +211,7 @@ public:
             reward -= 30;
             terminated = true;
         }
-        else if (pos_error < 0.5) // && vel_error < 0.25) // commenting out vel for now cause of aformentioned issues. Also ignoring ang vel and orientation for the same reasons
+        else if (pos_error < 0.25) // && vel_error < 0.25) // commenting out vel for now cause of aformentioned issues. Also ignoring ang vel and orientation for the same reasons
         {
             reward += 50;
             terminated = true;
@@ -219,6 +228,79 @@ public:
         }
         return {torch::tensor({reward}, torch::kFloat32),
                 torch::tensor({(float)terminated}, torch::kFloat32)}; // Usually better to store 'done' as a float (0.0 or 1.0) for RL math};
+    }
+
+    torch::Tensor transformState(const RobotState &state, const AbstractedState &goal_)
+    {
+        // when designing this, note that the state is a mix of being in the global and local reference frame
+        // however, the final policy output is velocity RELATIVE to the robot
+
+        auto options = torch::TensorOptions().dtype(torch::kFloat32);
+        torch::Tensor tensor_state = torch::empty({(int64_t)state_dim + obstacle_dim}, options);
+        float *data_ptr = tensor_state.data_ptr<float>();
+        int offset = 0;
+
+        auto copy_to_ptr = [&](const auto &src)
+        {
+            std::copy(src.begin(), src.end(), data_ptr + offset);
+            offset += src.size();
+        };
+
+        // note: pos, vel, and orientation are given in global frame
+        // accel, angular vel given in local frame
+
+        copy_to_ptr(state.q);
+        copy_to_ptr(state.dq);
+
+        // local dynamics
+        copy_to_ptr(rotateVectorByQuat({0, 0, 1}, state.orientation, true));      // local_up
+        copy_to_ptr(rotateVectorByQuat(state.velocity, state.orientation, true)); // local_vel
+        copy_to_ptr(state.angular_velocity);                                      // Already local
+        copy_to_ptr(state.accel);                                                 // Already local
+
+        // relative values
+        auto &g_pos = goal_.position;
+        auto &g_quat = goal_.orientation;
+        auto &g_vel = goal_.velocity;
+        auto &g_ang_vel = goal_.angular_velocity;
+
+        std::array<float, 3> r_pos = {g_pos[0] - state.position[0], g_pos[1] - state.position[1], g_pos[2] - state.position[2]};
+        copy_to_ptr(rotateVectorByQuat(r_pos, state.orientation, true));
+
+        copy_to_ptr(quaternionDelta(g_quat, state.orientation));
+
+        std::array<float, 3> v_err = {g_vel[0] - state.velocity[0], g_vel[1] - state.velocity[1], g_vel[2] - state.velocity[2]};
+        copy_to_ptr(rotateVectorByQuat(v_err, state.orientation, true));
+
+        std::array<float, 3> local_goal_ang_vel = rotateVectorByQuat(g_ang_vel, state.orientation, true);
+
+        std::array<float, 3> ang_vel_err = {
+            local_goal_ang_vel[0] - state.angular_velocity[0],
+            local_goal_ang_vel[1] - state.angular_velocity[1],
+            local_goal_ang_vel[2] - state.angular_velocity[2]};
+
+        copy_to_ptr(ang_vel_err);
+
+        // local obstacles
+
+        std::vector<Obstacle> sorted_obs = obstacles;
+        std::sort(sorted_obs.begin(), sorted_obs.end(), [&](const Obstacle &a, const Obstacle &b)
+                  {
+        float distA = std::pow(a.position[0]-state.position[0], 2) + std::pow(a.position[1]-state.position[1], 2);
+        float distB = std::pow(b.position[0]-state.position[0], 2) + std::pow(b.position[1]-state.position[1], 2);
+        return distA < distB; });
+
+        for (int i = 0; i < sorted_obs.size(); i++)
+        {
+            const auto &obs = sorted_obs[i];
+            std::array<float, 3> r_obs = {obs.position[0] - state.position[0],
+                                          obs.position[1] - state.position[1],
+                                          obs.position[2] - state.position[2]};
+            copy_to_ptr(rotateVectorByQuat(r_obs, state.orientation, true));
+            data_ptr[offset++] = obs.size[0];
+        }
+
+        return tensor_state;
     }
 
     int state_dim;
@@ -302,79 +384,5 @@ private:
     torch::Tensor transformState(const RobotState &state)
     {
         return transformState(state, goal);
-    }
-
-    // TODO: this state representation is not able to learn too well
-    torch::Tensor transformState(const RobotState &state, const AbstractedState &goal_)
-    {
-        // when designing this, note that the state is a mix of being in the global and local reference frame
-        // however, the final policy output is velocity RELATIVE to the robot
-
-        auto options = torch::TensorOptions().dtype(torch::kFloat32);
-        torch::Tensor tensor_state = torch::empty({(int64_t)state_dim + obstacle_dim}, options);
-        float *data_ptr = tensor_state.data_ptr<float>();
-        int offset = 0;
-
-        auto copy_to_ptr = [&](const auto &src)
-        {
-            std::copy(src.begin(), src.end(), data_ptr + offset);
-            offset += src.size();
-        };
-
-        // note: pos, vel, and orientation are given in global frame
-        // accel, angular vel given in local frame
-
-        copy_to_ptr(state.q);
-        copy_to_ptr(state.dq);
-
-        // local dynamics
-        copy_to_ptr(rotateVectorByQuat({0, 0, 1}, state.orientation, true));      // local_up
-        copy_to_ptr(rotateVectorByQuat(state.velocity, state.orientation, true)); // local_vel
-        copy_to_ptr(state.angular_velocity);                                      // Already local
-        copy_to_ptr(state.accel);                                                 // Already local
-
-        // relative values
-        auto &g_pos = goal_.position;
-        auto &g_quat = goal_.orientation;
-        auto &g_vel = goal_.velocity;
-        auto &g_ang_vel = goal_.angular_velocity;
-
-        std::array<float, 3> r_pos = {g_pos[0] - state.position[0], g_pos[1] - state.position[1], g_pos[2] - state.position[2]};
-        copy_to_ptr(rotateVectorByQuat(r_pos, state.orientation, true));
-
-        copy_to_ptr(quaternionDelta(g_quat, state.orientation));
-
-        std::array<float, 3> v_err = {g_vel[0] - state.velocity[0], g_vel[1] - state.velocity[1], g_vel[2] - state.velocity[2]};
-        copy_to_ptr(rotateVectorByQuat(v_err, state.orientation, true));
-
-        std::array<float, 3> local_goal_ang_vel = rotateVectorByQuat(g_ang_vel, state.orientation, true);
-
-        std::array<float, 3> ang_vel_err = {
-            local_goal_ang_vel[0] - state.angular_velocity[0],
-            local_goal_ang_vel[1] - state.angular_velocity[1],
-            local_goal_ang_vel[2] - state.angular_velocity[2]};
-
-        copy_to_ptr(ang_vel_err);
-
-        // local obstacles
-
-        std::vector<Obstacle> sorted_obs = obstacles;
-        std::sort(sorted_obs.begin(), sorted_obs.end(), [&](const Obstacle &a, const Obstacle &b)
-                  {
-        float distA = std::pow(a.position[0]-state.position[0], 2) + std::pow(a.position[1]-state.position[1], 2);
-        float distB = std::pow(b.position[0]-state.position[0], 2) + std::pow(b.position[1]-state.position[1], 2);
-        return distA < distB; });
-
-        for (int i = 0; i < sorted_obs.size(); i++)
-        {
-            const auto &obs = sorted_obs[i];
-            std::array<float, 3> r_obs = {obs.position[0] - state.position[0],
-                                          obs.position[1] - state.position[1],
-                                          obs.position[2] - state.position[2]};
-            copy_to_ptr(rotateVectorByQuat(r_obs, state.orientation, true));
-            data_ptr[offset++] = obs.size[0];
-        }
-
-        return tensor_state;
     }
 };

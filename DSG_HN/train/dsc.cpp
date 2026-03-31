@@ -74,6 +74,7 @@ int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout wh
         else
         {
             ep_reward = _dscRollout();
+            _validateOption(); // if necessary, will validate the options
         }
 
         if (_cfg.log_interval > 0 && (episode + 1) % _cfg.log_interval == 0)
@@ -119,6 +120,46 @@ float DeepSkillChaining::execute()
 }
 
 /*** Private ***/
+void DeepSkillChaining::_validateOption()
+{
+    int validate_idx = -1;
+    for (int o = _global_option_idx + 1; o < _skills.size(); o++)
+    {
+        if (_skills[o]->getTrainingPhase() == "validation")
+        {
+            validate_idx = o;
+            break;
+        }
+    }
+
+    if (validate_idx == -1)
+        return;
+
+    int num_successes = 0;
+    for (int i = 0; i < _cfg.gestation_n; i++)
+    {
+        auto start = _skills[validate_idx]->sampleSubgoalState(true);
+        auto goal = _skills[validate_idx]->getLocalGoal();
+        _env->resetTo(start);
+        auto [_, __, ___, ____, _____] = _skills[validate_idx]->rollout(goal);
+
+        auto [reward, done] = _env->computeReward(goal);
+
+        if (_skills[validate_idx]->atTermination(goal))
+            num_successes++;
+    }
+
+    if ((float)num_successes/ (float)_cfg.gestation_n > 0.8)
+    {
+        std::cout << "Option " << validate_idx << " validated. Success Rate: " << (float)num_successes / (float)_cfg.gestation_n << std::endl;
+        _skills[validate_idx]->validateSkill(true);
+    }
+    else
+    {
+        std::cout << "Option " << validate_idx << " failed validation. Success Rate: " << (float)num_successes/ (float)_cfg.gestation_n << std::endl;
+        _skills[validate_idx]->validateSkill(false);
+    }
+}
 
 void DeepSkillChaining::_warmupRollout()
 {
@@ -174,7 +215,7 @@ std::pair<int, AbstractedState> DeepSkillChaining::_pickOption()
         }
         if (closest_option != -1)
         {
-            return {_global_option_idx, _skills[closest_option]->sampleSubgoalState()};
+            return {_global_option_idx, _skills[closest_option]->sampleSubgoalState(false)};
         }
         else
         {
@@ -195,15 +236,8 @@ float DeepSkillChaining::_dscRollout()
     while (step < _cfg.steps_per_episode && !env_done)
     {
         auto [option, goal] = _pickOption();
-        auto [steps_taken, cum_reward, done, first_state_poo, last_state_poo] = _skills[option]->rollout(goal);
+        auto [steps_taken, cum_reward, local_done, first_state_poo, last_state_poo] = _skills[option]->rollout(goal);
 
-        if (_cfg.verbose)
-            std::cout << "  [Rollout] option=" << option
-                      << " phase=" << _skills[option]->getTrainingPhase()
-                      << " steps=" << steps_taken
-                      << " reward=" << cum_reward
-                      << " local_done=" << done
-                      << " global_done=" << env_done << "\n";
         if (steps_taken == 0) // this condition occurs when we just finished training a new skill, but then find ourselves in the initiation set of that skill while trying to train the new skill
             break;
 
@@ -214,17 +248,25 @@ float DeepSkillChaining::_dscRollout()
         step += steps_taken;
         total_reward += cum_reward;
 
-        _poo.addExperience(first_state_poo, option, cum_reward, last_state_poo, done, steps_taken);
+        _poo.addExperience(first_state_poo, option, cum_reward, last_state_poo, env_done, steps_taken);
         _poo.learn();
 
+        if (_cfg.verbose)
+            std::cout << "  [Rollout] option=" << option
+                      << " phase=" << _skills[option]->getTrainingPhase()
+                      << " steps=" << steps_taken
+                      << " reward=" << cum_reward
+                      << " local_done=" << local_done
+                      << " global_done=" << env_done << "\n";
+
         // make a new skill if we have finished training the current option, but still have not reached the end goal
-        if (option == _unfinished_option_idx && _skills[_unfinished_option_idx]->getTrainingPhase() != "gestation" && !_containsGlobalStartState())
+        if (_shouldCreateNewOption())
         {
-            AbstractedState sample = _skills[_unfinished_option_idx]->sampleSubgoalState();
+            AbstractedState sample = _skills[_unfinished_option_idx]->sampleSubgoalState(false);
             float dx = sample.position[0] - _global_start.position[0];
             float dy = sample.position[1] - _global_start.position[1];
             float dz = sample.position[2] - _global_start.position[2];
-            float dist = std::sqrt(dx*dx + dy*dy + dz*dz);
+            float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
             std::cout << "\n[Option " << _unfinished_option_idx << " matured] Distance of initiation region to start: " << dist << " m\n";
             _makeSkill(false, _skills.back());
         }
@@ -232,24 +274,41 @@ float DeepSkillChaining::_dscRollout()
     return total_reward;
 }
 
-bool DeepSkillChaining::_containsGlobalStartState()
+bool DeepSkillChaining::_shouldCreateNewOption()
 {
+    bool start_in_init = false;
     for (int o = _global_option_idx + 1; o < _skills.size(); o++)
     {
-        if (_skills[o]->getTrainingPhase() != "gestation" && _skills[o]->canStart(_global_start))
-            return true;
+        if (_skills[o]->getTrainingPhase() != "mature")
+            return false;
+        if (_skills[o]->canStart(_global_start))
+            return false;
     }
-    return false;
+    return true;
+}
+
+bool DeepSkillChaining::_containsGlobalStartState()
+{
+    bool start_in_init = false;
+    for (int o = _global_option_idx + 1; o < _skills.size(); o++)
+    {
+        if (_skills[o]->getTrainingPhase() != "mature")
+            return false;
+        else if (_skills[o]->canStart(_global_start))
+            start_in_init = true;
+    }
+    return start_in_init;
 }
 
 void DeepSkillChaining::_makeSkill(bool is_global, std::shared_ptr<Skill> parent)
 {
     int id = (is_global) ? _global_option_idx : _unfinished_option_idx + 1;
+    std::shared_ptr<Skill> global_option = (is_global) ? nullptr : _skills[_global_option_idx];
     std::shared_ptr<Skill> new_skill = std::make_shared<Skill>(id, _env,
                                                                _cfg.actor_layers, _cfg.critic_layers, _device,
                                                                _cfg.lr_actor, _cfg.lr_critic, _cfg.tau, _cfg.gamma, _cfg.max_obstacles, _cfg.actor_warmup_steps,
                                                                _cfg.batch_size, _cfg.actor_update_freq, _cfg.last_k,
-                                                               _cfg.max_option_steps, _cfg.nu, parent, _cfg.gestation_n, is_global, _global_goal);
+                                                               _cfg.max_option_steps, _cfg.nu, parent, _cfg.gestation_n, is_global, _global_goal, global_option);
     if (!is_global)
         new_skill->initFromSkill(_skills[_global_option_idx]);
 
@@ -435,16 +494,16 @@ int main(int argc, char **argv)
         SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, /*render=*/false);
 
     DeepSkillChaining::Config cfg;
-    cfg.gestation_n = 100; // number of total successes that should be collected during gestation phase. Perhaps use a percentage for the option being currently learnt?
+    cfg.gestation_n = 20; // number of total successes that should be collected during gestation phase. Perhaps use a percentage for the option being currently learnt?
     cfg.last_k = 10;
     cfg.max_option_steps = 20; // each option should be meaningful enough. 5Hz and 20 steps means each option can run for up to 4 seconds
     cfg.refinement_eps = 20;
     cfg.nu = 0.1;
     cfg.max_skills = 6;
-    cfg.actor_warmup_steps = 0; // gonna keep at zero for testing purposes as well
+    cfg.actor_warmup_steps = 0;  // gonna keep at zero for testing purposes as well
     cfg.warmup_episodes = 200;   // keep at zero since I am assuming we have done pretraining
     cfg.render_training = false; // set to true to watch rollouts during training (slower)
-    cfg.verbose = true;         // set to true for per-rollout console output
+    cfg.verbose = true;          // set to true for per-rollout console output
     cfg.log_interval = 50;       // print skill status table every N episodes
 
     AbstractedState global_goal = {{3, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};

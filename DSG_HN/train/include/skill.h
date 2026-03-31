@@ -16,11 +16,20 @@
 #include <string>
 #include <functional>
 #include <math.h>
+#include <torch/torch.h>
 
 // When false, linear and angular velocity dimensions are zeroed in the classifier feature vector
 // and stripped from sampled subgoal states. Set to true to re-enable full 13D representation.
 // Safe to flip: only affects _classifierVec() and sampleSubgoalState(); no structural changes needed.
 static constexpr bool kUseVelocityInClassifier = false;
+
+struct Transition
+{
+    RobotState state;
+    torch::Tensor action;
+    RobotState next_state;
+    bool in_collision;
+};
 
 struct GestationRecord
 {
@@ -38,11 +47,13 @@ public:
           float lr_actor, float lr_critic,
           float tau, float gamma, int max_obstacles, int actor_warmup_steps,
           int batch_size, int actor_update_freq, int k, int max_steps, double nu,
-          std::shared_ptr<Skill> parent, int gestation_period, bool is_global, AbstractedState global_goal);
+          std::shared_ptr<Skill> parent, int gestation_period, bool is_global, AbstractedState global_goal,
+          std::shared_ptr<Skill> global_option);
 
     AbstractedState getLocalGoal();
 
     std::tuple<int, float, bool, torch::Tensor, torch::Tensor> rollout(const AbstractedState &goal);
+    void validateSkill(bool success); // mark if skill is validated
 
     bool canStart(const RobotState &state) const;
     bool canStart(const AbstractedState &state) const;
@@ -58,7 +69,7 @@ public:
     void initFromSkill(std::shared_ptr<Skill> other);
 
     // Sample a random gestation record as a subgoal for the preceding skill.
-    AbstractedState sampleSubgoalState() const;
+    AbstractedState sampleSubgoalState(bool uniform) const;
     std::string getTrainingPhase() const;
     bool atTermination(const AbstractedState &goal) const;
 
@@ -80,14 +91,17 @@ public:
 private:
     std::shared_ptr<TrainEnvironment> _env;
     std::shared_ptr<Skill> _parent;
+    std::shared_ptr<Skill> _global_option;
+
     bool _is_global;
     TD3Agent _agent;
-    InitiationSetClassifier _classifier;           // optimistic boundary: loose OneClassSVM or balanced SVC
+    InitiationSetClassifier _classifier;             // optimistic boundary: loose OneClassSVM or balanced SVC
     InitiationSetClassifier _pessimistic_classifier; // tight boundary: OneClassSVM(nu) or OneClassSVM re-fit on SVC-positives
     std::vector<GestationRecord> _positive_gestation_records;
     std::vector<std::vector<float>> _gestation_vecs;
     std::vector<int> _gestation_labels;
     bool _has_negative_gestation = false;
+    bool _validated = false;
 
     AbstractedState _global_goal;
     mutable std::mt19937 _rng;
@@ -105,10 +119,11 @@ private:
     std::vector<float> _classifierVec(const AbstractedState &state) const;
 
     // Unified termination check for gestation and refinement rollouts.
-    bool _atLocalGoal(const AbstractedState& goal) const;
+    bool _atLocalGoal(const AbstractedState &goal) const;
 
     void _fitClassifier(const std::vector<GestationRecord> &states, bool term_success);
 
     float _euclideanDistance(const std::array<float, 3> &a, const std::array<float, 3> &b, bool sqrt) const;
     float _euclideanDistance(const std::array<float, 4> &a, const std::array<float, 4> &b, bool sqrt) const;
+    void _herUpdate(const std::vector<Transition>& trajectory);
 };
