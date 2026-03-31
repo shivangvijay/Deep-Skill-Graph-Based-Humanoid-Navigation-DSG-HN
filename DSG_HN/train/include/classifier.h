@@ -41,9 +41,10 @@ public:
     }
 
     // Train from collected states. labels: +1 = in set, -1 = not in set
+    // balance_classes: weight each class inversely by frequency — matches Python's SVC(class_weight='balanced')
     void train(const std::vector<std::vector<float>> &states,
                const std::vector<int> &labels,
-               double C = 1.0, double gamma = -1.0)
+               double C = 1.0, double gamma = -1.0, bool balance_classes = false)
     {
         if (states.empty())
             throw std::runtime_error("InitiationSetClassifier: no training data");
@@ -57,6 +58,26 @@ public:
         param.cache_size = 256;
         param.probability = 0;
         param.nr_weight = 0;
+
+        // Class balancing: weight each class inversely by its frequency
+        // Matches Python's SVC(class_weight='balanced')
+        std::vector<int> weight_labels;
+        std::vector<double> weights;
+        if (balance_classes)
+        {
+            int pos_count = std::count(labels.begin(), labels.end(), 1);
+            int neg_count = std::count(labels.begin(), labels.end(), -1);
+            int total = pos_count + neg_count;
+            if (pos_count > 0 && neg_count > 0)
+            {
+                weight_labels = {1, -1};
+                weights = {(double)total / (2.0 * pos_count),
+                           (double)total / (2.0 * neg_count)};
+                param.nr_weight = 2;
+                param.weight_label = weight_labels.data();
+                param.weight = weights.data();
+            }
+        }
 
         _make_problem(states, labels);
 
