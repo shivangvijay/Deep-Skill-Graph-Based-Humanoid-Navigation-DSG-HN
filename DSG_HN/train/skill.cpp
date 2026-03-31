@@ -1,4 +1,5 @@
 #include "skill.h"
+#include <fstream>
 
 Skill::Skill(
     int id,
@@ -50,7 +51,9 @@ bool Skill::atTermination(const AbstractedState& goal) const
     else // return true if the current state is within the parents initiation set
     {
         // TODO: think about this some more, goal of second term is to not include as a success if it is in collisions
-        return _parent->canStart(_env->getAbstractedState()) && reward.data_ptr<float>()[0] > -5;
+        // Use pessimistic boundary for termination — tighter, matches Python's is_term_true()
+        // which calls parent.pessimistic_is_init_true()
+        return _parent->canStartPessimistic(_env->getAbstractedState()) && reward.data_ptr<float>()[0] > -5;
     }
 }
 
@@ -116,14 +119,30 @@ bool Skill::canStart(const RobotState &state) const
 {
     if (getTrainingPhase() == "gestation")
         return true;
-    return _classifier.classify(_classifierVec(state));
+    auto vec = _classifierVec(state);
+    return _classifier.classify(vec) || _pessimistic_classifier.classify(vec);
 }
 
 bool Skill::canStart(const AbstractedState &state) const
 {
     if (getTrainingPhase() == "gestation")
         return true;
-    return _classifier.classify(_classifierVec(state));
+    auto vec = _classifierVec(state);
+    return _classifier.classify(vec) || _pessimistic_classifier.classify(vec);
+}
+
+bool Skill::canStartPessimistic(const RobotState &state) const
+{
+    if (getTrainingPhase() == "gestation")
+        return true;
+    return _pessimistic_classifier.classify(_classifierVec(state));
+}
+
+bool Skill::canStartPessimistic(const AbstractedState &state) const
+{
+    if (getTrainingPhase() == "gestation")
+        return true;
+    return _pessimistic_classifier.classify(_classifierVec(state));
 }
 
 void Skill::initFromSkill(std::shared_ptr<Skill> other)
@@ -146,8 +165,37 @@ void Skill::initFromSkill(std::shared_ptr<Skill> other)
 // TODO: maybe want to improve the sampling logic for greater training efficiency
 AbstractedState Skill::sampleSubgoalState() const
 {
+    // Prefer states inside the pessimistic classifier (confident region) as subgoals.
+    // Matches Python's sample_from_initiation_region_fast_and_epsilon which uses pessimistic check.
+    // Falls back to any positive record if pessimistic classifier has no confirmed samples.
+    if (_pessimistic_classifier.trained())
+    {
+        std::vector<size_t> pessimistic_indices;
+        for (size_t i = 0; i < _positive_gestation_records.size(); i++)
+            if (_pessimistic_classifier.classify(_positive_gestation_records[i].classifier_vec))
+                pessimistic_indices.push_back(i);
+
+        if (!pessimistic_indices.empty())
+        {
+            std::uniform_int_distribution<size_t> dist(0, pessimistic_indices.size() - 1);
+            AbstractedState subgoal = _positive_gestation_records[pessimistic_indices[dist(_rng)]].state;
+            if (!kUseVelocityInClassifier)
+            {
+                subgoal.velocity = {0.0f, 0.0f, 0.0f};
+                subgoal.angular_velocity = {0.0f, 0.0f, 0.0f};
+            }
+            return subgoal;
+        }
+    }
+    // fallback: sample uniformly from all positive records
     std::uniform_int_distribution<size_t> dist(0, _positive_gestation_records.size() - 1);
-    return _positive_gestation_records[dist(_rng)].state;
+    AbstractedState subgoal = _positive_gestation_records[dist(_rng)].state;
+    if (!kUseVelocityInClassifier)
+    {
+        subgoal.velocity = {0.0f, 0.0f, 0.0f};
+        subgoal.angular_velocity = {0.0f, 0.0f, 0.0f};
+    }
+    return subgoal;
 }
 
 void Skill::save(const std::string &actor_path,
@@ -159,6 +207,8 @@ void Skill::save(const std::string &actor_path,
     torch::save(_agent.critic_local_1, critic1_path);
     torch::save(_agent.critic_local_2, critic2_path);
     _classifier.save(classifier_path);
+    if (_pessimistic_classifier.trained())
+        _pessimistic_classifier.save(classifier_path + "_pessimistic");
 }
 
 void Skill::load(const std::string &actor_path,
@@ -170,6 +220,10 @@ void Skill::load(const std::string &actor_path,
     torch::load(_agent.critic_local_1, critic1_path);
     torch::load(_agent.critic_local_2, critic2_path);
     _classifier.load(classifier_path);
+    // load pessimistic only if file exists (graceful for models saved before this change)
+    std::ifstream f(classifier_path + "_pessimistic");
+    if (f.good())
+        _pessimistic_classifier.load(classifier_path + "_pessimistic");
 }
 
 TD3Agent &Skill::agent()
@@ -186,6 +240,7 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
 
     if (term_success)
     {
+        // if successful, add the last k states to the positive set.
         for (int t = visited.size() - 1; t >= std::max(0, (int)visited.size() - _k); t--)
         {
             _positive_gestation_records.push_back(visited[t]);
@@ -216,9 +271,41 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
         // }
     }
 
-    if ((_positive_gestation_records.size() > 0 && _has_negative_gestation) || _classifier.trained())
+    // Always attempt to fit after every rollout (matches Python: "Always be refining")
+    // Phase 1 fires as soon as first success; Phase 2 fires once first failure is collected.
+    if (_positive_gestation_records.empty())
+        return;
+
+    if (!_has_negative_gestation)
     {
-        _classifier.train(_gestation_vecs, _gestation_labels);
+        // Phase 1: only positive data available — use one-class SVMs on positive vecs only.
+        // Matches Python's train_one_class_svm(): pessimistic=nu, optimistic=nu/10.
+        std::vector<std::vector<float>> pos_vecs;
+        for (size_t i = 0; i < _gestation_vecs.size(); i++)
+            if (_gestation_labels[i] == 1)
+                pos_vecs.push_back(_gestation_vecs[i]);
+
+        if (!pos_vecs.empty())
+        {
+            _pessimistic_classifier.trainOneClass(pos_vecs, _nu);       // tight
+            _classifier.trainOneClass(pos_vecs, _nu / 10.0);            // loose / optimistic
+        }
+    }
+    else
+    {
+        // Phase 2: binary SVC as optimistic, then one-class re-fit on SVC-positive predictions as pessimistic.
+        // Matches Python's train_two_class_classifier(): SVC balanced → pessimistic OneClassSVM on SVC-positives.
+        _classifier.train(_gestation_vecs, _gestation_labels,
+                          /*C=*/1.0, /*gamma=*/-1.0, /*balance_classes=*/true);
+
+        // Re-fit pessimistic on only the states the optimistic SVC predicts as positive
+        std::vector<std::vector<float>> svc_positive_vecs;
+        for (const auto &vec : _gestation_vecs)
+            if (_classifier.classify(vec))
+                svc_positive_vecs.push_back(vec);
+
+        if (!svc_positive_vecs.empty())
+            _pessimistic_classifier.trainOneClass(svc_positive_vecs, _nu);
     }
 }
 
@@ -247,10 +334,10 @@ std::vector<float> Skill::_classifierVec(const AbstractedState &state) const
     out.push_back(state.position[0] / scaling_factors.position[0]);
     out.push_back(state.position[1] / scaling_factors.position[1]);
     out.push_back(state.position[2] / scaling_factors.position[2]);
-    // global vel
-    out.push_back(state.velocity[0] / scaling_factors.velocity[0]);
-    out.push_back(state.velocity[1] / scaling_factors.velocity[1]);
-    out.push_back(state.velocity[2] / scaling_factors.velocity[2]);
+    // global vel — zeroed when kUseVelocityInClassifier is false (environment spawns with zero velocity)
+    out.push_back(kUseVelocityInClassifier ? state.velocity[0] / scaling_factors.velocity[0] : 0.0f);
+    out.push_back(kUseVelocityInClassifier ? state.velocity[1] / scaling_factors.velocity[1] : 0.0f);
+    out.push_back(kUseVelocityInClassifier ? state.velocity[2] / scaling_factors.velocity[2] : 0.0f);
     // orientation
     if (state.orientation[0] < 0)
     {
@@ -266,10 +353,10 @@ std::vector<float> Skill::_classifierVec(const AbstractedState &state) const
         out.push_back(state.orientation[2] / scaling_factors.orientation[2]);
         out.push_back(state.orientation[3] / scaling_factors.orientation[3]);
     }
-    // ang vel
-    out.push_back(state.angular_velocity[0] / scaling_factors.angular_velocity[0]);
-    out.push_back(state.angular_velocity[1] / scaling_factors.angular_velocity[1]);
-    out.push_back(state.angular_velocity[2] / scaling_factors.angular_velocity[2]);
+    // ang vel — zeroed when kUseVelocityInClassifier is false
+    out.push_back(kUseVelocityInClassifier ? state.angular_velocity[0] / scaling_factors.angular_velocity[0] : 0.0f);
+    out.push_back(kUseVelocityInClassifier ? state.angular_velocity[1] / scaling_factors.angular_velocity[1] : 0.0f);
+    out.push_back(kUseVelocityInClassifier ? state.angular_velocity[2] / scaling_factors.angular_velocity[2] : 0.0f);
     return out;
 }
 
@@ -282,10 +369,10 @@ std::vector<float> Skill::_classifierVec(const RobotState &state) const
     out.push_back(state.position[0] / scaling_factors.position[0]);
     out.push_back(state.position[1] / scaling_factors.position[1]);
     out.push_back(state.position[2] / scaling_factors.position[2]);
-    // global vel
-    out.push_back(state.velocity[0] / scaling_factors.velocity[0]);
-    out.push_back(state.velocity[1] / scaling_factors.velocity[1]);
-    out.push_back(state.velocity[2] / scaling_factors.velocity[2]);
+    // global vel — zeroed when kUseVelocityInClassifier is false (environment spawns with zero velocity)
+    out.push_back(kUseVelocityInClassifier ? state.velocity[0] / scaling_factors.velocity[0] : 0.0f);
+    out.push_back(kUseVelocityInClassifier ? state.velocity[1] / scaling_factors.velocity[1] : 0.0f);
+    out.push_back(kUseVelocityInClassifier ? state.velocity[2] / scaling_factors.velocity[2] : 0.0f);
     // orientation
     if (state.orientation[0] < 0)
     {
@@ -301,10 +388,10 @@ std::vector<float> Skill::_classifierVec(const RobotState &state) const
         out.push_back(state.orientation[2] / scaling_factors.orientation[2]);
         out.push_back(state.orientation[3] / scaling_factors.orientation[3]);
     }
-    // ang vel
-    out.push_back(state.angular_velocity[0] / scaling_factors.angular_velocity[0]);
-    out.push_back(state.angular_velocity[1] / scaling_factors.angular_velocity[1]);
-    out.push_back(state.angular_velocity[2] / scaling_factors.angular_velocity[2]);
+    // ang vel — zeroed when kUseVelocityInClassifier is false
+    out.push_back(kUseVelocityInClassifier ? state.angular_velocity[0] / scaling_factors.angular_velocity[0] : 0.0f);
+    out.push_back(kUseVelocityInClassifier ? state.angular_velocity[1] / scaling_factors.angular_velocity[1] : 0.0f);
+    out.push_back(kUseVelocityInClassifier ? state.angular_velocity[2] / scaling_factors.angular_velocity[2] : 0.0f);
     return out;
 }
 

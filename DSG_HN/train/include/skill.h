@@ -17,6 +17,11 @@
 #include <functional>
 #include <math.h>
 
+// When false, linear and angular velocity dimensions are zeroed in the classifier feature vector
+// and stripped from sampled subgoal states. Set to true to re-enable full 13D representation.
+// Safe to flip: only affects _classifierVec() and sampleSubgoalState(); no structural changes needed.
+static constexpr bool kUseVelocityInClassifier = false;
+
 struct GestationRecord
 {
     std::vector<float> classifier_vec; // 13-dim: [pos(3), vel(3), quat(4), ang_vel(3)]
@@ -41,6 +46,11 @@ public:
 
     bool canStart(const RobotState &state) const;
     bool canStart(const AbstractedState &state) const;
+
+    // Pessimistic initiation check — tighter boundary used for termination and subgoal sampling.
+    // Returns true during gestation (mirrors Python's pessimistic_is_init_true).
+    bool canStartPessimistic(const RobotState &state) const;
+    bool canStartPessimistic(const AbstractedState &state) const;
 
     float distanceToState(const AbstractedState &state) const;
 
@@ -69,7 +79,8 @@ private:
     std::shared_ptr<Skill> _parent;
     bool _is_global;
     TD3Agent _agent;
-    InitiationSetClassifier _classifier;
+    InitiationSetClassifier _classifier;           // optimistic boundary: loose OneClassSVM or balanced SVC
+    InitiationSetClassifier _pessimistic_classifier; // tight boundary: OneClassSVM(nu) or OneClassSVM re-fit on SVC-positives
     std::vector<GestationRecord> _positive_gestation_records;
     std::vector<std::vector<float>> _gestation_vecs;
     std::vector<int> _gestation_labels;
