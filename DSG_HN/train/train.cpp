@@ -33,6 +33,7 @@
 #define MAX_OBSTACLES 8
 #define PRETRAIN false
 #define ACTOR_WARMUP_STEPS 10000
+#define TRAIN_WITH_VELOCITY true  // false = position-only goals (velocity zeroed, no velocity reward)
 
 /*
 TODO: MAKE SURE IT CAN LEARN TO AVOID OBSTACLES LIKE BEFORE (RECREATE PRIOR SUCCESS)
@@ -108,9 +109,15 @@ int main(int argc, char **argv)
 
     for (int epoch = 0; epoch < num_epochs; epoch++)
     {
-        // Velocity curriculum: position-only until vel_curriculum_start_epoch, then linear ramp to 1
-        float vel_progress = std::max(0.0f, std::min(1.0f,
-            (float)(epoch - vel_curriculum_start_epoch) / (float)(num_epochs - vel_curriculum_start_epoch)));
+        // Velocity curriculum (only active when TRAIN_WITH_VELOCITY is true)
+        float vel_progress = 0.0f;
+        if (TRAIN_WITH_VELOCITY)
+        {
+            vel_progress = std::max(0.0f, std::min(1.0f,
+                (float)(epoch - vel_curriculum_start_epoch) / (float)(num_epochs - vel_curriculum_start_epoch)));
+            if (epoch == vel_curriculum_start_epoch)
+                best_reward = -std::numeric_limits<float>::infinity(); // reset baseline when velocity objective activates
+        }
         train_env->velocity_weight = vel_progress;
 
         float total_reward = 0.0f;
@@ -167,9 +174,9 @@ int main(int argc, char **argv)
             best_reward = total_reward / (num_steps);
             agent.hardCopy();
             std::cout << "New best reward! Saving model." << std::endl;
-            torch::save(agent.actor_local, "best_actor.pt");
-            torch::save(agent.critic_local_1, "best_critic_1.pt");
-            torch::save(agent.critic_local_2, "best_critic_2.pt");
+            torch::save(agent.actor_local, "velocity_capable/best_actor.pt");
+            torch::save(agent.critic_local_1, "velocity_capable/best_critic_1.pt");
+            torch::save(agent.critic_local_2, "velocity_capable/best_critic_2.pt");
         }
 
         agent.total_actor_loss = 0.0;
