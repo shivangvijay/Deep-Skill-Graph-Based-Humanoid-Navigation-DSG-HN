@@ -24,6 +24,13 @@ DeepSkillChaining::DeepSkillChaining(
       _env(std::make_shared<TrainEnvironment>(_robot_bridge, cfg.steps_per_episode)),
       _poo(_env, _cfg.poo_layers, device, _cfg.lr_poo, _cfg.tau, _cfg.gamma, _cfg.batch_size), _rng(std::random_device{}())
 {
+    // Propagate velocity reward config to environment
+    _env->vel_success_threshold     = _cfg.vel_success_threshold;
+    _env->ang_vel_success_threshold = _cfg.ang_vel_success_threshold;
+    _env->vel_shaping_radius        = _cfg.vel_shaping_radius;
+    _env->vel_penalty_scale         = _cfg.vel_penalty_scale;
+    // velocity_weight is updated each episode by the curriculum ramp
+
     _loadGlobalOption(pretrain_actor_path, pretrain_critic1_path, pretrain_critic2_path);
     _unfinished_option_idx = _global_option_idx; // assigning global option index to unfinished option index, as this is the index of the next option we will train, and we have only trained the global option at this point
 
@@ -43,6 +50,17 @@ int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout wh
 
     for (int episode = 0; episode < max_episodes; episode++)
     {
+        // Velocity curriculum: linearly ramp velocity_weight from 0 to 1
+        {
+            int ramp_end = (_cfg.vel_curriculum_end_ep < 0) ? max_episodes : _cfg.vel_curriculum_end_ep;
+            float denom = (float)(ramp_end - _cfg.vel_curriculum_start_ep);
+            float progress = (denom > 0.0f)
+                ? std::max(0.0f, std::min(1.0f, (float)(episode - _cfg.vel_curriculum_start_ep) / denom))
+                : 1.0f;
+            _cfg.velocity_weight = progress;
+            _env->velocity_weight = progress;
+        }
+
         // TODO: more intelligent sampling. The big thing is not just randomly sampling, but perhaps sampling in the
         // area of the previously learned skill so that it has a bit of an easier time learning
         std::uniform_real_distribution<float> dis(0.0f, 1.0f);

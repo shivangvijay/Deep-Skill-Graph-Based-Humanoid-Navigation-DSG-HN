@@ -37,24 +37,31 @@ public:
     torch::Tensor reset() // if no arguments passed, just reset to random position. If goal fixed, use that, else sample randomly
     {
         // pick random valid goal position
+        // Clamp to policy command limits: scaled_action = raw * scaling + shift → range = [shift-scaling, shift+scaling]
+        auto clamp_f = [](float v, float lo, float hi) { return std::max(lo, std::min(hi, v)); };
+        float vx_min = action_shift_factors[0] - action_scaling_factors[0]; // 0.25 - 0.75 = -0.5
+        float vx_max = action_shift_factors[0] + action_scaling_factors[0]; // 0.25 + 0.75 = 1.0
+        float vy_lim = action_scaling_factors[1];                            // 0.3
+        float yaw_lim = action_scaling_factors[2];                           // 1.0
+
         if (!_goal_fixed)
         {
             goal = robot_bridge->generateRandomValidConfiguration();
-            goal.velocity[0] = 0;
-            goal.velocity[1] = 0;
-            goal.velocity[2] = 0;
-            goal.angular_velocity[0] = 0;
-            goal.angular_velocity[1] = 0;
-            goal.angular_velocity[2] = 0;
+            goal.velocity[0]         = clamp_f(goal.velocity[0], vx_min, vx_max);
+            goal.velocity[1]         = clamp_f(goal.velocity[1], -vy_lim, vy_lim);
+            goal.velocity[2]         = 0.0f;
+            goal.angular_velocity[0] = 0.0f;   // roll — near-zero during walking
+            goal.angular_velocity[1] = 0.0f;   // pitch — near-zero during walking
+            goal.angular_velocity[2] = clamp_f(goal.angular_velocity[2], -yaw_lim, yaw_lim); // yaw only
         }
 
         auto start = robot_bridge->generateRandomValidConfiguration();
-        start.velocity[0] = 0;
-        start.velocity[1] = 0;
-        start.velocity[2] = 0;
-        start.angular_velocity[0] = 0;
-        start.angular_velocity[1] = 0;
-        start.angular_velocity[2] = 0;
+        start.velocity[0]         = clamp_f(start.velocity[0], vx_min, vx_max);
+        start.velocity[1]         = clamp_f(start.velocity[1], -vy_lim, vy_lim);
+        start.velocity[2]         = 0.0f;
+        start.angular_velocity[0] = 0.0f;   // roll — near-zero during walking
+        start.angular_velocity[1] = 0.0f;   // pitch — near-zero during walking
+        start.angular_velocity[2] = clamp_f(start.angular_velocity[2], -yaw_lim, yaw_lim); // yaw only
         robot_bridge->resetRobot(start.position, start.orientation, start.velocity, start.angular_velocity);
 
         obstacles = robot_bridge->getObstacles();
@@ -190,44 +197,63 @@ public:
     // If we do not have the ability to turn, then velocity cannot be part of goal condition
     std::pair<torch::Tensor, torch::Tensor> computeReward(const RobotState& state, bool collision, const AbstractedState &goal_)
     {
-        auto goal_position = goal_.position;
-        auto goal_orientation = goal_.orientation;
-        auto goal_velocity = goal_.velocity;
+        auto goal_position      = goal_.position;
+        auto goal_orientation   = goal_.orientation;
+        auto goal_velocity      = goal_.velocity;
         auto goal_angular_velocity = goal_.angular_velocity;
-        // auto &[goal_position, goal_orientation, goal_velocity, goal_angular_velocity] = goal_;
 
-        float pos_error = std::sqrt((state.position[0] - goal_position[0]) * (state.position[0] - goal_position[0]) +
-                                    (state.position[1] - goal_position[1]) * (state.position[1] - goal_position[1]));
+        float pos_error = std::sqrt(
+            std::pow(state.position[0] - goal_position[0], 2) +
+            std::pow(state.position[1] - goal_position[1], 2));
 
-        float vel_error = std::sqrt((state.velocity[0] - goal_velocity[0]) * (state.velocity[0] - goal_velocity[0]) +
-                                    (state.velocity[1] - goal_velocity[1]) * (state.velocity[1] - goal_velocity[1]));
+        // XY linear velocity error
+        float vel_error = std::sqrt(
+            std::pow(state.velocity[0] - goal_velocity[0], 2) +
+            std::pow(state.velocity[1] - goal_velocity[1], 2));
 
-        // std::cout << " " << vel_error << std::endl;
+        // Yaw rate only — roll/pitch are near-zero during locomotion and not meaningful targets
+        float ang_vel_error = std::abs(state.angular_velocity[2] - goal_angular_velocity[2]);
 
         float reward = 0;
         bool terminated = false;
+
         if (collision)
         {
             reward -= 30;
             terminated = true;
         }
-        else if (pos_error < 0.25) // && vel_error < 0.25) // commenting out vel for now cause of aformentioned issues. Also ignoring ang vel and orientation for the same reasons
-        {
-            reward += 50;
-            terminated = true;
-        }
         else
         {
-            reward -= (pos_error / 50.0); // + (vel_error / 10.0);
+            // Success: position must match; velocity must also match when weight > 0
+            bool pos_ok = pos_error < 0.25f;
+            bool vel_ok = velocity_weight < 1e-3f ||
+                          (vel_error < vel_success_threshold &&
+                           ang_vel_error < ang_vel_success_threshold);
+
+            if (pos_ok && vel_ok)
+            {
+                reward += 50;
+                terminated = true;
+            }
+            else
+            {
+                // Dense position shaping (always active)
+                reward -= (pos_error / 50.0f);
+
+                // Velocity shaping: only active when close to target AND weight > 0
+                if (velocity_weight > 1e-3f && pos_error < vel_shaping_radius)
+                {
+                    reward -= velocity_weight * (vel_error / vel_penalty_scale);
+                    reward -= velocity_weight * (ang_vel_error / vel_penalty_scale);
+                }
+            }
         }
-        if (current_step >= max_steps || pos_error > 20) //||
-                                                         // state.position[0] > robot_bridge->x_max || state.position[0] < robot_bridge->x_min ||
-                                                         // state.position[1] > robot_bridge->y_max || state.position[1] < robot_bridge->y_min)
-        {
+
+        if (current_step >= max_steps || pos_error > 20)
             terminated = true;
-        }
+
         return {torch::tensor({reward}, torch::kFloat32),
-                torch::tensor({(float)terminated}, torch::kFloat32)}; // Usually better to store 'done' as a float (0.0 or 1.0) for RL math};
+                torch::tensor({(float)terminated}, torch::kFloat32)};
     }
 
     torch::Tensor transformState(const RobotState &state, const AbstractedState &goal_)
@@ -309,6 +335,13 @@ public:
     std::vector<float> action_scaling_factors = {0.75, 0.3, 1.0};
     std::vector<float> action_shift_factors = {0.25, 0.0, 0.0};
     AbstractedState env_scaling_factors;
+
+    // Velocity reward config — set by DSC each episode via curriculum ramp
+    float velocity_weight           = 0.0f;
+    float vel_success_threshold     = 0.4f;
+    float ang_vel_success_threshold = 0.4f;
+    float vel_shaping_radius        = 1.0f;
+    float vel_penalty_scale         = 20.0f;
 
 private:
     std::shared_ptr<RobotBridgeTrain> robot_bridge;

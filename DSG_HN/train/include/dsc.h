@@ -37,7 +37,7 @@ public:
         int gestation_n = 10;             // successes required out of 2N validation trials
         int last_k = 10;                  // states collected per successful validation episode
         int refinement_eps = 20;          // eval rollouts from SVM boundary for Phase 3
-        double nu = 0.1;                  // one-class SVM outlier fraction
+        double nu = 0.1; // One-class SVM outlier fraction. If classifier is too tight after adding velocity, try 0.15
         int max_option_steps = 20;        // how long an option can execute for
         int max_skills = 6;
         float start_noise_radius = 2.0f;
@@ -59,6 +59,17 @@ public:
         bool render_training = false; // if true, startRender() is called before the training loop (slows training)
         bool verbose = false;         // per-rollout logging inside each episode
         int log_interval = 50;        // print episode summary + skill status table every N episodes
+
+        // Velocity curriculum — velocity_weight is ramped automatically each episode
+        float velocity_weight            = 0.0f;  // managed automatically by curriculum; do not set manually
+        int   vel_curriculum_start_ep    = 0;     // episode at which velocity_weight starts ramping from 0
+        int   vel_curriculum_end_ep      = -1;    // episode at which weight reaches 1.0 (-1 = max_episodes)
+
+        // Reward thresholds — tune from here
+        float vel_success_threshold      = 0.4f;  // ~half max vx (1.0 m/s); robot must roughly match approach speed
+        float ang_vel_success_threshold  = 0.4f;  // ~40% of max yaw (1.0 rad/s); loose enough to not over-constrain
+        float vel_shaping_radius         = 1.0f;  // 4x success radius (0.25m); velocity penalty only in final approach
+        float vel_penalty_scale          = 20.0f; // keeps vel penalty smaller than position penalty (/50.0) at equal errors
     };
 
     DeepSkillChaining(std::shared_ptr<RobotBridgeTrain> robot_bridge,

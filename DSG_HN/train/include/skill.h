@@ -21,7 +21,7 @@
 // When false, linear and angular velocity dimensions are zeroed in the classifier feature vector
 // and stripped from sampled subgoal states. Set to true to re-enable full 13D representation.
 // Safe to flip: only affects _classifierVec() and sampleSubgoalState(); no structural changes needed.
-static constexpr bool kUseVelocityInClassifier = false;
+static constexpr bool kUseVelocityInClassifier = true;
 
 struct Transition
 {
@@ -70,6 +70,7 @@ public:
 
     // Sample a random gestation record as a subgoal for the preceding skill.
     AbstractedState sampleSubgoalState(bool uniform) const;
+
     std::string getTrainingPhase() const;
     bool atTermination(const AbstractedState &goal) const;
 
