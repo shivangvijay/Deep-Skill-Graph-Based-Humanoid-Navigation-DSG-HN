@@ -28,8 +28,8 @@ public:
 
         std::array<float, 3> pos_scales = {(robot_bridge->x_max - robot_bridge->x_min) / 2, (robot_bridge->y_max - robot_bridge->y_min) / 2, 0.5}; // some of these may need to be tuned later
         std::array<float, 4> orientation_scales = {1, 1, 1, 1};
-        std::array<float, 3> vel_scales = {action_limits[0], action_limits[1], 1};
-        std::array<float, 3> ang_vel_scales = {action_limits[2], action_limits[2], action_limits[2]};
+        std::array<float, 3> vel_scales = {action_scaling_factors[0], action_scaling_factors[1], 1};
+        std::array<float, 3> ang_vel_scales = {action_scaling_factors[2], action_scaling_factors[2], action_scaling_factors[2]};
 
         env_scaling_factors = {pos_scales, orientation_scales, vel_scales, ang_vel_scales}; // these contain the scaling factor for each dim in teh env
     }
@@ -306,7 +306,8 @@ public:
     int state_dim;
     int obstacle_dim;
     int action_dim = 3;
-    std::vector<float> action_limits = {0.5, 0.3, 0.2};
+    std::vector<float> action_scaling_factors = {0.75, 0.3, 1.0};
+    std::vector<float> action_shift_factors = {0.25, 0.0, 0.0};
     AbstractedState env_scaling_factors;
 
 private:

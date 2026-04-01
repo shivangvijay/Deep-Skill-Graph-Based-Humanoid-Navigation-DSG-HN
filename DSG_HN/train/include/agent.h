@@ -49,7 +49,8 @@ private:
     torch::optim::Adam critic_optimizer_2;
 
     torch::Device device;
-    torch::Tensor action_limits;
+    torch::Tensor action_scaling_factors;
+    torch::Tensor action_shift_factors;
 
     float tau;
     float gamma;

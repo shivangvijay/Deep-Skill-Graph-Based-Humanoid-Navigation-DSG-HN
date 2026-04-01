@@ -17,8 +17,8 @@
 #define VX_MIN -0.5f
 #define VY_MAX 0.3f
 #define VY_MIN -0.3f
-#define YAW_MAX 0.2f
-#define YAW_MIN -0.2f
+#define YAW_MAX 1.0f
+#define YAW_MIN -1.0f
 
 // Joystick device
 #define JS_DEVICE "/dev/input/js0"

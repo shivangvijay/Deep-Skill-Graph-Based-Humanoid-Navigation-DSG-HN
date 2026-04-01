@@ -25,7 +25,8 @@ TD3Agent::TD3Agent(
                                critic_optimizer_2(critic_local_2->parameters(), torch::optim::AdamOptions(lr_critic)),
                                tau(tau), gamma(gamma), batch_size(batch_size), actor_update_freq(actor_update_freq), lr_actor(lr_actor), lr_critic(lr_critic)
 {
-    action_limits = torch::tensor(env->action_limits);
+    action_scaling_factors = torch::tensor(env->action_scaling_factors);
+    action_shift_factors = torch::tensor(env->action_shift_factors);
     hardCopy();
 }
 
@@ -45,8 +46,8 @@ std::pair<torch::Tensor, torch::Tensor> TD3Agent::getAction(torch::Tensor state,
     if (!eval && learn_step < actor_warmup_steps)
     {
         // Generates values between -1.0 and 1.0
-        torch::Tensor random_action = torch::rand({action_limits.size(0)}) * 2.0 - 1.0;
-        return {random_action * action_limits, random_action};
+        torch::Tensor random_action = torch::rand({action_scaling_factors.size(0)}) * 2.0 - 1.0;
+        return {random_action * action_scaling_factors + action_shift_factors, random_action};
     }
 
     actor_local->eval();
@@ -57,7 +58,7 @@ std::pair<torch::Tensor, torch::Tensor> TD3Agent::getAction(torch::Tensor state,
         auto noise = (torch::randn_like(action) * 0.1).clamp(-0.2, 0.2); // Add some noise for exploration. Need to respect action limits
         action = torch::clamp(action + noise, -1.0, 1.0);
     }
-    torch::Tensor scaled_action = action * action_limits; // Scale action to environment limits
+    torch::Tensor scaled_action = action * action_scaling_factors + action_shift_factors; // Scale action to environment limits
     actor_local->train();
 
     return {scaled_action, action};
