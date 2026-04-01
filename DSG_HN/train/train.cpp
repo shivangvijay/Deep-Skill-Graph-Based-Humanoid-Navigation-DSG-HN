@@ -9,6 +9,7 @@
 #include "robot_bridge_train.h"
 #include "environment.h"
 #include "agent.h"
+#include "skill.h"
 #include <torch/torch.h>
 
 #define SCENE_FILE "../config/scene/test_scene.xml"
@@ -21,7 +22,7 @@
 #define Y_MAX 5.0f
 
 #define CRITIC_LR 3e-4 // lowered from 3e-3
-#define ACTOR_LR 1e-4 // lowered from 1e-4 for fine tuning
+#define ACTOR_LR 1e-4  // lowered from 1e-4 for fine tuning
 #define TAU 0.005
 #define GAMMA 0.99
 #define BATCH_SIZE 256
@@ -36,6 +37,28 @@
 /*
 TODO: MAKE SURE IT CAN LEARN TO AVOID OBSTACLES LIKE BEFORE (RECREATE PRIOR SUCCESS)
 */
+
+void train_her(const std::vector<Transition> &trajectory, std::shared_ptr<TrainEnvironment> env, TD3Agent &agent)
+{
+    if (trajectory.size() == 0 || trajectory.back().in_collision == true)
+        return;
+
+    AbstractedState augmented_goal;
+    augmented_goal.position = trajectory.back().state.position;
+    augmented_goal.orientation = trajectory.back().state.orientation;
+    augmented_goal.velocity = trajectory.back().state.velocity;
+    augmented_goal.angular_velocity = trajectory.back().state.angular_velocity;
+
+    for (const auto &t : trajectory)
+    {
+        auto augmented_state = env->transformState(t.state, augmented_goal);
+        auto augmented_next_state = env->transformState(t.next_state, augmented_goal);
+
+        auto [augmented_reward, augmented_done] = env->computeReward(t.state, t.in_collision, augmented_goal);
+        agent.addExperience(augmented_state, t.action, augmented_reward, augmented_next_state, augmented_done);
+        agent.learn();
+    }
+}
 
 int main(int argc, char **argv)
 {
@@ -82,7 +105,9 @@ int main(int argc, char **argv)
 
     std::cout << "Starting training for " << num_epochs << " epochs, " << num_steps << " steps per epoch." << std::endl;
     auto state = train_env->reset();
+    auto underlying_state = train_env->getUnderlyingState().first;
 
+    std::vector<Transition> her_transitions;
     float best_reward = -std::numeric_limits<float>::infinity();
 
     for (int epoch = 0; epoch < num_epochs; epoch++)
@@ -118,21 +143,30 @@ int main(int argc, char **argv)
             // std::cout << " Option: " << option << std::endl;
 
             auto [next_state, reward, done] = train_env->step(scaled_action);
+            auto [next_underlying_state, collision] = train_env->getUnderlyingState();
+
             total_reward += reward.item<float>();
             agent.addExperience(state, action, reward, next_state, done);
             agent.learn();
             // option_agent.addExperience(state, option, reward, next_state, done, 1);
             // option_agent.learn();
+
+            her_transitions.push_back({underlying_state, action, next_underlying_state, collision});
+
             if (done.item<float>() > 0.5)
             {
                 num_episodes++;
                 if (reward.data_ptr<float>()[0] > 0)
                     num_success++;
+                train_her(her_transitions, train_env, agent);
+                her_transitions.clear();
                 state = train_env->reset();
+                underlying_state = train_env->getUnderlyingState().first;
             }
             else
             {
                 state = next_state;
+                underlying_state = next_underlying_state;
             }
 
             // robot_bridge->printState(robot_bridge->getRobotState());
