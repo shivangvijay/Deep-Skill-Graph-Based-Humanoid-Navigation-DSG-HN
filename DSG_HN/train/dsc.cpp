@@ -494,7 +494,7 @@ int main(int argc, char **argv)
         SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, /*render=*/false);
 
     DeepSkillChaining::Config cfg;
-    cfg.gestation_n = 50; // number of total successes that should be collected during gestation phase. Perhaps use a percentage for the option being currently learnt?
+    cfg.gestation_n = 20; // number of total successes that should be collected during gestation phase. Perhaps use a percentage for the option being currently learnt?
     cfg.last_k = 10;
     cfg.max_option_steps = 20; // each option should be meaningful enough. 5Hz and 20 steps means each option can run for up to 4 seconds
     cfg.refinement_eps = 20;
