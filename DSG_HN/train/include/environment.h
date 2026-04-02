@@ -152,6 +152,16 @@ public:
             clamp_f(ang_vel[2], -yaw_lim, yaw_lim)};
 
         robot_bridge->resetRobot(clamped_pos, quat, clamped_vel, clamped_ang_vel);
+
+        // If the fixed spawn position is in collision (e.g. gestation record near an obstacle),
+        // fall back to a guaranteed collision-free random configuration rather than starting
+        // an episode that immediately terminates with a -30 penalty.
+        if (robot_bridge->inCollision())
+        {
+            auto fallback = robot_bridge->generateRandomValidConfiguration();
+            robot_bridge->resetRobot(fallback.position, fallback.orientation, fallback.velocity, fallback.angular_velocity);
+        }
+
         obstacles = robot_bridge->getObstacles();
 
         current_step = 0;
