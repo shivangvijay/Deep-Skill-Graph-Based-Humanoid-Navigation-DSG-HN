@@ -55,11 +55,8 @@ bool Skill::atTermination(const AbstractedState& goal) const
         // TODO: collision check - but maybe that should be done when sampling a subgoal. can add it here for redundancy
         // Use pessimistic boundary for termination — tighter condition for termination
         // which calls parent.pessimistic_is_init_true()
-        if (reward.data_ptr<float>()[0] > 45&& !_parent->canStartPessimistic(_env->getAbstractedState()))
-        {
-            std::cout << "Reached goal but not termination condition" << std::endl;
-        }
-        return _parent->canStartPessimistic(_env->getAbstractedState()) && reward.data_ptr<float>()[0] > -5;
+        return _parent->canStartPessimistic(_env->getAbstractedState())
+            && !_env->getUnderlyingState().second;
     }
 }
 
@@ -93,10 +90,55 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
         auto [next_state, reward, done] = _env->step(scaled_action);
 
         auto [next_underlying_state, collision] = _env->getUnderlyingState();
-        if (train) // if training instability, perhaps look at putting this outside the while loop like they have it elsewhere
+
+        // For non-global skills, override reward/done with classifier-based success signal.
+        // +50 when inside parent's pessimistic initiation set (the real goal during execution).
+        // Dense position shaping toward subgoal provides gradient; collision penalty preserved.
+        // Global agent still uses original env reward (relative to local goal, off-policy).
+        torch::Tensor agent_reward = reward;
+        torch::Tensor agent_done = done;
+        if (!_is_global && _parent)
+        {
+            auto abs_state = _env->getAbstractedState();
+            bool in_init = _parent->canStartPessimistic(abs_state);
+            bool hard_done = done.item<float>() > 0.5f && reward.item<float>() < 45.0f;
+
+            float r;
+            bool terminated;
+            if (collision)
+            {
+                r = -30.0f;
+                terminated = true;
+            }
+            else if (in_init)
+            {
+                r = 50.0f;
+                terminated = true;
+            }
+            else
+            {
+                // Dense shaping in classifier feature space: same 13D normalized representation
+                // the SVM uses, so the gradient points toward the initiation set boundary across
+                // all dimensions (position, orientation, velocity, angular velocity).
+                auto current_vec = _classifierVec(abs_state);
+                auto goal_vec = _classifierVec(goal);
+                float dist_sq = 0.0f;
+                for (size_t i = 0; i < current_vec.size(); i++)
+                {
+                    float diff = current_vec[i] - goal_vec[i];
+                    dist_sq += diff * diff;
+                }
+                r = -(std::sqrt(dist_sq) / 5.0f); // scale factor to keep shaping reward in a reasonable range after normalization
+                terminated = hard_done;
+            }
+            agent_reward = torch::tensor({r}, torch::kFloat32);
+            agent_done = torch::tensor({(float)terminated}, torch::kFloat32);
+        }
+
+        if (train)
         {
             her_transitions.push_back({underlying_state, action, next_underlying_state, collision});
-            _agent.addExperience(state, action, reward, next_state, done);
+            _agent.addExperience(state, action, agent_reward, next_state, agent_done);
             _agent.learn();
         }
         if (!_is_global) // replicating global agent logic
@@ -382,9 +424,9 @@ bool Skill::_atLocalGoal(const AbstractedState& goal) const
         return success || hard_done;
     }
 
-    // non-global: exit as soon as we enter the parent's pessimistic init set —
-    // matches Python's is_at_local_goal which uses is_term_true (pessimistic).
-    // This keeps the robot inside the region when atTermination() is called.
+    // non-global: exit as soon as we enter the parent's pessimistic initiation set —
+    // this is the real success condition during execution. Parent is always post-gestation
+    // when a child exists, so the pessimistic classifier is always active.
     bool in_pessimistic_set = _parent->canStartPessimistic(_env->getAbstractedState());
     bool hard_done = env_done && (r < 45);
     return in_pessimistic_set || hard_done;
