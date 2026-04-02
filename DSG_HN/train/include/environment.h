@@ -130,12 +130,28 @@ public:
             goal = robot_bridge->generateRandomValidConfiguration();
         }
 
+        auto clamp_f = [](float v, float lo, float hi) { return std::max(lo, std::min(hi, v)); };
+        float vx_min = action_shift_factors[0] - action_scaling_factors[0];
+        float vx_max = action_shift_factors[0] + action_scaling_factors[0];
+        float vy_lim = action_scaling_factors[1];
+        float yaw_lim = action_scaling_factors[2];
+
         std::array<float, 3> clamped_pos = {
-            std::max(robot_bridge->x_min + 0.5f, std::min(robot_bridge->x_max - 0.5f, pos[0])),
-            std::max(robot_bridge->y_min + 0.5f, std::min(robot_bridge->y_max - 0.5f, pos[1])),
+            clamp_f(pos[0], robot_bridge->x_min + 0.5f, robot_bridge->x_max - 0.5f),
+            clamp_f(pos[1], robot_bridge->y_min + 0.5f, robot_bridge->y_max - 0.5f),
             pos[2]};
 
-        robot_bridge->resetRobot(clamped_pos, quat, vel, ang_vel);
+        std::array<float, 3> clamped_vel = {
+            clamp_f(vel[0], vx_min, vx_max),
+            clamp_f(vel[1], -vy_lim, vy_lim),
+            0.0f};
+
+        std::array<float, 3> clamped_ang_vel = {
+            0.0f,
+            0.0f,
+            clamp_f(ang_vel[2], -yaw_lim, yaw_lim)};
+
+        robot_bridge->resetRobot(clamped_pos, quat, clamped_vel, clamped_ang_vel);
         obstacles = robot_bridge->getObstacles();
 
         current_step = 0;
