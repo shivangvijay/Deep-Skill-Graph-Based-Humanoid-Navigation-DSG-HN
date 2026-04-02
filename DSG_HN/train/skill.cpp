@@ -13,7 +13,7 @@ Skill::Skill(
     std::shared_ptr<Skill> parent, int gestation_period, bool is_global, AbstractedState global_goal, std::shared_ptr<Skill> global_option)
     : _id(id), _env(env), _parent(parent), _is_global(is_global), _gestation_period(gestation_period), _k(k), _max_steps(max_steps), _agent(env, actor_layer_sizes, critic_layer_sizes, device,
                                                                                                                                             lr_actor, lr_critic, tau, gamma, batch_size, actor_update_freq, max_obstacles, actor_warmup_steps),
-      _rng(std::random_device{}()), _global_goal(global_goal), _nu(nu), _global_option(global_option)
+      _rng(std::random_device{}()), _global_goal(global_goal), _nu(nu), _global_option(global_option), _gamma(gamma)
 {
 }
 
@@ -42,7 +42,7 @@ AbstractedState Skill::getLocalGoal()
     }
 }
 
-bool Skill::atTermination(const AbstractedState& goal) const
+bool Skill::atTermination(const AbstractedState &goal) const
 {
     auto [reward, done] = _env->computeReward(goal);
     if (!_parent)
@@ -55,11 +55,11 @@ bool Skill::atTermination(const AbstractedState& goal) const
         // TODO: collision check - but maybe that should be done when sampling a subgoal. can add it here for redundancy
         // Use pessimistic boundary for termination — tighter condition for termination
         // which calls parent.pessimistic_is_init_true()
-        if (reward.data_ptr<float>()[0] > 45&& !_parent->canStartPessimistic(_env->getAbstractedState()))
+        if (reward.data_ptr<float>()[0] > 45 && !_parent->canStartPessimistic(_env->getAbstractedState()))
         {
             std::cout << "Reached goal but not termination condition" << std::endl;
         }
-        return _parent->canStartPessimistic(_env->getAbstractedState()) && reward.data_ptr<float>()[0] > -5;
+        return _parent->canStartPessimistic(_env->getAbstractedState()) && !_env->getUnderlyingState().second;
     }
 }
 
@@ -74,7 +74,8 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
     RobotState underlying_state = _env->getUnderlyingState().first;
 
     int num_steps = 0;
-    float total_reward = 0;
+    float total_reward = 0.0f;
+    float current_gamma = 1.0f;
     bool should_terminate = false;
 
     bool train = getTrainingPhase() == "gestation" || _is_global;
@@ -93,15 +94,17 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
         auto [next_state, reward, done] = _env->step(scaled_action);
 
         auto [next_underlying_state, collision] = _env->getUnderlyingState();
+
         if (train) // if training instability, perhaps look at putting this outside the while loop like they have it elsewhere
         {
+
             her_transitions.push_back({underlying_state, action, next_underlying_state, collision});
             _agent.addExperience(state, action, reward, next_state, done);
             _agent.learn();
         }
         if (!_is_global) // replicating global agent logic
         {
-            auto& global_agent = _global_option->agent();
+            auto &global_agent = _global_option->agent();
             global_agent.addExperience(state, action, reward, next_state, done);
             global_agent.learn();
         }
@@ -112,7 +115,8 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
             visited.push_back({_classifierVec(_env->getAbstractedState()), _env->getAbstractedState()});
         }
         num_steps++;
-        total_reward += _env->computeReward(_global_goal).first.data_ptr<float>()[0]; // for policy over options, compute reward w.r.t global goal
+        total_reward += current_gamma * _env->computeReward(_global_goal).first.data_ptr<float>()[0];
+        current_gamma *= _gamma;
     }
 
     if (train)
@@ -124,7 +128,7 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
     {
         _goal_hits++;
         if (train)
-            std::cout << "\rOption: " << _id << " | Success: " << _goal_hits << "/" << _gestation_period << std::flush;
+            std::cout << "Option: " << _id << " | Success: " << _goal_hits << "/" << _gestation_period << std::endl;
     }
 
     if (!_is_global && train)
@@ -139,7 +143,8 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
 
 void Skill::validateSkill(bool success)
 {
-    if (_validated) return;
+    if (_validated)
+        return;
 
     if (success)
     {
@@ -269,7 +274,7 @@ TD3Agent &Skill::agent()
 
 /*** Private ***/
 
-void Skill::_herUpdate(const std::vector<Transition>& trajectory)
+void Skill::_herUpdate(const std::vector<Transition> &trajectory)
 {
     if (trajectory.size() == 0 || trajectory.back().in_collision == true)
         return;
@@ -280,7 +285,7 @@ void Skill::_herUpdate(const std::vector<Transition>& trajectory)
     augmented_goal.velocity = trajectory.back().state.velocity;
     augmented_goal.angular_velocity = trajectory.back().state.angular_velocity;
 
-    for (const auto& t: trajectory)
+    for (const auto &t : trajectory)
     {
         auto augmented_state = _env->transformState(t.state, augmented_goal);
         auto augmented_next_state = _env->transformState(t.next_state, augmented_goal);
@@ -296,9 +301,7 @@ void Skill::_herUpdate(const std::vector<Transition>& trajectory)
             global_agent.learn();
         }
     }
-
 }
-
 
 // TODO: add max buffer size at which we start to pop off the front
 // TODO: generally, this logic will need to really be refined to ensure that it is not too pessimistic/optimistic
@@ -338,8 +341,8 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
         if (!pos_vecs.empty())
         {
             bool first_phase1 = !_classifier.trained();
-            _pessimistic_classifier.trainOneClass(pos_vecs, _nu);       // tight
-            _classifier.trainOneClass(pos_vecs, _nu / 10.0);            // loose / optimistic
+            _pessimistic_classifier.trainOneClass(pos_vecs, _nu); // tight
+            _classifier.trainOneClass(pos_vecs, _nu / 10.0);      // loose / optimistic
             if (first_phase1)
                 std::cout << "\n[Skill " << _id << "] Classifier Phase 1: OneClass init. Pos=" << pos_vecs.size() << "\n";
         }
@@ -368,7 +371,7 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
     }
 }
 
-bool Skill::_atLocalGoal(const AbstractedState& goal) const
+bool Skill::_atLocalGoal(const AbstractedState &goal) const
 {
     auto [reward, done] = _env->computeReward(goal);
     bool env_done = done.data_ptr<float>()[0] > 0.5f;
@@ -376,18 +379,15 @@ bool Skill::_atLocalGoal(const AbstractedState& goal) const
 
     if (_is_global || !_parent)
     {
-        // global option: success = reached the actual goal
-        bool success = env_done && (r > 45);
-        bool hard_done = env_done && (r < 45);
-        return success || hard_done;
+        return env_done;
     }
 
     // non-global: exit as soon as we enter the parent's pessimistic init set —
     // matches Python's is_at_local_goal which uses is_term_true (pessimistic).
     // This keeps the robot inside the region when atTermination() is called.
-    bool in_pessimistic_set = _parent->canStartPessimistic(_env->getAbstractedState());
-    bool hard_done = env_done && (r < 45);
-    return in_pessimistic_set || hard_done;
+    bool reached_goal = env_done;
+    bool reached_term = _parent->canStartPessimistic(_env->getAbstractedState()) || (env_done && (r < 45));
+    return reached_goal && reached_term;
 }
 
 std::vector<float> Skill::_classifierVec(const AbstractedState &state) const

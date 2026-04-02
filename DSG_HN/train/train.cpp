@@ -16,10 +16,10 @@
 #define POLICY_DIR "config/policy/velocity"
 #define CONFIG_PATH "config/config.yaml"
 
-#define X_MIN -5.0f
-#define X_MAX 5.0f
-#define Y_MIN -5.0f
-#define Y_MAX 5.0f
+#define X_MIN -7.0f
+#define X_MAX 7.0f
+#define Y_MIN -7.0f
+#define Y_MAX 7.0f
 
 #define CRITIC_LR 3e-4 // lowered from 3e-3
 #define ACTOR_LR 1e-4  // lowered from 1e-4 for fine tuning
@@ -31,8 +31,8 @@
 #define ACTOR_LAYER_SIZES {256, 256, 256}
 #define RENDER false
 #define MAX_OBSTACLES 8
-#define PRETRAIN false
-#define ACTOR_WARMUP_STEPS 10000
+#define PRETRAIN true
+#define ACTOR_WARMUP_STEPS 20000
 
 /*
 TODO: MAKE SURE IT CAN LEARN TO AVOID OBSTACLES LIKE BEFORE (RECREATE PRIOR SUCCESS)

@@ -13,6 +13,7 @@
 #include "robot_bridge_train.h"
 #include "environment.h"
 #include <torch/torch.h>
+#include <limits>
 #include <filesystem>
 #include <iostream>
 #include <random>
@@ -98,8 +99,8 @@ private:
     int _unfinished_option_idx = 0;
 
     void _warmupRollout();
-    float _dscRollout();
-    std::pair<int, AbstractedState> _pickOption();
+    float _dscRollout(bool eval);
+    std::pair<int, AbstractedState> _pickOption(bool eval);
     bool _containsGlobalStartState();
     void _makeSkill(bool is_global, std::shared_ptr<Skill> parent);
     void _loadGlobalOption(const std::string &actor_path, const std::string &critic1_path, const std::string &critic2_path);
@@ -109,6 +110,7 @@ private:
 
     AbstractedState _sampleStartNearObstacle(); // gaussian sampling (see robot autonomy slides)
     AbstractedState _sampleStartInterpolated(); // randomly sample position linearly interpolated between start and goal (with noise)
+    AbstractedState _sampleStartNearBoundary(); // sample start near edge of last mature option
     void _validateOption();
     bool _shouldCreateNewOption();
 

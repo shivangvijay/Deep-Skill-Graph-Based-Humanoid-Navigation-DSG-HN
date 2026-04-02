@@ -51,14 +51,19 @@ int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout wh
         {
             _env->resetTo(_global_start);
         }
-        else if (p > 0.2 && p < 0.5)
+        else if (p >= 0.2 && p < 0.4)
         {
             auto start = _sampleStartNearObstacle();
             _env->resetTo(start);
         }
-        else if (p > 0.5 && p < 0.7)
+        else if (p >= 0.4 && p < 0.6)
         {
             auto start = _sampleStartInterpolated();
+            _env->resetTo(start);
+        }
+        else if (p >= 0.6 && p < 0.8)
+        {
+            auto start = _sampleStartNearBoundary();
             _env->resetTo(start);
         }
         else
@@ -73,7 +78,7 @@ int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout wh
         }
         else
         {
-            ep_reward = _dscRollout();
+            ep_reward = _dscRollout(false);
             _validateOption(); // if necessary, will validate the options
         }
 
@@ -116,7 +121,7 @@ int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout wh
 float DeepSkillChaining::execute()
 {
     _env->resetTo(_global_start);
-    return _dscRollout();
+    return _dscRollout(true);
 }
 
 /*** Private ***/
@@ -149,14 +154,14 @@ void DeepSkillChaining::_validateOption()
             num_successes++;
     }
 
-    if ((float)num_successes/ (float)_cfg.gestation_n > 0.8)
+    if ((float)num_successes / (float)_cfg.gestation_n > 0.8)
     {
         std::cout << "Option " << validate_idx << " validated. Success Rate: " << (float)num_successes / (float)_cfg.gestation_n << std::endl;
         _skills[validate_idx]->validateSkill(true);
     }
     else
     {
-        std::cout << "Option " << validate_idx << " failed validation. Success Rate: " << (float)num_successes/ (float)_cfg.gestation_n << std::endl;
+        std::cout << "Option " << validate_idx << " failed validation. Success Rate: " << (float)num_successes / (float)_cfg.gestation_n << std::endl;
         _skills[validate_idx]->validateSkill(false);
     }
 }
@@ -180,7 +185,7 @@ void DeepSkillChaining::_warmupRollout()
 }
 
 // gonna do this the way they do in bagaria et al. code: pick earliest option
-std::pair<int, AbstractedState> DeepSkillChaining::_pickOption()
+std::pair<int, AbstractedState> DeepSkillChaining::_pickOption(bool eval)
 {
     auto poo_state = _env->getStateRelativeToGoal(_global_goal);
     auto global_state = _env->getAbstractedState();
@@ -188,21 +193,30 @@ std::pair<int, AbstractedState> DeepSkillChaining::_pickOption()
     torch::Tensor q_vals = _poo.getOptions(poo_state);
 
     int best_option = _global_option_idx;
+    float best_q_val = std::numeric_limits<float>::lowest();
     for (int o = _global_option_idx + 1; o < _skills.size(); o++)
     {
         // pass global goal in here, as the only option that will use this is the first/goal option whose local
         // goal is the same as the global goal
         if (_skills[o]->canStart(global_state) && !_skills[o]->atTermination(_global_goal))
         {
-            best_option = o;
-            break;
+            if (!eval)
+            {
+                best_option = o;
+                break;
+            }
+            else if (q_vals[0].item<float>() > best_q_val)
+            {
+                best_option = o;
+                best_q_val = q_vals[0].item<float>();
+            }
         }
     }
 
     if (best_option == _global_option_idx)
     {
         // TODO: pick closest option as goal
-        float min_dist = 1e5;
+        float min_dist = std::numeric_limits<float>::infinity();
         int closest_option = -1;
         for (int o = _global_option_idx + 1; o < _unfinished_option_idx; o++)
         {
@@ -228,14 +242,14 @@ std::pair<int, AbstractedState> DeepSkillChaining::_pickOption()
     }
 }
 
-float DeepSkillChaining::_dscRollout()
+float DeepSkillChaining::_dscRollout(bool eval)
 {
     int step = 0;
     bool env_done = false;
     float total_reward = 0;
     while (step < _cfg.steps_per_episode && !env_done)
     {
-        auto [option, goal] = _pickOption();
+        auto [option, goal] = _pickOption(eval);
         auto [steps_taken, cum_reward, local_done, first_state_poo, last_state_poo] = _skills[option]->rollout(goal);
 
         if (steps_taken == 0) // this condition occurs when we just finished training a new skill, but then find ourselves in the initiation set of that skill while trying to train the new skill
@@ -248,7 +262,8 @@ float DeepSkillChaining::_dscRollout()
         step += steps_taken;
         total_reward += cum_reward;
 
-        _poo.addExperience(first_state_poo, option, cum_reward, last_state_poo, env_done, steps_taken);
+        float clipped_reward = std::clamp(cum_reward, -100.0f, 100.0f); // clipping reward since sometimes not terminating makes the reward spike and want to limit that effect.
+        _poo.addExperience(first_state_poo, option, clipped_reward, last_state_poo, env_done, steps_taken);
         _poo.learn();
 
         if (_cfg.verbose)
@@ -402,7 +417,7 @@ AbstractedState DeepSkillChaining::_sampleStartNearObstacle()
         }
     }
 
-    std::cerr << "Warning: Could not generate valid gaussian sample, return random sample" << std::endl;
+    std::cerr << "Warning: Could not generate valid gaussian sample, returning random sample" << std::endl;
     return _env->getRandomValidAbstractedState();
 }
 
@@ -423,7 +438,43 @@ AbstractedState DeepSkillChaining::_sampleStartInterpolated()
         if (_robot_bridge->isConfigurationValid(pos, quat, vel, ang_vel))
             return {pos, quat, vel, ang_vel};
     }
-    std::cerr << "Warning: Could not generate valid linearly interpolated sample, return random sample" << std::endl;
+    std::cerr << "Warning: Could not generate valid linearly interpolated sample, returning random sample" << std::endl;
+    return _env->getRandomValidAbstractedState();
+}
+
+AbstractedState DeepSkillChaining::_sampleStartNearBoundary()
+{
+    float std_pos = 1.0f;
+    float std_rot = 0.2f;
+    float std_vel = 0.1;
+    float std_ang_vel = 0.1;
+
+    for (int attempts = 0; attempts < 300; attempts++)
+    {
+        AbstractedState state = _skills[_unfinished_option_idx]->getLocalGoal();
+
+        state.position[0] += _sampleGaussianDist(0.0f, std_pos);
+        state.position[1] += _sampleGaussianDist(0.0f, std_pos);
+        state.position[2] += _sampleGaussianDist(0.0f, std_pos);
+
+        state.velocity[0] += _sampleGaussianDist(0.0f, std_vel);
+        state.velocity[1] += _sampleGaussianDist(0.0f, std_vel);
+        state.velocity[2] += _sampleGaussianDist(0.0f, std_vel);
+
+        state.angular_velocity[0] += _sampleGaussianDist(0.0f, std_ang_vel);
+        state.angular_velocity[1] += _sampleGaussianDist(0.0f, std_ang_vel);
+        state.angular_velocity[2] += _sampleGaussianDist(0.0f, std_ang_vel);
+
+        state.orientation = _getGaussianQuaternionPerturbation(state.orientation, std_rot);
+
+        if (_robot_bridge->isConfigurationValid(state.position, state.orientation, state.velocity, state.angular_velocity) &&
+            (_unfinished_option_idx == _global_option_idx + 1 || !_skills[_unfinished_option_idx - 1]->canStart(state)))
+        {
+            return state;
+        }
+    }
+    std::cerr << "Warning: Could not generate sample near boundary of previous option, returning random sample" << std::endl;
+
     return _env->getRandomValidAbstractedState();
 }
 
@@ -465,10 +516,10 @@ AbstractedState DeepSkillChaining::_sampleStartInterpolated()
 #define OG_CRITIC1 "best_critic_1.pt"
 #define OG_CRITIC2 "best_critic_2.pt"
 
-#define X_MIN -5.0f
-#define X_MAX 5.0f
-#define Y_MIN -5.0f
-#define Y_MAX 5.0f
+#define X_MIN -7.0f
+#define X_MAX 7.0f
+#define Y_MIN -7.0f
+#define Y_MAX 7.0f
 
 static const std::array<float, 3> GLOBAL_GOAL = {3.0f, 3.0f, 0.0f};
 
@@ -494,24 +545,24 @@ int main(int argc, char **argv)
         SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, /*render=*/false);
 
     DeepSkillChaining::Config cfg;
-    cfg.gestation_n = 20; // number of total successes that should be collected during gestation phase. Perhaps use a percentage for the option being currently learnt?
-    cfg.last_k = 10;
-    cfg.max_option_steps = 20; // each option should be meaningful enough. 5Hz and 20 steps means each option can run for up to 4 seconds
+    cfg.gestation_n = 30; // number of total successes that should be collected during gestation phase. Perhaps use a percentage for the option being currently learnt?
+    cfg.last_k = 15;
+    cfg.max_option_steps = 30; // each option should be meaningful enough. 5Hz and 20 steps means each option can run for up to 4 seconds
     cfg.refinement_eps = 20;
     cfg.nu = 0.1;
     cfg.max_skills = 6;
     cfg.actor_warmup_steps = 0;  // gonna keep at zero for testing purposes as well
-    cfg.warmup_episodes = 200;   // keep at zero since I am assuming we have done pretraining
+    cfg.warmup_episodes = 0;   // keep at zero since I am assuming we have done pretraining
     cfg.render_training = false; // set to true to watch rollouts during training (slower)
     cfg.verbose = true;          // set to true for per-rollout console output
     cfg.log_interval = 50;       // print skill status table every N episodes
 
-    AbstractedState global_goal = {{3, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
-    AbstractedState global_start = {{-3, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    AbstractedState global_goal = {{-4.5, 4.1, 0}, {0, 0, 0, -1}, {0, 0, 0}, {0, 0, 0}};
+    AbstractedState global_start = {{-5.3, -4.5, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 
     DeepSkillChaining dsc(robot_bridge, device, global_goal, global_start, "../models/best_actor.pt", "../models/best_critic_1.pt", "../models/best_critic_2.pt", cfg);
 
-    int n = dsc.train(2000);
+    int n = dsc.train(20000);
     std::cout << "\nTraining complete: " << n << " skill(s) in chain." << std::endl;
 
     // TODO: implement this stuff to visualize the output and see if things are succesful or not!

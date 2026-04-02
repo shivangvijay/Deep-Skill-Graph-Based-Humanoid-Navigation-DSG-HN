@@ -22,9 +22,10 @@ public:
         int gravity_dim = 3;                                // local_up
         int self_dyn_dim = 3 + 3 + 3;                       // local_vel, local_ang_vel, local_accel
         int goal_dim = 3 + 4 + 3 + 3;                       // relative_pos, releative_orientation, relative_vel, relative angular vel
+        int boundary_dim = 4;
         obstacle_dim = (int)obstacles.size() * 4;
 
-        state_dim = proprio_dim + gravity_dim + self_dyn_dim + goal_dim;
+        state_dim = proprio_dim + gravity_dim + self_dyn_dim + goal_dim + boundary_dim;
 
         std::array<float, 3> pos_scales = {(robot_bridge->x_max - robot_bridge->x_min) / 2, (robot_bridge->y_max - robot_bridge->y_min) / 2, 0.5}; // some of these may need to be tuned later
         std::array<float, 4> orientation_scales = {1, 1, 1, 1};
@@ -76,7 +77,10 @@ public:
 
     std::pair<RobotState, bool> getUnderlyingState()
     {
-        return {robot_bridge->getRobotState(), robot_bridge->inCollision()};
+        auto state = robot_bridge->getRobotState();
+        bool collision = robot_bridge->inCollision() || state.position[0] > robot_bridge->x_max || state.position[0] < robot_bridge->x_min ||
+            state.position[1] > robot_bridge->y_max || state.position[1] < robot_bridge->y_min;
+        return {state, collision};
     }
 
     AbstractedState getAbstractedState() // return underlying robot bridge state (where things are in global)
@@ -188,7 +192,7 @@ public:
     }
 
     // If we do not have the ability to turn, then velocity cannot be part of goal condition
-    std::pair<torch::Tensor, torch::Tensor> computeReward(const RobotState& state, bool collision, const AbstractedState &goal_)
+    std::pair<torch::Tensor, torch::Tensor> computeReward(const RobotState &state, bool collision, const AbstractedState &goal_)
     {
         auto goal_position = goal_.position;
         auto goal_orientation = goal_.orientation;
@@ -206,12 +210,14 @@ public:
 
         float reward = 0;
         bool terminated = false;
-        if (collision)
+        if (collision ||
+            state.position[0] > robot_bridge->x_max || state.position[0] < robot_bridge->x_min ||
+            state.position[1] > robot_bridge->y_max || state.position[1] < robot_bridge->y_min)
         {
             reward -= 30;
             terminated = true;
         }
-        else if (pos_error < 0.25) // && vel_error < 0.25) // commenting out vel for now cause of aformentioned issues. Also ignoring ang vel and orientation for the same reasons
+        else if (pos_error < 0.5) // && vel_error < 0.25) // commenting out vel for now cause of aformentioned issues. Also ignoring ang vel and orientation for the same reasons
         {
             reward += 50;
             terminated = true;
@@ -220,9 +226,7 @@ public:
         {
             reward -= (pos_error / 50.0); // + (vel_error / 10.0);
         }
-        if (current_step >= max_steps || pos_error > 20) //||
-                                                         // state.position[0] > robot_bridge->x_max || state.position[0] < robot_bridge->x_min ||
-                                                         // state.position[1] > robot_bridge->y_max || state.position[1] < robot_bridge->y_min)
+        if (current_step >= max_steps)
         {
             terminated = true;
         }
@@ -250,6 +254,13 @@ public:
         // accel, angular vel given in local frame
 
         copy_to_ptr(state.q);
+
+        std::array<float, DOF> dq_scaled;
+
+        for (int j = 0; j < DOF; j++)
+        {
+            dq_scaled[j] = state.dq[j] / 20; // dq scaling factor
+        }
         copy_to_ptr(state.dq);
 
         // local dynamics
@@ -265,11 +276,18 @@ public:
         auto &g_ang_vel = goal_.angular_velocity;
 
         std::array<float, 3> r_pos = {g_pos[0] - state.position[0], g_pos[1] - state.position[1], g_pos[2] - state.position[2]};
+        r_pos[0] /= env_scaling_factors.position[0];
+        r_pos[1] /= env_scaling_factors.position[1];
+        r_pos[2] /= env_scaling_factors.position[2];
+
         copy_to_ptr(rotateVectorByQuat(r_pos, state.orientation, true));
 
         copy_to_ptr(quaternionDelta(g_quat, state.orientation));
 
         std::array<float, 3> v_err = {g_vel[0] - state.velocity[0], g_vel[1] - state.velocity[1], g_vel[2] - state.velocity[2]};
+        v_err[0] /= env_scaling_factors.velocity[0];
+        v_err[1] /= env_scaling_factors.velocity[1];
+        v_err[2] /= env_scaling_factors.velocity[2];
         copy_to_ptr(rotateVectorByQuat(v_err, state.orientation, true));
 
         std::array<float, 3> local_goal_ang_vel = rotateVectorByQuat(g_ang_vel, state.orientation, true);
@@ -278,11 +296,24 @@ public:
             local_goal_ang_vel[0] - state.angular_velocity[0],
             local_goal_ang_vel[1] - state.angular_velocity[1],
             local_goal_ang_vel[2] - state.angular_velocity[2]};
+        ang_vel_err[0] /= env_scaling_factors.angular_velocity[0];
+        ang_vel_err[1] /= env_scaling_factors.angular_velocity[1];
+        ang_vel_err[2] /= env_scaling_factors.angular_velocity[2];
 
         copy_to_ptr(ang_vel_err);
 
-        // local obstacles
+        // relative distance to boundary
+        float dist_left = state.position[0] - robot_bridge->x_min;
+        float dist_right = robot_bridge->x_max - state.position[0];
+        float dist_back = state.position[1] - robot_bridge->y_min;
+        float dist_front = robot_bridge->y_max - state.position[1];
 
+        data_ptr[offset++] = dist_left / env_scaling_factors.position[0];
+        data_ptr[offset++] = dist_right / env_scaling_factors.position[0];
+        data_ptr[offset++] = dist_back / env_scaling_factors.position[1];
+        data_ptr[offset++] = dist_front / env_scaling_factors.position[1];
+
+        // local obstacles
         std::vector<Obstacle> sorted_obs = obstacles;
         std::sort(sorted_obs.begin(), sorted_obs.end(), [&](const Obstacle &a, const Obstacle &b)
                   {
@@ -296,6 +327,9 @@ public:
             std::array<float, 3> r_obs = {obs.position[0] - state.position[0],
                                           obs.position[1] - state.position[1],
                                           obs.position[2] - state.position[2]};
+            r_obs[0] /= env_scaling_factors.position[0];
+            r_obs[1] /= env_scaling_factors.position[1];
+            r_obs[2] /= env_scaling_factors.position[2];
             copy_to_ptr(rotateVectorByQuat(r_obs, state.orientation, true));
             data_ptr[offset++] = obs.size[0];
         }

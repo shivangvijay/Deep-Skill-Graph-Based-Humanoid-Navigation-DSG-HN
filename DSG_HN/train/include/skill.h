@@ -111,6 +111,7 @@ private:
     int _max_steps = 0;
     int _k = 0;
     double _nu;
+    float _gamma;
 
     int _id;
 
