@@ -49,6 +49,8 @@ public:
 
         float lr_actor = 1e-4f;
         float lr_critic = 3e-4f;
+        float lr_actor_global = 1e-5;
+        float lr_critic_global = 3e-5;
         int max_obstacles = 8;
         int actor_warmup_steps = 0;
         float lr_poo = 1e-4f;

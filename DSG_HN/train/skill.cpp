@@ -55,15 +55,11 @@ bool Skill::atTermination(const AbstractedState &goal) const
         // TODO: collision check - but maybe that should be done when sampling a subgoal. can add it here for redundancy
         // Use pessimistic boundary for termination — tighter condition for termination
         // which calls parent.pessimistic_is_init_true()
-        if (reward.data_ptr<float>()[0] > 45 && !_parent->canStartPessimistic(_env->getAbstractedState()))
-        {
-            std::cout << "Reached goal but not termination condition" << std::endl;
-        }
-        return _parent->canStartPessimistic(_env->getAbstractedState()) && !_env->getUnderlyingState().second;
+        return (_parent->canStartPessimistic(_env->getAbstractedState()) && !_env->getUnderlyingState().second) || (done.data_ptr<float>()[0] > 0.5f && reward.data_ptr<float>()[0] > 45);
     }
 }
 
-// TODO: Add HER for updating TD3 agent
+// TODO: clear training buffer after you move to mature phase
 std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const AbstractedState &goal)
 {
     // need to get start and end states w.r.t the global goal, which is what is expected as the input to the policy over options
@@ -88,16 +84,24 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
 
     std::vector<Transition> her_transitions;
 
-    while (num_steps < _max_steps && !_atLocalGoal(goal))
+    int max_steps = (_is_global) ? 1 : _max_steps;
+    while (num_steps < max_steps && !_atLocalGoal(goal))
     {
         auto [scaled_action, action] = _agent.getAction(state, !train);
         auto [next_state, reward, done] = _env->step(scaled_action);
 
         auto [next_underlying_state, collision] = _env->getUnderlyingState();
 
+        if (!_is_global && _parent) // what abhi did, terminate if in termination condition, want to relabel the last as a success though
+        {
+            if (_parent->canStartPessimistic(_env->getAbstractedState()))
+            {
+                reward = torch::tensor({50.0f}, torch::kFloat32);
+                done = torch::tensor({1.0f}, torch::kFloat32);
+            }
+        }
         if (train) // if training instability, perhaps look at putting this outside the while loop like they have it elsewhere
         {
-
             her_transitions.push_back({underlying_state, action, next_underlying_state, collision});
             _agent.addExperience(state, action, reward, next_state, done);
             _agent.learn();
@@ -119,10 +123,10 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
         current_gamma *= _gamma;
     }
 
-    if (train)
-    {
-        _herUpdate(her_transitions);
-    }
+    // if (train)
+    // {
+    //     _herUpdate(her_transitions);
+    // }
 
     if (!_is_global && atTermination(goal)) // can not reach goal, but still reach next option
     {
@@ -352,7 +356,7 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
         // binary SVC as optimistic, then one-class re-fit on SVC-positive predictions as pessimistic.
         int neg_count = std::count(_gestation_labels.begin(), _gestation_labels.end(), -1);
         _classifier.train(_gestation_vecs, _gestation_labels,
-                          /*C=*/1.0, /*gamma=*/-1.0, /*balance_classes=*/true);
+                          /*C=*/100.0, /*gamma=*/0.15, /*balance_classes=*/true);
 
         // Re-fit pessimistic on only the states the optimistic SVC predicts as positive
         std::vector<std::vector<float>> svc_positive_vecs;
@@ -385,9 +389,17 @@ bool Skill::_atLocalGoal(const AbstractedState &goal) const
     // non-global: exit as soon as we enter the parent's pessimistic init set —
     // matches Python's is_at_local_goal which uses is_term_true (pessimistic).
     // This keeps the robot inside the region when atTermination() is called.
-    bool reached_goal = env_done;
-    bool reached_term = _parent->canStartPessimistic(_env->getAbstractedState()) || (env_done && (r < 45));
-    return reached_goal && reached_term;
+    // bool reached_goal = env_done;
+    bool reached_term = _parent->canStartPessimistic(_env->getAbstractedState()) || env_done; //(env_done && (r < 45));
+    // if (env_done && (r > 45) && !_parent->canStartPessimistic(_env->getAbstractedState()))
+    // {
+    //     std::cout << "Done but not in classfier" << std::endl;
+    // }
+    // else if (_parent->canStartPessimistic(_env->getAbstractedState()) && !(env_done && (r > 45)))
+    // {
+    //     std::cout << "In classifier but not done" << std::endl;
+    // }
+    return reached_term;
 }
 
 std::vector<float> Skill::_classifierVec(const AbstractedState &state) const
@@ -395,6 +407,7 @@ std::vector<float> Skill::_classifierVec(const AbstractedState &state) const
     std::vector<float> out;
     auto scaling_factors = _env->env_scaling_factors;
     out.reserve(13);
+
     // global pos
     out.push_back(state.position[0] / scaling_factors.position[0]);
     out.push_back(state.position[1] / scaling_factors.position[1]);
@@ -403,20 +416,21 @@ std::vector<float> Skill::_classifierVec(const AbstractedState &state) const
     out.push_back(kUseVelocityInClassifier ? state.velocity[0] / scaling_factors.velocity[0] : 0.0f);
     out.push_back(kUseVelocityInClassifier ? state.velocity[1] / scaling_factors.velocity[1] : 0.0f);
     out.push_back(kUseVelocityInClassifier ? state.velocity[2] / scaling_factors.velocity[2] : 0.0f);
-    // orientation
+
+    // // orientation
     if (state.orientation[0] < 0)
     {
-        out.push_back(-state.orientation[0] / scaling_factors.orientation[0]);
-        out.push_back(-state.orientation[1] / scaling_factors.orientation[1]);
-        out.push_back(-state.orientation[2] / scaling_factors.orientation[2]);
-        out.push_back(-state.orientation[3] / scaling_factors.orientation[3]);
+        out.push_back(-state.orientation[0] / (scaling_factors.orientation[0] * 2));
+        out.push_back(-state.orientation[1] / (scaling_factors.orientation[1] * 2));
+        out.push_back(-state.orientation[2] / (scaling_factors.orientation[2] * 2));
+        out.push_back(-state.orientation[3] / (scaling_factors.orientation[3] * 2));
     }
     else
     {
-        out.push_back(state.orientation[0] / scaling_factors.orientation[0]);
-        out.push_back(state.orientation[1] / scaling_factors.orientation[1]);
-        out.push_back(state.orientation[2] / scaling_factors.orientation[2]);
-        out.push_back(state.orientation[3] / scaling_factors.orientation[3]);
+        out.push_back(state.orientation[0] / (scaling_factors.orientation[0] * 2));
+        out.push_back(state.orientation[1] / (scaling_factors.orientation[1] * 2));
+        out.push_back(state.orientation[2] / (scaling_factors.orientation[2] * 2));
+        out.push_back(state.orientation[3] / (scaling_factors.orientation[3] * 2));
     }
     // ang vel — zeroed when kUseVelocityInClassifier is false
     out.push_back(kUseVelocityInClassifier ? state.angular_velocity[0] / scaling_factors.angular_velocity[0] : 0.0f);
@@ -430,6 +444,7 @@ std::vector<float> Skill::_classifierVec(const RobotState &state) const
     std::vector<float> out;
     auto scaling_factors = _env->env_scaling_factors;
     out.reserve(13);
+
     // global pos
     out.push_back(state.position[0] / scaling_factors.position[0]);
     out.push_back(state.position[1] / scaling_factors.position[1]);
@@ -441,17 +456,17 @@ std::vector<float> Skill::_classifierVec(const RobotState &state) const
     // orientation
     if (state.orientation[0] < 0)
     {
-        out.push_back(-state.orientation[0] / scaling_factors.orientation[0]);
-        out.push_back(-state.orientation[1] / scaling_factors.orientation[1]);
-        out.push_back(-state.orientation[2] / scaling_factors.orientation[2]);
-        out.push_back(-state.orientation[3] / scaling_factors.orientation[3]);
+        out.push_back(-state.orientation[0] / (scaling_factors.orientation[0] * 2));
+        out.push_back(-state.orientation[1] / (scaling_factors.orientation[1] * 2));
+        out.push_back(-state.orientation[2] / (scaling_factors.orientation[2] * 2));
+        out.push_back(-state.orientation[3] / (scaling_factors.orientation[3] * 2));
     }
     else
     {
-        out.push_back(state.orientation[0] / scaling_factors.orientation[0]);
-        out.push_back(state.orientation[1] / scaling_factors.orientation[1]);
-        out.push_back(state.orientation[2] / scaling_factors.orientation[2]);
-        out.push_back(state.orientation[3] / scaling_factors.orientation[3]);
+        out.push_back(state.orientation[0] / (scaling_factors.orientation[0] * 2));
+        out.push_back(state.orientation[1] / (scaling_factors.orientation[1] * 2));
+        out.push_back(state.orientation[2] / (scaling_factors.orientation[2] * 2));
+        out.push_back(state.orientation[3] / (scaling_factors.orientation[3] * 2));
     }
     // ang vel — zeroed when kUseVelocityInClassifier is false
     out.push_back(kUseVelocityInClassifier ? state.angular_velocity[0] / scaling_factors.angular_velocity[0] : 0.0f);

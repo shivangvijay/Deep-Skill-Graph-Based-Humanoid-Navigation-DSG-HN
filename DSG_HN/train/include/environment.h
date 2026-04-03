@@ -79,7 +79,7 @@ public:
     {
         auto state = robot_bridge->getRobotState();
         bool collision = robot_bridge->inCollision() || state.position[0] > robot_bridge->x_max || state.position[0] < robot_bridge->x_min ||
-            state.position[1] > robot_bridge->y_max || state.position[1] < robot_bridge->y_min;
+                         state.position[1] > robot_bridge->y_max || state.position[1] < robot_bridge->y_min;
         return {state, collision};
     }
 
@@ -190,26 +190,29 @@ public:
         bool collision = robot_bridge->inCollision();
         return computeReward(state, collision, goal);
     }
-
-    // If we do not have the ability to turn, then velocity cannot be part of goal condition
     std::pair<torch::Tensor, torch::Tensor> computeReward(const RobotState &state, bool collision, const AbstractedState &goal_)
     {
         auto goal_position = goal_.position;
         auto goal_orientation = goal_.orientation;
-        auto goal_velocity = goal_.velocity;
-        auto goal_angular_velocity = goal_.angular_velocity;
-        // auto &[goal_position, goal_orientation, goal_velocity, goal_angular_velocity] = goal_;
 
+        // 1. Position Error (XY Plane)
         float pos_error = std::sqrt((state.position[0] - goal_position[0]) * (state.position[0] - goal_position[0]) +
                                     (state.position[1] - goal_position[1]) * (state.position[1] - goal_position[1]));
 
-        float vel_error = std::sqrt((state.velocity[0] - goal_velocity[0]) * (state.velocity[0] - goal_velocity[0]) +
-                                    (state.velocity[1] - goal_velocity[1]) * (state.velocity[1] - goal_velocity[1]));
+        // 2. Orientation Error (Angular distance in radians)
+        // Dot product of unit quaternions
+        float dot = std::abs(state.orientation[0] * goal_orientation[0] +
+                             state.orientation[1] * goal_orientation[1] +
+                             state.orientation[2] * goal_orientation[2] +
+                             state.orientation[3] * goal_orientation[3]);
 
-        // std::cout << " " << vel_error << std::endl;
+        // Clamp dot product to [0, 1] to prevent NaN from acos due to precision
+        dot = std::min(1.0f, std::max(0.0f, dot));
+        float ori_error = 2.0f * std::acos(dot);
 
         float reward = 0;
         bool terminated = false;
+
         if (collision ||
             state.position[0] > robot_bridge->x_max || state.position[0] < robot_bridge->x_min ||
             state.position[1] > robot_bridge->y_max || state.position[1] < robot_bridge->y_min)
@@ -217,22 +220,70 @@ public:
             reward -= 30;
             terminated = true;
         }
-        else if (pos_error < 0.5) // && vel_error < 0.25) // commenting out vel for now cause of aformentioned issues. Also ignoring ang vel and orientation for the same reasons
+        // Success Condition: Thresholds for both position and orientation
+        else if (pos_error < 0.5 && ori_error < 0.26) // ~15 degrees threshold
         {
             reward += 50;
             terminated = true;
         }
         else
         {
-            reward -= (pos_error / 50.0); // + (vel_error / 10.0);
+            // Combined dense reward
+            // Weighting these factors is crucial; usually, pos_error is the primary signal
+            reward -= (pos_error / 50.0f);
+            reward -= (ori_error / 10.0f);
         }
+
         if (current_step >= max_steps)
         {
             terminated = true;
         }
+
         return {torch::tensor({reward}, torch::kFloat32),
-                torch::tensor({(float)terminated}, torch::kFloat32)}; // Usually better to store 'done' as a float (0.0 or 1.0) for RL math};
+                torch::tensor({(float)terminated}, torch::kFloat32)};
     }
+    // If we do not have the ability to turn, then velocity cannot be part of goal condition
+    // std::pair<torch::Tensor, torch::Tensor> computeReward(const RobotState &state, bool collision, const AbstractedState &goal_)
+    // {
+    //     auto goal_position = goal_.position;
+    //     auto goal_orientation = goal_.orientation;
+    //     auto goal_velocity = goal_.velocity;
+    //     auto goal_angular_velocity = goal_.angular_velocity;
+    //     // auto &[goal_position, goal_orientation, goal_velocity, goal_angular_velocity] = goal_;
+
+    //     float pos_error = std::sqrt((state.position[0] - goal_position[0]) * (state.position[0] - goal_position[0]) +
+    //                                 (state.position[1] - goal_position[1]) * (state.position[1] - goal_position[1]));
+
+    //     float vel_error = std::sqrt((state.velocity[0] - goal_velocity[0]) * (state.velocity[0] - goal_velocity[0]) +
+    //                                 (state.velocity[1] - goal_velocity[1]) * (state.velocity[1] - goal_velocity[1]));
+
+    //     // std::cout << " " << vel_error << std::endl;
+
+    //     float reward = 0;
+    //     bool terminated = false;
+    //     if (collision ||
+    //         state.position[0] > robot_bridge->x_max || state.position[0] < robot_bridge->x_min ||
+    //         state.position[1] > robot_bridge->y_max || state.position[1] < robot_bridge->y_min)
+    //     {
+    //         reward -= 30;
+    //         terminated = true;
+    //     }
+    //     else if (pos_error < 0.5) // && vel_error < 0.25) // commenting out vel for now cause of aformentioned issues. Also ignoring ang vel and orientation for the same reasons
+    //     {
+    //         reward += 50;
+    //         terminated = true;
+    //     }
+    //     else
+    //     {
+    //         reward -= (pos_error / 50.0); // + (vel_error / 10.0);
+    //     }
+    //     if (current_step >= max_steps)
+    //     {
+    //         terminated = true;
+    //     }
+    //     return {torch::tensor({reward}, torch::kFloat32),
+    //             torch::tensor({(float)terminated}, torch::kFloat32)}; // Usually better to store 'done' as a float (0.0 or 1.0) for RL math};
+    // }
 
     torch::Tensor transformState(const RobotState &state, const AbstractedState &goal_)
     {

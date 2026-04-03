@@ -51,17 +51,17 @@ int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout wh
         {
             _env->resetTo(_global_start);
         }
-        else if (p >= 0.2 && p < 0.4)
-        {
-            auto start = _sampleStartNearObstacle();
-            _env->resetTo(start);
-        }
-        else if (p >= 0.4 && p < 0.6)
-        {
-            auto start = _sampleStartInterpolated();
-            _env->resetTo(start);
-        }
-        else if (p >= 0.6 && p < 0.8)
+        // else if (p >= 0.2 && p < 0.4)
+        // {
+        //     auto start = _sampleStartNearObstacle();
+        //     _env->resetTo(start);
+        // }
+        // else if (p >= 0.4 && p < 0.6)
+        // {
+        //     auto start = _sampleStartInterpolated();
+        //     _env->resetTo(start);
+        // }
+        else if (p >= 0.2 && p < 0.7)
         {
             auto start = _sampleStartNearBoundary();
             _env->resetTo(start);
@@ -205,7 +205,7 @@ std::pair<int, AbstractedState> DeepSkillChaining::_pickOption(bool eval)
                 best_option = o;
                 break;
             }
-            else if (q_vals[0].item<float>() > best_q_val)
+            else if (q_vals[o].item<float>() > best_q_val)
             {
                 best_option = o;
                 best_q_val = q_vals[0].item<float>();
@@ -318,10 +318,12 @@ bool DeepSkillChaining::_containsGlobalStartState()
 void DeepSkillChaining::_makeSkill(bool is_global, std::shared_ptr<Skill> parent)
 {
     int id = (is_global) ? _global_option_idx : _unfinished_option_idx + 1;
+    float lr_actor = (is_global) ? _cfg.lr_actor_global : _cfg.lr_actor;
+    float lr_critic = (is_global) ? _cfg.lr_critic_global : _cfg.lr_critic;
     std::shared_ptr<Skill> global_option = (is_global) ? nullptr : _skills[_global_option_idx];
     std::shared_ptr<Skill> new_skill = std::make_shared<Skill>(id, _env,
                                                                _cfg.actor_layers, _cfg.critic_layers, _device,
-                                                               _cfg.lr_actor, _cfg.lr_critic, _cfg.tau, _cfg.gamma, _cfg.max_obstacles, _cfg.actor_warmup_steps,
+                                                               lr_actor, lr_critic, _cfg.tau, _cfg.gamma, _cfg.max_obstacles, _cfg.actor_warmup_steps,
                                                                _cfg.batch_size, _cfg.actor_update_freq, _cfg.last_k,
                                                                _cfg.max_option_steps, _cfg.nu, parent, _cfg.gestation_n, is_global, _global_goal, global_option);
     if (!is_global)
@@ -332,6 +334,7 @@ void DeepSkillChaining::_makeSkill(bool is_global, std::shared_ptr<Skill> parent
         std::cout << "\nMaking New Skill With ID: " << id << " (parent=" << parent->goalHits() << "/" << parent->gestationPeriod() << " id=" << id - 1 << ")\n";
     else
         std::cout << "\nMaking New Skill With ID: " << id << "\n";
+    // if (id > 3) _robot_bridge->startRender();
     _skills.push_back(new_skill);
     _poo.addOption(0.0f);
     _poo.hardCopy();
@@ -394,6 +397,12 @@ AbstractedState DeepSkillChaining::_sampleStartNearObstacle()
     for (int attempts = 0; attempts < 300; attempts++)
     {
         auto [p1, q1, v1, w1] = _robot_bridge->generateRandomPoseWithVel();
+        v1[0] = 0;
+        v1[1] = 0;
+        v1[2] = 0;
+        w1[0] = 0;
+        w1[1] = 0;
+        w1[2] = 0;
 
         std::array<float, 3> p2;
         p2[0] = p1[0] + _sampleGaussianDist(0.0f, std_pos); // TODO: need to clamp to be in bounds
@@ -435,6 +444,13 @@ AbstractedState DeepSkillChaining::_sampleStartInterpolated()
         pos[2] = _global_start.position[2];
 
         auto [_, quat, vel, ang_vel] = _robot_bridge->generateRandomPoseWithVel();
+        vel[0] = 0;
+        vel[1] = 0;
+        vel[2] = 0;
+        ang_vel[0] = 0;
+        ang_vel[1] = 0;
+        ang_vel[2] = 0;
+        ang_vel[3] = 0;
         if (_robot_bridge->isConfigurationValid(pos, quat, vel, ang_vel))
             return {pos, quat, vel, ang_vel};
     }
@@ -444,7 +460,7 @@ AbstractedState DeepSkillChaining::_sampleStartInterpolated()
 
 AbstractedState DeepSkillChaining::_sampleStartNearBoundary()
 {
-    float std_pos = 1.0f;
+    float std_pos = 2.0f;
     float std_rot = 0.2f;
     float std_vel = 0.1;
     float std_ang_vel = 0.1;
@@ -457,13 +473,16 @@ AbstractedState DeepSkillChaining::_sampleStartNearBoundary()
         state.position[1] += _sampleGaussianDist(0.0f, std_pos);
         state.position[2] += _sampleGaussianDist(0.0f, std_pos);
 
-        state.velocity[0] += _sampleGaussianDist(0.0f, std_vel);
-        state.velocity[1] += _sampleGaussianDist(0.0f, std_vel);
-        state.velocity[2] += _sampleGaussianDist(0.0f, std_vel);
+        state.velocity[0] = 0;
+        state.velocity[1] = 0;
+        state.velocity[2] = 0;
+        // state.velocity[0] += _sampleGaussianDist(0.0f, std_vel);
+        // state.velocity[1] += _sampleGaussianDist(0.0f, std_vel);
+        // state.velocity[2] += _sampleGaussianDist(0.0f, std_vel);
 
-        state.angular_velocity[0] += _sampleGaussianDist(0.0f, std_ang_vel);
-        state.angular_velocity[1] += _sampleGaussianDist(0.0f, std_ang_vel);
-        state.angular_velocity[2] += _sampleGaussianDist(0.0f, std_ang_vel);
+        state.angular_velocity[0] = 0; //+= _sampleGaussianDist(0.0f, std_ang_vel);
+        state.angular_velocity[1] = 0; //+= _sampleGaussianDist(0.0f, std_ang_vel);
+        state.angular_velocity[2] = 0; //+= _sampleGaussianDist(0.0f, std_ang_vel);
 
         state.orientation = _getGaussianQuaternionPerturbation(state.orientation, std_rot);
 
@@ -511,10 +530,10 @@ AbstractedState DeepSkillChaining::_sampleStartNearBoundary()
 
 /************************************** main **************************************/
 
-#define SCENE_FILE "../config/scene/test_scene.xml"
-#define OG_ACTOR "best_actor.pt"
-#define OG_CRITIC1 "best_critic_1.pt"
-#define OG_CRITIC2 "best_critic_2.pt"
+#define SCENE_FILE "../config/scene/umaze_scene_obs_free.xml"
+#define OG_ACTOR "best_actor copy.pt"
+#define OG_CRITIC1 "best_critic_1 copy.pt"
+#define OG_CRITIC2 "best_critic_2 copy.pt"
 
 #define X_MIN -7.0f
 #define X_MAX 7.0f
@@ -546,8 +565,8 @@ int main(int argc, char **argv)
 
     DeepSkillChaining::Config cfg;
     cfg.gestation_n = 30; // number of total successes that should be collected during gestation phase. Perhaps use a percentage for the option being currently learnt?
-    cfg.last_k = 15;
-    cfg.max_option_steps = 30; // each option should be meaningful enough. 5Hz and 20 steps means each option can run for up to 4 seconds
+    cfg.last_k = 10;
+    cfg.max_option_steps = 50; // each option should be meaningful enough. 5Hz and 20 steps means each option can run for up to 4 seconds
     cfg.refinement_eps = 20;
     cfg.nu = 0.1;
     cfg.max_skills = 6;

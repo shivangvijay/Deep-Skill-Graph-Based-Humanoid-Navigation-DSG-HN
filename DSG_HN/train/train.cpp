@@ -12,7 +12,7 @@
 #include "skill.h"
 #include <torch/torch.h>
 
-#define SCENE_FILE "../config/scene/test_scene.xml"
+#define SCENE_FILE "../config/scene/umaze_scene_obs_free.xml"
 #define POLICY_DIR "config/policy/velocity"
 #define CONFIG_PATH "config/config.yaml"
 
@@ -89,9 +89,9 @@ int main(int argc, char **argv)
 
     if (PRETRAIN)
     {
-        torch::load(agent.actor_local, "../models/best_actor.pt"); // start with existing model if you want
-        torch::load(agent.critic_local_1, "../models/best_critic_1.pt");
-        torch::load(agent.critic_local_2, "../models/best_critic_2.pt");
+        torch::load(agent.actor_local, "../models/best_actor copy.pt"); // start with existing model if you want
+        torch::load(agent.critic_local_1, "../models/best_critic_1 copy.pt");
+        torch::load(agent.critic_local_2, "../models/best_critic_2 copy.pt");
         agent.hardCopy();
     }
 
