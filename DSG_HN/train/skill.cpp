@@ -346,7 +346,7 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
         {
             bool first_phase1 = !_classifier.trained();
             _pessimistic_classifier.trainOneClass(pos_vecs, _nu); // tight
-            _classifier.trainOneClass(pos_vecs, _nu / 10.0);      // loose / optimistic
+            _classifier.trainOneClass(pos_vecs, _nu / 10.0);       // loose / optimistic
             if (first_phase1)
                 std::cout << "\n[Skill " << _id << "] Classifier Phase 1: OneClass init. Pos=" << pos_vecs.size() << "\n";
         }
@@ -356,7 +356,7 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
         // binary SVC as optimistic, then one-class re-fit on SVC-positive predictions as pessimistic.
         int neg_count = std::count(_gestation_labels.begin(), _gestation_labels.end(), -1);
         _classifier.train(_gestation_vecs, _gestation_labels,
-                          /*C=*/100.0, /*gamma=*/0.15, /*balance_classes=*/true);
+                          /*C=*/10.0, /*gamma=*/-1.0, /*balance_classes=*/true);
 
         // Re-fit pessimistic on only the states the optimistic SVC predicts as positive
         std::vector<std::vector<float>> svc_positive_vecs;
@@ -406,36 +406,36 @@ std::vector<float> Skill::_classifierVec(const AbstractedState &state) const
 {
     std::vector<float> out;
     auto scaling_factors = _env->env_scaling_factors;
-    out.reserve(13);
+    out.reserve(3);
 
     // global pos
     out.push_back(state.position[0] / scaling_factors.position[0]);
     out.push_back(state.position[1] / scaling_factors.position[1]);
     out.push_back(state.position[2] / scaling_factors.position[2]);
     // global vel — zeroed when kUseVelocityInClassifier is false (environment spawns with zero velocity)
-    out.push_back(kUseVelocityInClassifier ? state.velocity[0] / scaling_factors.velocity[0] : 0.0f);
-    out.push_back(kUseVelocityInClassifier ? state.velocity[1] / scaling_factors.velocity[1] : 0.0f);
-    out.push_back(kUseVelocityInClassifier ? state.velocity[2] / scaling_factors.velocity[2] : 0.0f);
+    // out.push_back(kUseVelocityInClassifier ? state.velocity[0] / scaling_factors.velocity[0] : 0.0f);
+    // out.push_back(kUseVelocityInClassifier ? state.velocity[1] / scaling_factors.velocity[1] : 0.0f);
+    // out.push_back(kUseVelocityInClassifier ? state.velocity[2] / scaling_factors.velocity[2] : 0.0f);
 
-    // // orientation
-    if (state.orientation[0] < 0)
-    {
-        out.push_back(-state.orientation[0] / (scaling_factors.orientation[0] * 2));
-        out.push_back(-state.orientation[1] / (scaling_factors.orientation[1] * 2));
-        out.push_back(-state.orientation[2] / (scaling_factors.orientation[2] * 2));
-        out.push_back(-state.orientation[3] / (scaling_factors.orientation[3] * 2));
-    }
-    else
-    {
-        out.push_back(state.orientation[0] / (scaling_factors.orientation[0] * 2));
-        out.push_back(state.orientation[1] / (scaling_factors.orientation[1] * 2));
-        out.push_back(state.orientation[2] / (scaling_factors.orientation[2] * 2));
-        out.push_back(state.orientation[3] / (scaling_factors.orientation[3] * 2));
-    }
-    // ang vel — zeroed when kUseVelocityInClassifier is false
-    out.push_back(kUseVelocityInClassifier ? state.angular_velocity[0] / scaling_factors.angular_velocity[0] : 0.0f);
-    out.push_back(kUseVelocityInClassifier ? state.angular_velocity[1] / scaling_factors.angular_velocity[1] : 0.0f);
-    out.push_back(kUseVelocityInClassifier ? state.angular_velocity[2] / scaling_factors.angular_velocity[2] : 0.0f);
+    // // // orientation
+    // if (state.orientation[0] < 0)
+    // {
+    //     out.push_back(-state.orientation[0] / scaling_factors.orientation[0]);
+    //     out.push_back(-state.orientation[1] / scaling_factors.orientation[1]);
+    //     out.push_back(-state.orientation[2] / scaling_factors.orientation[2]);
+    //     out.push_back(-state.orientation[3] / scaling_factors.orientation[3]);
+    // }
+    // else
+    // {
+    //     out.push_back(state.orientation[0] / scaling_factors.orientation[0]);
+    //     out.push_back(state.orientation[1] / scaling_factors.orientation[1]);
+    //     out.push_back(state.orientation[2] / scaling_factors.orientation[2]);
+    //     out.push_back(state.orientation[3] / scaling_factors.orientation[3]);
+    // }
+    // // ang vel — zeroed when kUseVelocityInClassifier is false
+    // out.push_back(kUseVelocityInClassifier ? state.angular_velocity[0] / scaling_factors.angular_velocity[0] : 0.0f);
+    // out.push_back(kUseVelocityInClassifier ? state.angular_velocity[1] / scaling_factors.angular_velocity[1] : 0.0f);
+    // out.push_back(kUseVelocityInClassifier ? state.angular_velocity[2] / scaling_factors.angular_velocity[2] : 0.0f);
     return out;
 }
 
@@ -443,35 +443,36 @@ std::vector<float> Skill::_classifierVec(const RobotState &state) const
 {
     std::vector<float> out;
     auto scaling_factors = _env->env_scaling_factors;
-    out.reserve(13);
+    out.reserve(3);
 
     // global pos
     out.push_back(state.position[0] / scaling_factors.position[0]);
     out.push_back(state.position[1] / scaling_factors.position[1]);
     out.push_back(state.position[2] / scaling_factors.position[2]);
     // global vel — zeroed when kUseVelocityInClassifier is false (environment spawns with zero velocity)
-    out.push_back(kUseVelocityInClassifier ? state.velocity[0] / scaling_factors.velocity[0] : 0.0f);
-    out.push_back(kUseVelocityInClassifier ? state.velocity[1] / scaling_factors.velocity[1] : 0.0f);
-    out.push_back(kUseVelocityInClassifier ? state.velocity[2] / scaling_factors.velocity[2] : 0.0f);
-    // orientation
-    if (state.orientation[0] < 0)
-    {
-        out.push_back(-state.orientation[0] / (scaling_factors.orientation[0] * 2));
-        out.push_back(-state.orientation[1] / (scaling_factors.orientation[1] * 2));
-        out.push_back(-state.orientation[2] / (scaling_factors.orientation[2] * 2));
-        out.push_back(-state.orientation[3] / (scaling_factors.orientation[3] * 2));
-    }
-    else
-    {
-        out.push_back(state.orientation[0] / (scaling_factors.orientation[0] * 2));
-        out.push_back(state.orientation[1] / (scaling_factors.orientation[1] * 2));
-        out.push_back(state.orientation[2] / (scaling_factors.orientation[2] * 2));
-        out.push_back(state.orientation[3] / (scaling_factors.orientation[3] * 2));
-    }
-    // ang vel — zeroed when kUseVelocityInClassifier is false
-    out.push_back(kUseVelocityInClassifier ? state.angular_velocity[0] / scaling_factors.angular_velocity[0] : 0.0f);
-    out.push_back(kUseVelocityInClassifier ? state.angular_velocity[1] / scaling_factors.angular_velocity[1] : 0.0f);
-    out.push_back(kUseVelocityInClassifier ? state.angular_velocity[2] / scaling_factors.angular_velocity[2] : 0.0f);
+    // out.push_back(kUseVelocityInClassifier ? state.velocity[0] / scaling_factors.velocity[0] : 0.0f);
+    // out.push_back(kUseVelocityInClassifier ? state.velocity[1] / scaling_factors.velocity[1] : 0.0f);
+    // out.push_back(kUseVelocityInClassifier ? state.velocity[2] / scaling_factors.velocity[2] : 0.0f);
+
+    // // orientation
+    // if (state.orientation[0] < 0)
+    // {
+    //     out.push_back(-state.orientation[0] / scaling_factors.orientation[0]);
+    //     out.push_back(-state.orientation[1] / scaling_factors.orientation[1]);
+    //     out.push_back(-state.orientation[2] / scaling_factors.orientation[2]);
+    //     out.push_back(-state.orientation[3] / scaling_factors.orientation[3]);
+    // }
+    // else
+    // {
+    //     out.push_back(state.orientation[0] / scaling_factors.orientation[0]);
+    //     out.push_back(state.orientation[1] / scaling_factors.orientation[1]);
+    //     out.push_back(state.orientation[2] / scaling_factors.orientation[2]);
+    //     out.push_back(state.orientation[3] / scaling_factors.orientation[3]);
+    // }
+    // // ang vel — zeroed when kUseVelocityInClassifier is false
+    // out.push_back(kUseVelocityInClassifier ? state.angular_velocity[0] / scaling_factors.angular_velocity[0] : 0.0f);
+    // out.push_back(kUseVelocityInClassifier ? state.angular_velocity[1] / scaling_factors.angular_velocity[1] : 0.0f);
+    // out.push_back(kUseVelocityInClassifier ? state.angular_velocity[2] / scaling_factors.angular_velocity[2] : 0.0f);
     return out;
 }
 

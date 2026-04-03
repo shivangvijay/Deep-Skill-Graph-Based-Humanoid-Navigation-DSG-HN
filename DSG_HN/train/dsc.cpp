@@ -277,12 +277,17 @@ float DeepSkillChaining::_dscRollout(bool eval)
         // make a new skill if we have finished training the current option, but still have not reached the end goal
         if (_shouldCreateNewOption())
         {
-            AbstractedState sample = _skills[_unfinished_option_idx]->sampleSubgoalState(false);
-            float dx = sample.position[0] - _global_start.position[0];
-            float dy = sample.position[1] - _global_start.position[1];
-            float dz = sample.position[2] - _global_start.position[2];
-            float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
-            std::cout << "\n[Option " << _unfinished_option_idx << " matured] Distance of initiation region to start: " << dist << " m\n";
+
+            float total_dist = 0;
+            for (int i = 0; i < _cfg.gestation_n; i++)
+            {
+                AbstractedState sample = _skills[_unfinished_option_idx]->sampleSubgoalState(false);
+                float dx = sample.position[0] - _global_start.position[0];
+                float dy = sample.position[1] - _global_start.position[1];
+                float dz = sample.position[2] - _global_start.position[2];
+                total_dist += std::sqrt(dx * dx + dy * dy + dz * dz);
+            }
+            std::cout << "\n[Option " << _unfinished_option_idx << " matured] Average distance of initiation region to start: " << (total_dist / _cfg.gestation_n) << " m\n";
             _makeSkill(false, _skills.back());
         }
     }
@@ -565,13 +570,13 @@ int main(int argc, char **argv)
 
     DeepSkillChaining::Config cfg;
     cfg.gestation_n = 30; // number of total successes that should be collected during gestation phase. Perhaps use a percentage for the option being currently learnt?
-    cfg.last_k = 10;
+    cfg.last_k = 20;
     cfg.max_option_steps = 50; // each option should be meaningful enough. 5Hz and 20 steps means each option can run for up to 4 seconds
     cfg.refinement_eps = 20;
     cfg.nu = 0.1;
     cfg.max_skills = 6;
     cfg.actor_warmup_steps = 0;  // gonna keep at zero for testing purposes as well
-    cfg.warmup_episodes = 0;   // keep at zero since I am assuming we have done pretraining
+    cfg.warmup_episodes = 0;     // keep at zero since I am assuming we have done pretraining
     cfg.render_training = false; // set to true to watch rollouts during training (slower)
     cfg.verbose = true;          // set to true for per-rollout console output
     cfg.log_interval = 50;       // print skill status table every N episodes
