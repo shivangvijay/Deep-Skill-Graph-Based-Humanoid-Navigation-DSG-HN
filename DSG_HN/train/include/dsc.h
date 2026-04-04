@@ -59,14 +59,14 @@ public:
         int batch_size = 256;
         int actor_update_freq = 2;
 
-        bool render_training = false; // if true, startRender() is called before the training loop (slows training)
-        bool verbose = false;         // per-rollout logging inside each episode
+        bool render_training = false;           // if true, startRender() is called before the training loop (slows training)
+        bool verbose = false;                   // per-rollout logging inside each episode
         bool visualize_initiation_sets = false; // if true, periodically render initiation set visualization
-        int log_interval = 50;        // print episode summary + skill status table every N episodes
+        int log_interval = 50;                  // print episode summary + skill status table every N episodes
     };
 
-    // TODO: need different constructors: one where you can pass in a global agent, and one where you can pass
-    // in nothing at all as well
+    // TODO: depending on DSG setup may need other constructors that allow you to pass in the global agent
+    // without having to save it to a file
     DeepSkillChaining(std::shared_ptr<RobotBridgeTrain> robot_bridge,
                       torch::Device device,
                       AbstractedState global_goal,
@@ -74,6 +74,13 @@ public:
                       const std::string &pretrain_actor_path,
                       const std::string &pretrain_critic1_path,
                       const std::string &pretrain_critic2_path,
+                      const std::string &scene_file,
+                      Config cfg);
+
+    DeepSkillChaining(std::shared_ptr<RobotBridgeTrain> robot_bridge,
+                      torch::Device device,
+                      AbstractedState global_goal,
+                      AbstractedState global_start,
                       const std::string &scene_file,
                       Config cfg);
 
@@ -114,13 +121,12 @@ private:
     void _makeSkill(bool is_global, std::shared_ptr<Skill> parent);
     void _loadGlobalOption(const std::string &actor_path, const std::string &critic1_path, const std::string &critic2_path);
 
-    float _sampleGaussianDist(float mu, float std); // utility function to sample a gaussian
-    std::array<float, 4> _getGaussianQuaternionPerturbation(const std::array<float, 4>& q_orig, float sigma_rad); // utility function to perturb quaternion by random noise
+    float _sampleGaussianDist(float mu, float std);                                                               // utility function to sample a gaussian
+    std::array<float, 4> _getGaussianQuaternionPerturbation(const std::array<float, 4> &q_orig, float sigma_rad); // utility function to perturb quaternion by random noise
 
     AbstractedState _sampleStartNearObstacle(); // gaussian sampling (see robot autonomy slides)
     AbstractedState _sampleStartInterpolated(); // randomly sample position linearly interpolated between start and goal (with noise)
     AbstractedState _sampleStartNearBoundary(); // sample start near edge of last mature option
     void _validateOption();
     bool _shouldCreateNewOption();
-
 };
