@@ -3,12 +3,17 @@
 #include "joystick/joystick.h"
 #include "isaaclab/devices/keyboard/keyboard.h"
 #include <iostream>
+#include <fstream>
+#include <deque>
 #include <cmath>
 #include <csignal>
 #include <atomic>
 #include <string>
 
 #define USE_WALL_CLOCK_TIME true
+#define RECORD_TRANSITIONS true
+#define TRANSITION_FILE "transitions.csv"
+#define RESET_TRIM_SECONDS 5.0
 
 #define SCENE_FILE "umaze_scene.xml"
 // Match policy training ranges from deploy.yaml
@@ -79,6 +84,27 @@ int main(int argc, char **argv)
     auto [pos, quat] = robot_bridge->generateRandomPose();
     robot_bridge->resetRobot(pos, quat);
 
+    // ── Transition recording ────────────────────────────────────────────
+    std::ofstream csv;
+    struct RowMeta { double timestamp; std::streampos pos; };
+    std::deque<RowMeta> row_meta;
+    size_t transition_count = 0;
+    size_t reset_count = 0;
+    int episode = 0;
+    int step_in_ep = 0;
+
+    if (RECORD_TRANSITIONS)
+    {
+        csv.open(TRANSITION_FILE);
+        csv << "episode,step,"
+            << "x,y,z,qw,qx,qy,qz,vx,vy,vz,omega_x,omega_y,omega_z,"
+            << "cmd_vx,cmd_vy,cmd_yaw,"
+            << "next_x,next_y,next_z,next_qw,next_qx,next_qy,next_qz,"
+            << "next_vx,next_vy,next_vz,next_omega_x,next_omega_y,next_omega_z,"
+            << "collision\n";
+        std::cout << "Recording transitions to " << TRANSITION_FILE << "\n\n";
+    }
+
     while (running)
     {
         kb.update();
@@ -93,8 +119,37 @@ int main(int argc, char **argv)
         // ── Reset ─────────────────────────────────────────────────────────
         if (kb.key() == "r" || (has_joystick && js.button_[6]))
         {
+            if (RECORD_TRANSITIONS && !row_meta.empty())
+            {
+                auto now = std::chrono::steady_clock::now().time_since_epoch();
+                double now_ts = std::chrono::duration<double>(now).count();
+                double cutoff = now_ts - RESET_TRIM_SECONDS;
+
+                auto trim_it = row_meta.begin();
+                for (auto it = row_meta.begin(); it != row_meta.end(); ++it)
+                {
+                    if (it->timestamp >= cutoff) { trim_it = it; break; }
+                }
+
+                size_t trim_count = std::distance(trim_it, row_meta.end());
+                std::streampos trunc_pos = trim_it->pos;
+                row_meta.erase(trim_it, row_meta.end());
+
+                csv.flush();
+                csv.close();
+                truncate(TRANSITION_FILE, static_cast<off_t>(trunc_pos));
+                csv.open(TRANSITION_FILE, std::ios::app);
+                transition_count -= trim_count;
+
+                std::cout << "Reset: trimmed " << trim_count << " rows. ";
+            }
+
             auto [pos, quat] = robot_bridge->generateRandomPose();
             robot_bridge->resetRobot(pos, quat);
+            episode++;
+            step_in_ep = 0;
+            reset_count++;
+            std::cout << "Robot reset (#" << reset_count << "). Transitions so far: " << transition_count << "\n";
             continue;
         }
 
@@ -124,17 +179,57 @@ int main(int argc, char **argv)
         }
         auto t0 = std::chrono::steady_clock::now();
 
+        RobotState s0 = robot_bridge->getRobotState();
+
         robot_bridge->publishVelCommand({vx, vy, oz});
         robot_bridge->update();
-        auto state = robot_bridge->getRobotState();
 
-        std::cout << "Command: " << vx << ", " << vy << ", " << oz << std::endl;
-        std::cout << "Velocity: " << state.velocity[0] << ", " << state.velocity[1] << ", " << state.velocity[2] << std::endl;
+        RobotState s1 = robot_bridge->getRobotState();
+        bool collision = robot_bridge->inCollision();
+
+        // ── Record transition ───────────────────────────────────────────
+        if (RECORD_TRANSITIONS && csv.is_open())
+        {
+            double ts = std::chrono::duration<double>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            std::streampos row_start = csv.tellp();
+
+            csv << episode << "," << step_in_ep << ","
+                << s0.position[0]         << "," << s0.position[1]         << "," << s0.position[2]         << ","
+                << s0.orientation[0]      << "," << s0.orientation[1]      << "," << s0.orientation[2]      << "," << s0.orientation[3] << ","
+                << s0.velocity[0]         << "," << s0.velocity[1]         << "," << s0.velocity[2]         << ","
+                << s0.angular_velocity[0] << "," << s0.angular_velocity[1] << "," << s0.angular_velocity[2] << ","
+                << vx << "," << vy << "," << oz << ","
+                << s1.position[0]         << "," << s1.position[1]         << "," << s1.position[2]         << ","
+                << s1.orientation[0]      << "," << s1.orientation[1]      << "," << s1.orientation[2]      << "," << s1.orientation[3] << ","
+                << s1.velocity[0]         << "," << s1.velocity[1]         << "," << s1.velocity[2]         << ","
+                << s1.angular_velocity[0] << "," << s1.angular_velocity[1] << "," << s1.angular_velocity[2] << ","
+                << (collision ? 1 : 0)    << "\n";
+
+            row_meta.push_back({ts, row_start});
+            transition_count++;
+            step_in_ep++;
+
+            if (transition_count % 50 == 0)
+                csv.flush();
+        }
+
+        std::cout << "\rCmd: [" << vx << ", " << vy << ", " << oz
+                  << "]  Vel: [" << s1.velocity[0] << ", " << s1.velocity[1] << "]"
+                  << "  Transitions: " << transition_count << std::flush;
 
         auto elapsed = std::chrono::steady_clock::now() - t0;
         auto remaining = std::chrono::milliseconds(100) - elapsed;
         if (remaining > std::chrono::milliseconds(0) && USE_WALL_CLOCK_TIME)
             std::this_thread::sleep_for(remaining);
+    }
+
+    if (RECORD_TRANSITIONS && csv.is_open())
+    {
+        csv.flush();
+        csv.close();
+        std::cout << "\n\nSaved " << transition_count << " transitions to "
+                  << TRANSITION_FILE << " (resets: " << reset_count << ")\n";
     }
 
     return 0;
