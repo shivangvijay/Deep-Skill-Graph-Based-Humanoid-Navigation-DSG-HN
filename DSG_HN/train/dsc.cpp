@@ -61,7 +61,7 @@ int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout wh
         //     auto start = _sampleStartInterpolated();
         //     _env->resetTo(start);
         // }
-        else if (p >= 0.2 && p < 0.7)
+        else if (p >= 0.2 && p < 0.6)
         {
             auto start = _sampleStartNearBoundary();
             _env->resetTo(start);
@@ -253,7 +253,10 @@ float DeepSkillChaining::_dscRollout(bool eval)
         auto [steps_taken, cum_reward, local_done, first_state_poo, last_state_poo] = _skills[option]->rollout(goal);
 
         if (steps_taken == 0) // this condition occurs when we just finished training a new skill, but then find ourselves in the initiation set of that skill while trying to train the new skill
-            break;
+        {
+            step++;
+            continue;
+        }
 
         // Check global episode termination independently of local skill done.
         // done from rollout() is the local termination condition and should not stop the episode.
@@ -435,14 +438,18 @@ AbstractedState DeepSkillChaining::_sampleStartNearObstacle()
     return _env->getRandomValidAbstractedState();
 }
 
+// perhaps: instead of sampling interpolating between goal and start, interpolate between start and random part of inititation set of last mature option
 AbstractedState DeepSkillChaining::_sampleStartInterpolated()
 {
-    std::uniform_real_distribution<float> dist1(std::min(_global_goal.position[0], _global_start.position[0]), std::max(_global_goal.position[0], _global_start.position[0]));
-    std::uniform_real_distribution<float> dist2(std::min(_global_goal.position[1], _global_start.position[1]), std::max(_global_goal.position[1], _global_start.position[1]));
 
     float pos_std = 1.0f; // tune this based on how much spread you want
     for (int attempts = 0; attempts < 300; attempts++)
     {
+        AbstractedState local_goal = _skills[_unfinished_option_idx]->getLocalGoal();
+
+        std::uniform_real_distribution<float> dist1(std::min(local_goal.position[0], _global_start.position[0]), std::max(local_goal.position[0], _global_start.position[0]));
+        std::uniform_real_distribution<float> dist2(std::min(local_goal.position[1], _global_start.position[1]), std::max(local_goal.position[1], _global_start.position[1]));
+
         std::array<float, 3> pos;
         pos[0] = dist1(_rng) + _sampleGaussianDist(0.0f, pos_std);
         pos[1] = dist2(_rng) + _sampleGaussianDist(0.0f, pos_std);
@@ -569,7 +576,7 @@ int main(int argc, char **argv)
         SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, /*render=*/false);
 
     DeepSkillChaining::Config cfg;
-    cfg.gestation_n = 30; // number of total successes that should be collected during gestation phase. Perhaps use a percentage for the option being currently learnt?
+    cfg.gestation_n = 50; // number of total successes that should be collected during gestation phase. Perhaps use a percentage for the option being currently learnt?
     cfg.last_k = 20;
     cfg.max_option_steps = 50; // each option should be meaningful enough. 5Hz and 20 steps means each option can run for up to 4 seconds
     cfg.refinement_eps = 20;
@@ -584,6 +591,9 @@ int main(int argc, char **argv)
     AbstractedState global_goal = {{-4.5, 4.1, 0}, {0, 0, 0, -1}, {0, 0, 0}, {0, 0, 0}};
     AbstractedState global_start = {{-5.3, -4.5, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 
+    // AbstractedState global_goal = {{3.0, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    // AbstractedState global_start = {{-3, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+
     DeepSkillChaining dsc(robot_bridge, device, global_goal, global_start, "../models/best_actor.pt", "../models/best_critic_1.pt", "../models/best_critic_2.pt", cfg);
 
     int n = dsc.train(20000);
@@ -596,7 +606,7 @@ int main(int argc, char **argv)
     // std::cout << "\n=== Evaluation (20 episodes) ===" << std::endl;
     float total = 0.0f;
     robot_bridge->startRender();
-    for (int i = 0; i < 20; ++i)
+    for (int i = 0; i < 40; ++i)
     {
         float r = dsc.execute();
         total += r;

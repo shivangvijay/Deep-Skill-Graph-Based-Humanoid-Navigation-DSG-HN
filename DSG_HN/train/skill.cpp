@@ -514,9 +514,9 @@ float Skill::distanceToState(const AbstractedState &state) const
         float dist = 0;
         // doing this euclid distance metric is not really right, but I am lazy so am just leaving it for now
         dist += _euclideanDistance(state.position, start.state.position, false);
-        dist += _euclideanDistance(state.orientation, start.state.orientation, false);
-        dist += _euclideanDistance(state.velocity, start.state.velocity, false);
-        dist += _euclideanDistance(state.angular_velocity, start.state.angular_velocity, false);
+        // dist += _euclideanDistance(state.orientation, start.state.orientation, false);
+        // dist += _euclideanDistance(state.velocity, start.state.velocity, false);
+        // dist += _euclideanDistance(state.angular_velocity, start.state.angular_velocity, false);
 
         max_dist = std::max(dist, max_dist);
     }
