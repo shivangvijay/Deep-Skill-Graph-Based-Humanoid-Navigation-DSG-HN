@@ -186,9 +186,9 @@ The sandbox scene is set by `SCENE_FILE` at the top of `DSG_HN/sandbox/sandbox.c
 
 ---
 
-### Training
+### Pre-Training
 
-See DSG_HN/train for example training and testing files. Additionally, this repository contains an example gym environment and TD3 implementation that has been used to train a waypoint follower with 95%+ accuracy. To run the example training script, first navigate to build and uncomment the obstacles in the ai_maker_space_scene.xml file to simplify the env. Then run:
+See DSG_HN/train for example training and testing files. Additionally, this repository contains an example gym environment and TD3 implementation that has been used to train a waypoint follower with 95%+ accuracy on simple test maps. To run the example training script, inside train.cpp, at line 15, choose the file for which you want to perform pre-training. Note that the pytorch files will be saved inside the build directory.
 
 ```bash
 cd DSG_HN/train/build
@@ -198,6 +198,15 @@ cd DSG_HN/train/build
 To run the testing script:
 ```bash
 ./test
+```
+
+### DSC Training
+
+After performing pre-training, you can use the pytorch files for training dsc. First, copy the 3 created pytorch files into a folder outside of build. Inside train/dsc.cpp, lines 546-548, update the paths to reflect the locations of the pretrained files. Secondly, alter line 545 to reflect the desired training environment. To run training, simply execute the following commands:
+
+```bash
+cd DSG_HN/train/build
+./dsc
 ```
 
 ### Deployment
