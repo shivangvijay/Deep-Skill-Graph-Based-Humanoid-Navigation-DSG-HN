@@ -4,12 +4,9 @@
 #include <vector>
 #include <math.h>
 
-using AbstractedState = std::tuple<std::array<float, 3>, std::array<float, 4>, std::array<float, 3>, std::array<float, 3>>;
-
 /*
 
-IMPORTANT: WHEN SETTING GOAL: NOTE THAT FOR VEL, THE LAST COMPONENT OF THE LINEAR VEL SHOULD BE ZERO. FOR ANGULAR VEL, ONLY THE LAST
-COMPONENT (YAW) SHOULD BE NON-ZERO
+THIS FILE CONTAINS UTILITIES FOR USE WITH THE DEEP LEARNING AGENT
 
 */
 
@@ -25,24 +22,77 @@ public:
         int gravity_dim = 3;                                // local_up
         int self_dyn_dim = 3 + 3 + 3;                       // local_vel, local_ang_vel, local_accel
         int goal_dim = 3 + 4 + 3 + 3;                       // relative_pos, releative_orientation, relative_vel, relative angular vel
-        int obstacle_dim = (int)obstacles.size() * 4;
+        int boundary_dim = 4;
+        obstacle_dim = (int)obstacles.size() * 4;
 
-        state_dim = proprio_dim + gravity_dim + self_dyn_dim + goal_dim + obstacle_dim;
+        state_dim = proprio_dim + gravity_dim + self_dyn_dim + goal_dim + boundary_dim;
+
+        std::array<float, 3> pos_scales = {(robot_bridge->x_max - robot_bridge->x_min) / 2, (robot_bridge->y_max - robot_bridge->y_min) / 2, 0.5}; // some of these may need to be tuned later
+        std::array<float, 4> orientation_scales = {1, 1, 1, 1};
+        std::array<float, 3> vel_scales = {action_scaling_factors[0], action_scaling_factors[1], 1};
+        std::array<float, 3> ang_vel_scales = {action_scaling_factors[2], action_scaling_factors[2], action_scaling_factors[2]};
+
+        env_scaling_factors = {pos_scales, orientation_scales, vel_scales, ang_vel_scales}; // these contain the scaling factor for each dim in teh env
     }
 
     torch::Tensor reset() // if no arguments passed, just reset to random position. If goal fixed, use that, else sample randomly
     {
-        auto [pos, quat, vel, ang_vel] = robot_bridge->generateRandomPoseWithVel();
-        robot_bridge->resetRobot(pos, quat, vel, ang_vel);
-        obstacles = robot_bridge->getObstacles();
-
+        // pick random valid goal position
         if (!_goal_fixed)
         {
-            goal = robot_bridge->generateRandomPoseWithVel();
+            goal = robot_bridge->generateRandomValidConfiguration();
+            goal.velocity[0] = 0;
+            goal.velocity[1] = 0;
+            goal.velocity[2] = 0;
+            goal.angular_velocity[0] = 0;
+            goal.angular_velocity[1] = 0;
+            goal.angular_velocity[2] = 0;
         }
+
+        auto start = robot_bridge->generateRandomValidConfiguration();
+        start.velocity[0] = 0;
+        start.velocity[1] = 0;
+        start.velocity[2] = 0;
+        start.angular_velocity[0] = 0;
+        start.angular_velocity[1] = 0;
+        start.angular_velocity[2] = 0;
+        robot_bridge->resetRobot(start.position, start.orientation, start.velocity, start.angular_velocity);
+
+        obstacles = robot_bridge->getObstacles();
+
         current_step = 0;
 
         return transformState(robot_bridge->getRobotState());
+    }
+
+    torch::Tensor getState() // returns everything in local frame (used for TD3 agent)
+    {
+        return transformState(robot_bridge->getRobotState());
+    }
+
+    torch::Tensor getStateRelativeToGoal(const AbstractedState &query_goal)
+    {
+        return transformState(robot_bridge->getRobotState(), query_goal);
+    }
+
+    std::pair<RobotState, bool> getUnderlyingState()
+    {
+        auto state = robot_bridge->getRobotState();
+        bool collision = robot_bridge->inCollision() || state.position[0] > robot_bridge->x_max || state.position[0] < robot_bridge->x_min ||
+                         state.position[1] > robot_bridge->y_max || state.position[1] < robot_bridge->y_min;
+        return {state, collision};
+    }
+
+    AbstractedState getAbstractedState() // return underlying robot bridge state (where things are in global)
+    {
+        RobotState full_state = robot_bridge->getRobotState();
+        AbstractedState abs_state = {full_state.position, full_state.orientation, full_state.velocity, full_state.angular_velocity};
+        return abs_state;
+    }
+
+    AbstractedState getRandomValidAbstractedState()
+    {
+        return robot_bridge->generateRandomValidConfiguration();
     }
 
     std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> step(const torch::Tensor &action)
@@ -55,25 +105,41 @@ public:
         robot_bridge->publishVelCommand(cmd);
         robot_bridge->update();
         current_step++;
-        auto [reward, terminated] = computeReward();
+        auto [reward, terminated] = computeReward(goal);
 
         return {
             transformState(robot_bridge->getRobotState()),
-            torch::tensor({reward}, torch::kFloat32),
-            torch::tensor({(float)terminated}, torch::kFloat32) // Usually better to store 'done' as a float (0.0 or 1.0) for RL math
-        };
+            reward,
+            terminated};
+    }
+
+    torch::Tensor resetTo(const AbstractedState &state)
+    {
+        return resetTo(state.position, state.orientation, state.velocity, state.angular_velocity);
     }
 
     // see note a top about how you need to set vel and ang vel
     torch::Tensor resetTo(const std::array<float, 3> &pos, const std::array<float, 4> &quat, const std::array<float, 3> &vel, const std::array<float, 3> &ang_vel)
     {
-        robot_bridge->resetRobot(pos, quat, vel, ang_vel);
-        obstacles = robot_bridge->getObstacles();
+        // if required, pick random goal
         if (!_goal_fixed)
-            goal = robot_bridge->generateRandomPoseWithVel();
+        {
+            goal = robot_bridge->generateRandomValidConfiguration();
+        }
+
+        std::array<float, 3> clamped_pos = {
+            std::max(robot_bridge->x_min + 0.5f, std::min(robot_bridge->x_max - 0.5f, pos[0])),
+            std::max(robot_bridge->y_min + 0.5f, std::min(robot_bridge->y_max - 0.5f, pos[1])),
+            pos[2]};
+
+        robot_bridge->resetRobot(clamped_pos, quat, vel, ang_vel);
+        obstacles = robot_bridge->getObstacles();
+
         current_step = 0;
         return transformState(robot_bridge->getRobotState());
     }
+
+    std::array<float, 3> getGoalPosition() const { return goal.position; }
 
     std::pair<std::array<float, 3>, std::array<float, 4>> getRobotPose() const
     {
@@ -84,11 +150,28 @@ public:
     // Fix goal_position to a specific point (e.g. next skill's subgoal).
     // reset() and resetTo() will not randomize goal_position while fixed.
 
+    void setGoal(const AbstractedState &state)
+    {
+        goal = state;
+    }
+
     // see note a top about how you need to set vel and ang vel
     void setGoal(const std::array<float, 3> &pos, const std::array<float, 4> &quat, const std::array<float, 3> &vel, const std::array<float, 3> &ang_vel)
     {
-        goal = {pos, quat, vel, ang_vel};
+        goal = {pos, quat, vel, ang_vel}; // AbstractedState aggregate init
         _goal_fixed = true;
+    }
+
+    // Convenience: goal position only, zero velocity, identity orientation
+    void setGoal(const std::array<float, 3> &pos)
+    {
+        setGoal(pos, {1.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f});
+    }
+
+    // Convenience: reset to pos + quat, zero velocity
+    torch::Tensor resetTo(const std::array<float, 3> &pos, const std::array<float, 4> &quat)
+    {
+        return resetTo(pos, quat, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f});
     }
 
     void clearGoal()
@@ -96,13 +179,173 @@ public:
         _goal_fixed = false;
     }
 
+    std::pair<torch::Tensor, torch::Tensor> computeReward()
+    {
+        return computeReward(goal);
+    }
+
+    std::pair<torch::Tensor, torch::Tensor> computeReward(const AbstractedState &goal_)
+    {
+        RobotState state = robot_bridge->getRobotState();
+        bool collision = robot_bridge->inCollision();
+        return computeReward(state, collision, goal);
+    }
+    // If we do not have the ability to turn, then velocity cannot be part of goal condition
+    std::pair<torch::Tensor, torch::Tensor> computeReward(const RobotState &state, bool collision, const AbstractedState &goal_)
+    {
+        auto goal_position = goal_.position;
+        auto goal_orientation = goal_.orientation;
+        auto goal_velocity = goal_.velocity;
+        auto goal_angular_velocity = goal_.angular_velocity;
+        // auto &[goal_position, goal_orientation, goal_velocity, goal_angular_velocity] = goal_;
+
+        float pos_error = std::sqrt((state.position[0] - goal_position[0]) * (state.position[0] - goal_position[0]) +
+                                    (state.position[1] - goal_position[1]) * (state.position[1] - goal_position[1]));
+
+        float vel_error = std::sqrt((state.velocity[0] - goal_velocity[0]) * (state.velocity[0] - goal_velocity[0]) +
+                                    (state.velocity[1] - goal_velocity[1]) * (state.velocity[1] - goal_velocity[1]));
+
+        // std::cout << " " << vel_error << std::endl;
+
+        float reward = 0;
+        bool terminated = false;
+        if (collision ||
+            state.position[0] > robot_bridge->x_max || state.position[0] < robot_bridge->x_min ||
+            state.position[1] > robot_bridge->y_max || state.position[1] < robot_bridge->y_min)
+        {
+            reward -= 30;
+            terminated = true;
+        }
+        else if (pos_error < 0.5) // && vel_error < 0.25) // commenting out vel for now cause of aformentioned issues. Also ignoring ang vel and orientation for the same reasons
+        {
+            reward += 50;
+            terminated = true;
+        }
+        else
+        {
+            reward -= (pos_error / 50.0); // + (vel_error / 10.0);
+        }
+        if (current_step >= max_steps)
+        {
+            terminated = true;
+        }
+        return {torch::tensor({reward}, torch::kFloat32),
+                torch::tensor({(float)terminated}, torch::kFloat32)}; // Usually better to store 'done' as a float (0.0 or 1.0) for RL math};
+    }
+
+    torch::Tensor transformState(const RobotState &state, const AbstractedState &goal_)
+    {
+        // when designing this, note that the state is a mix of being in the global and local reference frame
+        // however, the final policy output is velocity RELATIVE to the robot
+
+        auto options = torch::TensorOptions().dtype(torch::kFloat32);
+        torch::Tensor tensor_state = torch::empty({(int64_t)state_dim + obstacle_dim}, options);
+        float *data_ptr = tensor_state.data_ptr<float>();
+        int offset = 0;
+
+        auto copy_to_ptr = [&](const auto &src)
+        {
+            std::copy(src.begin(), src.end(), data_ptr + offset);
+            offset += src.size();
+        };
+
+        // note: pos, vel, and orientation are given in global frame
+        // accel, angular vel given in local frame
+
+        copy_to_ptr(state.q);
+
+        std::array<float, DOF> dq_scaled;
+
+        for (int j = 0; j < DOF; j++)
+        {
+            dq_scaled[j] = state.dq[j] / 20; // dq scaling factor
+        }
+        copy_to_ptr(state.dq);
+
+        // local dynamics
+        copy_to_ptr(rotateVectorByQuat({0, 0, 1}, state.orientation, true));      // local_up
+        copy_to_ptr(rotateVectorByQuat(state.velocity, state.orientation, true)); // local_vel
+        copy_to_ptr(state.angular_velocity);                                      // Already local
+        copy_to_ptr(state.accel);                                                 // Already local
+
+        // relative values
+        auto &g_pos = goal_.position;
+        auto &g_quat = goal_.orientation;
+        auto &g_vel = goal_.velocity;
+        auto &g_ang_vel = goal_.angular_velocity;
+
+        std::array<float, 3> r_pos = {g_pos[0] - state.position[0], g_pos[1] - state.position[1], g_pos[2] - state.position[2]};
+        r_pos[0] /= env_scaling_factors.position[0];
+        r_pos[1] /= env_scaling_factors.position[1];
+        r_pos[2] /= env_scaling_factors.position[2];
+
+        copy_to_ptr(rotateVectorByQuat(r_pos, state.orientation, true));
+
+        copy_to_ptr(quaternionDelta(g_quat, state.orientation));
+
+        std::array<float, 3> v_err = {g_vel[0] - state.velocity[0], g_vel[1] - state.velocity[1], g_vel[2] - state.velocity[2]};
+        v_err[0] /= env_scaling_factors.velocity[0];
+        v_err[1] /= env_scaling_factors.velocity[1];
+        v_err[2] /= env_scaling_factors.velocity[2];
+        copy_to_ptr(rotateVectorByQuat(v_err, state.orientation, true));
+
+        std::array<float, 3> local_goal_ang_vel = rotateVectorByQuat(g_ang_vel, state.orientation, true);
+
+        std::array<float, 3> ang_vel_err = {
+            local_goal_ang_vel[0] - state.angular_velocity[0],
+            local_goal_ang_vel[1] - state.angular_velocity[1],
+            local_goal_ang_vel[2] - state.angular_velocity[2]};
+        ang_vel_err[0] /= env_scaling_factors.angular_velocity[0];
+        ang_vel_err[1] /= env_scaling_factors.angular_velocity[1];
+        ang_vel_err[2] /= env_scaling_factors.angular_velocity[2];
+
+        copy_to_ptr(ang_vel_err);
+
+        // relative distance to boundary
+        float dist_left = state.position[0] - robot_bridge->x_min;
+        float dist_right = robot_bridge->x_max - state.position[0];
+        float dist_back = state.position[1] - robot_bridge->y_min;
+        float dist_front = robot_bridge->y_max - state.position[1];
+
+        data_ptr[offset++] = dist_left / env_scaling_factors.position[0];
+        data_ptr[offset++] = dist_right / env_scaling_factors.position[0];
+        data_ptr[offset++] = dist_back / env_scaling_factors.position[1];
+        data_ptr[offset++] = dist_front / env_scaling_factors.position[1];
+
+        // local obstacles
+        std::vector<Obstacle> sorted_obs = obstacles;
+        std::sort(sorted_obs.begin(), sorted_obs.end(), [&](const Obstacle &a, const Obstacle &b)
+                  {
+        float distA = std::pow(a.position[0]-state.position[0], 2) + std::pow(a.position[1]-state.position[1], 2);
+        float distB = std::pow(b.position[0]-state.position[0], 2) + std::pow(b.position[1]-state.position[1], 2);
+        return distA < distB; });
+
+        for (int i = 0; i < sorted_obs.size(); i++)
+        {
+            const auto &obs = sorted_obs[i];
+            std::array<float, 3> r_obs = {obs.position[0] - state.position[0],
+                                          obs.position[1] - state.position[1],
+                                          obs.position[2] - state.position[2]};
+            r_obs[0] /= env_scaling_factors.position[0];
+            r_obs[1] /= env_scaling_factors.position[1];
+            r_obs[2] /= env_scaling_factors.position[2];
+            copy_to_ptr(rotateVectorByQuat(r_obs, state.orientation, true));
+            data_ptr[offset++] = obs.size[0];
+        }
+
+        return tensor_state;
+    }
+
     int state_dim;
+    int obstacle_dim;
     int action_dim = 3;
-    std::vector<float> action_limits = {0.5, 0.3, 0.2};
+    std::vector<float> action_scaling_factors = {0.75, 0.3, 1.0};
+    std::vector<float> action_shift_factors = {0.25, 0.0, 0.0};
+    AbstractedState env_scaling_factors;
 
 private:
     std::shared_ptr<RobotBridgeTrain> robot_bridge;
-    AbstractedState goal = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}};
+    AbstractedState goal = {{0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
     bool _goal_fixed = false;
     int max_steps;
     int current_step = 0;
@@ -174,96 +417,6 @@ private:
 
     torch::Tensor transformState(const RobotState &state)
     {
-        // when designing this, note that the state is a mix of being in the global and local reference frame
-        // however, the final policy output is velocity RELATIVE to the robot
-        
-        auto options = torch::TensorOptions().dtype(torch::kFloat32);
-        torch::Tensor tensor_state = torch::empty({(int64_t)state_dim}, options);
-        float *data_ptr = tensor_state.data_ptr<float>();
-        int offset = 0;
-
-        auto copy_to_ptr = [&](const auto &src)
-        {
-            std::copy(src.begin(), src.end(), data_ptr + offset);
-            offset += src.size();
-        };
-
-        // note: pos, vel, and orientation are given in global frame
-        // accel, angular vel given in local frame
-
-        copy_to_ptr(state.q);
-        copy_to_ptr(state.dq);
-
-        // local dynamics
-        copy_to_ptr(rotateVectorByQuat({0, 0, 1}, state.orientation, true));      // local_up
-        copy_to_ptr(rotateVectorByQuat(state.velocity, state.orientation, true)); // local_vel
-        copy_to_ptr(state.angular_velocity);                                      // Already local
-        copy_to_ptr(state.accel);                                                 // Already local
-
-        // relative values
-        auto &[g_pos, g_quat, g_vel, g_ang_vel] = goal;
-
-        std::array<float, 3> r_pos = {g_pos[0] - state.position[0], g_pos[1] - state.position[1], g_pos[2] - state.position[2]};
-        copy_to_ptr(rotateVectorByQuat(r_pos, state.orientation, true));
-
-        copy_to_ptr(quaternionDelta(g_quat, state.orientation));
-
-        std::array<float, 3> v_err = {g_vel[0] - state.velocity[0], g_vel[1] - state.velocity[1], g_vel[2] - state.velocity[2]};
-        copy_to_ptr(rotateVectorByQuat(v_err, state.orientation, true));
-
-        std::array<float, 3> local_goal_ang_vel = rotateVectorByQuat(g_ang_vel, state.orientation, true);
-
-        std::array<float, 3> ang_vel_err = {
-            local_goal_ang_vel[0] - state.angular_velocity[0],
-            local_goal_ang_vel[1] - state.angular_velocity[1],
-            local_goal_ang_vel[2] - state.angular_velocity[2]};
-
-        copy_to_ptr(ang_vel_err);
-
-        // local obstacles
-        for (const auto &obs : obstacles)
-        {
-            std::array<float, 3> r_obs = {obs.position[0] - state.position[0], obs.position[1] - state.position[1], obs.position[2] - state.position[2]};
-            copy_to_ptr(rotateVectorByQuat(r_obs, state.orientation, true));
-            data_ptr[offset++] = obs.size[0];
-        }
-
-        return tensor_state;
-    }
-
-    std::pair<float, bool> computeReward()
-    {
-        RobotState state = robot_bridge->getRobotState();
-        bool collision = robot_bridge->inCollision();
-
-        auto &[goal_position, goal_orientation, goal_velocity, goal_angular_velocity] = goal;
-
-        float pos_error = std::sqrt((state.position[0] - goal_position[0]) * (state.position[0] - goal_position[0]) +
-                                    (state.position[1] - goal_position[1]) * (state.position[1] - goal_position[1]));
-
-        float vel_error = std::sqrt((state.velocity[0] - goal_velocity[0]) * (state.velocity[0] - goal_velocity[0]) +
-                                    (state.velocity[1] - goal_velocity[1]) * (state.velocity[1] - goal_velocity[1]));
-
-        float reward = 0;
-        bool terminated = false;
-        if (collision)
-        {
-            reward -= 10;
-            terminated = true;
-        }
-        else if (pos_error < 0.5 && vel_error < 0.5) // ignoring velocity and orientation for now
-        {
-            reward += 50;
-            terminated = true;
-        }
-        else
-        {
-            reward -= (pos_error / 100.0) + (vel_error / 100.0);
-        }
-        if (current_step >= max_steps || pos_error > 20)
-        {
-            terminated = true;
-        }
-        return {reward, terminated};
+        return transformState(state, goal);
     }
 };

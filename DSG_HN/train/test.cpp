@@ -11,7 +11,7 @@
 #include "agent.h"
 #include <torch/torch.h>
 
-#define SCENE_FILE "../config/scene/test_scene.xml"
+#define SCENE_FILE "../config/scene/umaze_scene_obs_free.xml"
 #define POLICY_DIR "config/policy/velocity"
 #define CONFIG_PATH "config/config.yaml"
 
@@ -29,6 +29,8 @@
 #define CRITIC_LAYER_SIZES {128, 256, 128}
 #define ACTOR_LAYER_SIZES {64, 128, 64}
 #define RENDER true
+#define MAX_OBSTACLES 8
+
 
 int main(int argc, char **argv)
 {
@@ -46,15 +48,21 @@ int main(int argc, char **argv)
         std::cout << "CUDA is available! Testing on GPU." << std::endl;
         device = torch::Device(torch::kCUDA);
     }
+    else if (torch::mps::is_available())
+    {
+        std::cout << "MPS is available! Testing on Apple GPU." << std::endl;
+        device = torch::Device(torch::kMPS);
+    }
 
     std::vector<int> critic_layer_sizes = CRITIC_LAYER_SIZES;
     std::vector<int> actor_layer_sizes = ACTOR_LAYER_SIZES;
 
-    TD3Agent agent(train_env, actor_layer_sizes, critic_layer_sizes, device, ACTOR_LR, CRITIC_LR, TAU, GAMMA, BATCH_SIZE, ACTOR_UPDATE_FREQ);
+    TD3Agent agent(train_env, actor_layer_sizes, critic_layer_sizes, device, ACTOR_LR, CRITIC_LR, TAU, GAMMA, BATCH_SIZE, ACTOR_UPDATE_FREQ, MAX_OBSTACLES, 0);
 
-    torch::load(agent.actor_local, "../models/best_actor.pt");
-    torch::load(agent.critic_local_1, "../models/best_critic_1.pt");
-    torch::load(agent.critic_local_2, "../models/best_critic_2.pt");
+    torch::load(agent.actor_local, "../models/best_actor copy.pt");
+    torch::load(agent.critic_local_1, "../models/best_critic_1 copy.pt");
+    torch::load(agent.critic_local_2, "../models/best_critic_2 copy.pt");
+    agent.toDevice(device);
 
     torch::Tensor state = train_env->reset();
     while (true)
@@ -63,7 +71,7 @@ int main(int argc, char **argv)
         auto [next_state, reward, done] = train_env->step(action);
         if (done.data_ptr<float>()[0] > 0.5)
         {
-            if (reward.data_ptr<float>()[0] > 0.0)
+            if (reward.data_ptr<float>()[0] > 40.0)
                 std::cout << "Episode Success: " << reward.item<float>() << std::endl;
             state = train_env->reset();
         }

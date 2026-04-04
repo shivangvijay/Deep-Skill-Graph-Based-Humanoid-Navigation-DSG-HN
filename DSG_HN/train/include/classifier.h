@@ -5,10 +5,15 @@
 #include <vector>
 #include <stdexcept>
 
+static void print_null(const char *s) {}
+
 class InitiationSetClassifier
 {
 public:
-    InitiationSetClassifier() = default;
+    InitiationSetClassifier()
+    {
+        svm_set_print_string_function(&print_null);
+    }
 
     ~InitiationSetClassifier()
     {
@@ -36,9 +41,10 @@ public:
     }
 
     // Train from collected states. labels: +1 = in set, -1 = not in set
+    // balance_classes: weight each class inversely by frequency — matches Python's SVC(class_weight='balanced')
     void train(const std::vector<std::vector<float>> &states,
                const std::vector<int> &labels,
-               double C = 1.0, double gamma = -1.0)
+               double C = 1.0, double gamma = -1.0, bool balance_classes = false)
     {
         if (states.empty())
             throw std::runtime_error("InitiationSetClassifier: no training data");
@@ -53,10 +59,31 @@ public:
         param.probability = 0;
         param.nr_weight = 0;
 
-        Problem p = _make_problem(states, labels);
+        // Class balancing: weight each class inversely by its frequency
+        // Matches Python's SVC(class_weight='balanced')
+        std::vector<int> weight_labels;
+        std::vector<double> weights;
+        if (balance_classes)
+        {
+            int pos_count = std::count(labels.begin(), labels.end(), 1);
+            int neg_count = std::count(labels.begin(), labels.end(), -1);
+            int total = pos_count + neg_count;
+            if (pos_count > 0 && neg_count > 0)
+            {
+                weight_labels = {1, -1};
+                weights = {(double)total / (2.0 * pos_count),
+                           (double)total / (2.0 * neg_count)};
+                param.nr_weight = 2;
+                param.weight_label = weight_labels.data();
+                param.weight = weights.data();
+            }
+        }
+
+        _make_problem(states, labels);
+
         if (_model)
             svm_free_and_destroy_model(&_model);
-        _model = svm_train(&p.prob, &param); // svm_train internally copies the problem data, so we can safely let p go out of scope
+        _model = svm_train(&_p.prob, &param); // svm_train does not internally copy the problem data
     }
 
     // Train one-class SVM (positive examples only — no labels needed)
@@ -65,6 +92,7 @@ public:
         if (states.empty())
             throw std::runtime_error("InitiationSetClassifier: no training data");
 
+        // these parameters are commonly used for one-class SVMs, but may require tuning based on the data distribution
         svm_parameter param{};
         param.svm_type = ONE_CLASS;
         param.kernel_type = RBF;
@@ -77,10 +105,11 @@ public:
 
         // ONE_CLASS ignores labels; pass zeros
         std::vector<int> dummy_labels(states.size(), 0);
-        Problem p = _make_problem(states, dummy_labels);
+        _make_problem(states, dummy_labels);
+
         if (_model)
             svm_free_and_destroy_model(&_model);
-        _model = svm_train(&p.prob, &param);
+        _model = svm_train(&_p.prob, &param);
     }
 
     // Returns the raw signed decision value (distance to hyperplane).
@@ -119,7 +148,26 @@ public:
         _model = m;
     }
 
-    bool trained() const { return _model != nullptr; } // Check if model is trained
+    bool trained() const { return _model != nullptr; }
+
+    // Returns all support vectors as dense float vectors (length = n_features).
+    // libsvm stores SVs in sparse svm_node format; this decodes them to plain vectors.
+    // SVs are the literal boundary points of the learned SVM — used as spawn states
+    // for Phase 3 refinement rather than approximating from training data.
+    std::vector<std::vector<float>> getSupportVectors(int n_features) const
+    {
+        _check_model();
+        std::vector<std::vector<float>> svs;
+        svs.reserve(_model->l);
+        for (int i = 0; i < _model->l; ++i)
+        {
+            std::vector<float> vec(n_features, 0.0f);
+            for (const svm_node *n = _model->SV[i]; n->index != -1; ++n)
+                vec[n->index - 1] = static_cast<float>(n->value);
+            svs.push_back(std::move(vec));
+        }
+        return svs;
+    }
 
 private:
     svm_model *_model = nullptr;
@@ -146,25 +194,27 @@ private:
         std::vector<svm_node *> x_ptrs;
         std::vector<std::vector<svm_node>> x_nodes;
     };
+    
+    Problem _p; // keep as global to ensure it does not go out of scope
 
-    Problem _make_problem(const std::vector<std::vector<float>> &states,
+
+    void _make_problem(const std::vector<std::vector<float>> &states,
                           const std::vector<int> &labels)
     {
-        Problem p;
-        p.prob.l = static_cast<int>(states.size());
-        p.y.resize(states.size());
-        p.x_nodes.resize(states.size());
-        p.x_ptrs.resize(states.size());
+        // Problem p;
+        _p.prob.l = static_cast<int>(states.size());
+        _p.y.resize(states.size());
+        _p.x_nodes.resize(states.size());
+        _p.x_ptrs.resize(states.size());
 
         for (size_t i = 0; i < states.size(); ++i)
         {
-            p.y[i] = static_cast<double>(labels[i]);
-            p.x_nodes[i] = _make_nodes(states[i]);
-            p.x_ptrs[i] = p.x_nodes[i].data();
+            _p.y[i] = static_cast<double>(labels[i]);
+            _p.x_nodes[i] = _make_nodes(states[i]);
+            _p.x_ptrs[i] = _p.x_nodes[i].data();
         }
 
-        p.prob.y = p.y.data();
-        p.prob.x = p.x_ptrs.data();
-        return p;
+        _p.prob.y = _p.y.data();
+        _p.prob.x = _p.x_ptrs.data();
     }
 };

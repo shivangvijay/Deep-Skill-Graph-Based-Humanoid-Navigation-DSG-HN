@@ -73,7 +73,7 @@ FSM:
       Mimic_Dance_102: LT(2s) + down.on_pressed
       Mimic_Gangnam_Style: LT(2s) + left.on_pressed
 
-    policy_dir: config/policy/velocity
+    policy_dir: config/policy/velocity/v1
     # policy_dir: ../../../logs/rsl_rl/unitree_g1_29dof_velocity
   Mimic_Dance_102:
     transitions: 

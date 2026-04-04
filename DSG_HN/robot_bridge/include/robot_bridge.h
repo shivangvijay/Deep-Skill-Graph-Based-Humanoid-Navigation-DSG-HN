@@ -11,7 +11,17 @@
 #include <math.h>
 
 #define DOF 35                 // note that the actual DOF is 29, but the msg has 35 motors, so just going to read all 35
-#define VELOCITY_POLICY_DT 0.1 // 10 Hz, this we can change later on though
+#define VELOCITY_POLICY_DT 0.1 // 10 Hz
+
+// Navigation-level abstraction of robot state.
+// Excludes joint-level proprioception (q, dq) — used for skill subgoals and initiation-set classification.
+struct AbstractedState
+{
+    std::array<float, 3> position;
+    std::array<float, 4> orientation;
+    std::array<float, 3> velocity;
+    std::array<float, 3> angular_velocity;
+};
 
 // note: pos, vel, and orientation are given in the context of the global reference frame
 // everything else is given w.r.t to the local frame of the robot
@@ -57,6 +67,7 @@ public:
     void printState(const RobotState &s) const;
     std::pair<std::array<float, 3>, std::array<float, 4>> generateRandomPose() const;
     std::tuple<std::array<float, 3>, std::array<float, 4>, std::array<float, 3>,  std::array<float, 3>> generateRandomPoseWithVel() const;
+    float x_min = -5.0, x_max = 5.0, y_min = -5.0, y_max = 5.0;
 
 
 protected:
@@ -68,6 +79,5 @@ protected:
     std::vector<Obstacle> obstacles;
     std::vector<float> current_cmd = {0.0, 0.0, 0.0};
     std::array<float, 3> vel_limits = {0.5, 0.3, 0.2};
-    float x_min = -5.0, x_max = 5.0, y_min = -5.0, y_max = 5.0;
     float velocity_policy_dt = VELOCITY_POLICY_DT;
 };

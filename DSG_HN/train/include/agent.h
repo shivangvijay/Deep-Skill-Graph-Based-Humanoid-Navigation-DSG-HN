@@ -12,20 +12,22 @@ public:
     TD3Agent(
         std::shared_ptr<TrainEnvironment> env,
         const std::vector<int> &actor_layer_sizes,
-        std::vector<int> &critic_layer_sizes,
+        const std::vector<int> &critic_layer_sizes,
         torch::Device device, float lr_actor,
         float lr_critic,
         float tau,
         float gamma,
         int batch_size,
-        int actor_update_freq);
+        int actor_update_freq,
+        int max_obstacles,
+        int actor_warmup_steps);
 
     std::pair<torch::Tensor, torch::Tensor> getAction(torch::Tensor state, bool eval = false);
     void addExperience(torch::Tensor state, torch::Tensor action, torch::Tensor reward, torch::Tensor next_state, torch::Tensor done);
 
-
     void learn();
     void hardCopy();
+    void toDevice(torch::Device d);
 
     double total_actor_loss = 0.0;
     double total_critic_loss = 0.0;
@@ -34,6 +36,8 @@ public:
     Actor actor_local;
     Critic critic_local_1;
     Critic critic_local_2;
+    ReplayBuffer replay_buffer;
+    int actor_update_freq;
 
 private:
     Actor actor_target;
@@ -44,18 +48,21 @@ private:
     torch::optim::Adam critic_optimizer_1;
     torch::optim::Adam critic_optimizer_2;
 
-    ReplayBuffer replay_buffer;
     torch::Device device;
-    torch::Tensor action_limits;
+    torch::Tensor action_scaling_factors;
+    torch::Tensor action_shift_factors;
 
     float tau;
     float gamma;
     int batch_size;
-    int actor_update_freq;
     float lr_critic;
     float lr_actor;
+    int total_state_dim;
+    int actor_warmup_steps;
 
     void softUpdate();
+    torch::Tensor prepareLocalState(torch::Tensor state);
+
 };
 
 class PolicyOverOptionsAgent
@@ -73,9 +80,9 @@ public:
     void addOption(float initial_bias);
     void learn();
     void hardCopy();
-    int getOption(torch::Tensor state);
+    torch::Tensor getOptions(torch::Tensor state);
     void addExperience(torch::Tensor state, torch::Tensor option, torch::Tensor cumulative_reward, torch::Tensor next_state, torch::Tensor done, torch::Tensor num_steps);
-    void addExperience(torch::Tensor state, int option, torch::Tensor cumulative_reward, torch::Tensor next_state, torch::Tensor done, int num_steps);
+    void addExperience(torch::Tensor state, int option, float cumulative_reward, torch::Tensor next_state, bool done, int num_steps);
 
 private:
     void softUpdate();

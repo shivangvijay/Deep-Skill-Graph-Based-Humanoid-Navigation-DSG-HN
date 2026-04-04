@@ -17,8 +17,8 @@
 #define VX_MIN -0.5f
 #define VY_MAX 0.3f
 #define VY_MIN -0.3f
-#define YAW_MAX 0.2f
-#define YAW_MIN -0.2f
+#define YAW_MAX 1.0f
+#define YAW_MIN -1.0f
 
 // Joystick device
 #define JS_DEVICE "/dev/input/js0"
@@ -129,7 +129,10 @@ int main(int argc, char **argv)
         auto state = robot_bridge->getRobotState();
 
         std::cout << "Command: " << vx << ", " << vy << ", " << oz << std::endl;
+        std::cout << "Position: " << state.position[0] << ", " << state.position[1] << ", " << state.position[2] << std::endl;
+
         std::cout << "Velocity: " << state.velocity[0] << ", " << state.velocity[1] << ", " << state.velocity[2] << std::endl;
+        std::cout << "Orientation" << state.orientation[0] << ", " << state.orientation[1] << ", " << state.orientation[2] << ", " << state.orientation[3] << std::endl;
 
         auto elapsed = std::chrono::steady_clock::now() - t0;
         auto remaining = std::chrono::milliseconds(100) - elapsed;
