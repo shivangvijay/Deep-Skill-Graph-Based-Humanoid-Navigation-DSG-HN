@@ -32,7 +32,7 @@
 #define ACTOR_LAYER_SIZES {256, 256, 256}
 #define RENDER false
 #define MAX_OBSTACLES 8
-#define PRETRAIN true
+#define PRETRAIN false
 #define ACTOR_WARMUP_STEPS 0000
 
 void train_her(const std::vector<Transition> &trajectory, std::shared_ptr<TrainEnvironment> env, TD3Agent &agent)
@@ -93,9 +93,9 @@ int main(int argc, char **argv)
         }
         else
         {
-            auto actor_path = model_dir / "best_actor copy.pt";
-            auto critic1_path = model_dir / "best_critic_1 copy.pt";
-            auto critic2_path = model_dir / "best_critic_2 copy.pt";
+            auto actor_path = model_dir / "best_actor.pt";
+            auto critic1_path = model_dir / "best_critic_1.pt";
+            auto critic2_path = model_dir / "best_critic_2.pt";
             if (std::filesystem::exists(actor_path) && std::filesystem::exists(critic1_path) && std::filesystem::exists(critic2_path))
             {
                 torch::load(agent.actor_local, actor_path.string());
