@@ -21,6 +21,10 @@ cd Deep-Skill-Graph-Based-Humanoid-Navigation-DSG-HN
 ```bash
 sudo apt install -y libyaml-cpp-dev libboost-all-dev libeigen3-dev libspdlog-dev libfmt-dev
 ```
+```bash
+conda activate dsg-hn
+pip install matplotlib
+```
 #### 3.2 Mujoco Installation
 
 
@@ -45,9 +49,11 @@ nvcc --version
 
 #### 3.3 LibSVM Installation
 ```bash
+conda activate dsg-hn
 conda install -c conda-forge libsvm
 ```
 This handles architecture and dependency resolution. Just make sure to include and link $CONDA_PREFIX/lib and $CONDA_PREFIX/include in CMakeLists.txt.
+
 
 #### 3.4 Build Libraries
 
@@ -94,7 +100,13 @@ Before proceeding, identify the version of gcc that the NVCC (cuda compiler) you
 ```bash
 nvcc --version
 ```
-Note that CUDA 12.1+ supports GCC 12, but CUDA 11 requires GCC11
+Note that CUDA 12.1+ supports GCC 12, but CUDA 11 requires GCC11. 
+
+Additionally, ensure that your conda environment is active
+
+```bash
+cond activate dsg-hn
+```
 
 Install the training examples
 ```bash
@@ -188,7 +200,7 @@ The sandbox scene is set by `SCENE_FILE` at the top of `DSG_HN/sandbox/sandbox.c
 
 ### Pre-Training
 
-See DSG_HN/train for example training and testing files. Additionally, this repository contains an example gym environment and TD3 implementation that has been used to train a waypoint follower with 95%+ accuracy on simple test maps. To run the example training script, inside train.cpp, at line 15, choose the file for which you want to perform pre-training. Note that the pytorch files will be saved inside the build directory.
+See DSG_HN/train for example training and testing files. Additionally, this repository contains an example gym environment and TD3 implementation that has been used to train a waypoint follower with 95%+ accuracy on simple test maps. To run the example training script, inside train.cpp, at line 15, choose the scene file for which you want to perform pre-training. 
 
 ```bash
 cd DSG_HN/train/build
@@ -202,7 +214,7 @@ To run the testing script:
 
 ### DSC Training
 
-After performing pre-training, you can use the pytorch files for training dsc. First, copy the 3 created pytorch files into a folder outside of build. Inside train/dsc.cpp, lines 546-548, update the paths to reflect the locations of the pretrained files. Secondly, alter line 545 to reflect the desired training environment. To run training, simply execute the following commands:
+After performing pre-training, you can use the pytorch files for training dsc. First, copy the 3 created pytorch files into a folder outside of build. Inside train/dsc.cpp, lines 546-548, update the paths to reflect the locations of the pretrained files (default path is set to default pre-training save path). Secondly, alter line 545 to reflect the desired training environment. To run training, simply execute the following commands:
 
 ```bash
 cd DSG_HN/train/build

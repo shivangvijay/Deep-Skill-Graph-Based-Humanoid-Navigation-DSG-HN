@@ -211,6 +211,12 @@ void Skill::initFromSkill(std::shared_ptr<Skill> other)
 // TODO: maybe want to improve the sampling logic for greater training efficiency
 AbstractedState Skill::sampleSubgoalState(bool uniform) const
 {
+    if (_positive_gestation_records.empty())
+    {
+        // No positive data is available after load. Fall back to a valid random state.
+        return _env->getRandomValidAbstractedState();
+    }
+
     // Prefer states inside the pessimistic classifier (confident region) as subgoals.
     // Falls back to any positive record if pessimistic classifier has no confirmed samples.
     if (_pessimistic_classifier.trained() && !uniform)
@@ -251,9 +257,28 @@ void Skill::save(const std::string &actor_path,
     torch::save(_agent.actor_local, actor_path);
     torch::save(_agent.critic_local_1, critic1_path);
     torch::save(_agent.critic_local_2, critic2_path);
-    _classifier.save(classifier_path);
+    if (!_is_global && _classifier.trained())
+        _classifier.save(classifier_path);
     if (_pessimistic_classifier.trained())
         _pessimistic_classifier.save(classifier_path + "_pessimistic");
+
+    if (!_is_global && !_positive_gestation_records.empty())
+    {
+        std::ofstream out(classifier_path + "_positives.txt");
+        out << _positive_gestation_records.size() << "\n";
+        for (const auto &record : _positive_gestation_records)
+        {
+            for (float v : record.state.position)
+                out << v << " ";
+            for (float v : record.state.orientation)
+                out << v << " ";
+            for (float v : record.state.velocity)
+                out << v << " ";
+            for (float v : record.state.angular_velocity)
+                out << v << " ";
+            out << "\n";
+        }
+    }
 }
 
 void Skill::load(const std::string &actor_path,
@@ -261,19 +286,72 @@ void Skill::load(const std::string &actor_path,
                  const std::string &critic2_path,
                  const std::string &classifier_path)
 {
+    _positive_gestation_records.clear();
+
     torch::load(_agent.actor_local, actor_path);
     torch::load(_agent.critic_local_1, critic1_path);
     torch::load(_agent.critic_local_2, critic2_path);
-    _classifier.load(classifier_path);
-    // load pessimistic only if file exists (graceful for models saved before this change)
-    std::ifstream f(classifier_path + "_pessimistic");
-    if (f.good())
+
+    if (!_is_global)
+    {
+        std::ifstream f(classifier_path);
+        if (f.good())
+            _classifier.load(classifier_path);
+    }
+
+    std::ifstream f_pess(classifier_path + "_pessimistic");
+    if (f_pess.good())
         _pessimistic_classifier.load(classifier_path + "_pessimistic");
+
+    std::ifstream f_pos(classifier_path + "_positives.txt");
+    if (f_pos.good() && !_is_global)
+    {
+        size_t count = 0;
+        f_pos >> count;
+        for (size_t i = 0; i < count; i++)
+        {
+            AbstractedState state;
+            for (auto &v : state.position)
+                f_pos >> v;
+            for (auto &v : state.orientation)
+                f_pos >> v;
+            for (auto &v : state.velocity)
+                f_pos >> v;
+            for (auto &v : state.angular_velocity)
+                f_pos >> v;
+            _positive_gestation_records.push_back({_classifierVec(state), state});
+        }
+    }
+
+    if (!_is_global && _classifier.trained())
+    {
+        _validated = true;
+        _goal_hits = _gestation_period;
+    }
 }
 
 TD3Agent &Skill::agent()
 {
     return _agent;
+}
+
+// if we change the initiation set, will need to change this as well
+float Skill::distanceToState(const AbstractedState &state) const
+{
+    float max_dist = 0; // gonna just do euclidian distance between vectors
+
+    for (const auto &start : _positive_gestation_records)
+    {
+        float dist = 0;
+
+        dist += _euclideanDistance(state.position, start.state.position, false);
+        // dist += _euclideanDistance(state.orientation, start.state.orientation, false);
+        // dist += _euclideanDistance(state.velocity, start.state.velocity, false);
+        // dist += _euclideanDistance(state.angular_velocity, start.state.angular_velocity, false);
+
+        max_dist = std::max(dist, max_dist);
+    }
+    return max_dist;
 }
 
 /*** Private ***/
@@ -307,8 +385,6 @@ void Skill::_herUpdate(const std::vector<Transition> &trajectory)
     }
 }
 
-// TODO: add max buffer size at which we start to pop off the front
-// TODO: generally, this logic will need to really be refined to ensure that it is not too pessimistic/optimistic
 void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool term_success)
 {
 
@@ -324,7 +400,6 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
     }
     else
     {
-        // try and make SVM a bit more optimistic by not putting the entire traj in the negative catagory
         _gestation_vecs.push_back(visited.front().classifier_vec);
         _gestation_labels.push_back(-1);
         _has_negative_gestation = true;
@@ -346,7 +421,7 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
         {
             bool first_phase1 = !_classifier.trained();
             _pessimistic_classifier.trainOneClass(pos_vecs, _nu); // tight
-            _classifier.trainOneClass(pos_vecs, _nu / 10.0);       // loose / optimistic
+            _classifier.trainOneClass(pos_vecs, _nu / 10.0);      // loose / optimistic
             if (first_phase1)
                 std::cout << "\n[Skill " << _id << "] Classifier Phase 1: OneClass init. Pos=" << pos_vecs.size() << "\n";
         }
@@ -386,19 +461,7 @@ bool Skill::_atLocalGoal(const AbstractedState &goal) const
         return env_done;
     }
 
-    // non-global: exit as soon as we enter the parent's pessimistic init set —
-    // matches Python's is_at_local_goal which uses is_term_true (pessimistic).
-    // This keeps the robot inside the region when atTermination() is called.
-    // bool reached_goal = env_done;
     bool reached_term = _parent->canStartPessimistic(_env->getAbstractedState()) || env_done; //(env_done && (r < 45));
-    // if (env_done && (r > 45) && !_parent->canStartPessimistic(_env->getAbstractedState()))
-    // {
-    //     std::cout << "Done but not in classfier" << std::endl;
-    // }
-    // else if (_parent->canStartPessimistic(_env->getAbstractedState()) && !(env_done && (r > 45)))
-    // {
-    //     std::cout << "In classifier but not done" << std::endl;
-    // }
     return reached_term;
 }
 
@@ -502,23 +565,4 @@ float Skill::_euclideanDistance(const std::array<float, 4> &a, const std::array<
         return std::sqrt(dist);
     }
     return dist;
-}
-
-// TODO: perhaps should normalzie this?
-float Skill::distanceToState(const AbstractedState &state) const
-{
-    float max_dist = 0; // gonna just do euclidian distance between vectors
-
-    for (const auto &start : _positive_gestation_records)
-    {
-        float dist = 0;
-        // doing this euclid distance metric is not really right, but I am lazy so am just leaving it for now
-        dist += _euclideanDistance(state.position, start.state.position, false);
-        // dist += _euclideanDistance(state.orientation, start.state.orientation, false);
-        // dist += _euclideanDistance(state.velocity, start.state.velocity, false);
-        // dist += _euclideanDistance(state.angular_velocity, start.state.angular_velocity, false);
-
-        max_dist = std::max(dist, max_dist);
-    }
-    return max_dist;
 }

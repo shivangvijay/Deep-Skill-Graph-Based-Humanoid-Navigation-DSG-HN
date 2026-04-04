@@ -59,9 +59,9 @@ int main(int argc, char **argv)
 
     TD3Agent agent(train_env, actor_layer_sizes, critic_layer_sizes, device, ACTOR_LR, CRITIC_LR, TAU, GAMMA, BATCH_SIZE, ACTOR_UPDATE_FREQ, MAX_OBSTACLES, 0);
 
-    torch::load(agent.actor_local, "../models/best_actor copy.pt");
-    torch::load(agent.critic_local_1, "../models/best_critic_1 copy.pt");
-    torch::load(agent.critic_local_2, "../models/best_critic_2 copy.pt");
+    torch::load(agent.actor_local, "../models/best_actor.pt");
+    torch::load(agent.critic_local_1, "../models/best_critic_1.pt");
+    torch::load(agent.critic_local_2, "../models/best_critic_2.pt");
     agent.toDevice(device);
 
     torch::Tensor state = train_env->reset();

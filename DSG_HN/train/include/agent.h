@@ -62,7 +62,6 @@ private:
 
     void softUpdate();
     torch::Tensor prepareLocalState(torch::Tensor state);
-
 };
 
 class PolicyOverOptionsAgent
@@ -80,15 +79,16 @@ public:
     void addOption(float initial_bias);
     void learn();
     void hardCopy();
+
     torch::Tensor getOptions(torch::Tensor state);
     void addExperience(torch::Tensor state, torch::Tensor option, torch::Tensor cumulative_reward, torch::Tensor next_state, torch::Tensor done, torch::Tensor num_steps);
     void addExperience(torch::Tensor state, int option, float cumulative_reward, torch::Tensor next_state, bool done, int num_steps);
 
-private:
-    void softUpdate();
-
     PolicyOverOptions q;
     PolicyOverOptions target_q;
+
+private:
+    void softUpdate();
 
     std::unique_ptr<torch::optim::Adam> optimizer;
     ReplayBuffer replay_buffer;

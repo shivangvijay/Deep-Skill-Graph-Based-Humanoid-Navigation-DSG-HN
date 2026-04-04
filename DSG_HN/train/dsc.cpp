@@ -1,15 +1,7 @@
 #include "dsc.h"
-
-/*
-MOST IMPORTANT FIXES:
-1) Need ability to turn with low level policy, otherwise having velocity as part of goal is not going to work
-2) Figure out clasifier fitting (need to ensure that it is not too pessimistic/optimistic)
-3) Improve RL formulation, should be getting pretty good success rate with vel goals (i.e. > 70%)
-4) Improve spawning logic
-5) Figure out what to do with global option, so that we do not lose information gained when we train local options
-*/
-
-// TODO: change vel limit to reflect that it can be assymetrical
+#include <fstream>
+#include <stdexcept>
+#include <cstdlib>
 
 DeepSkillChaining::DeepSkillChaining(
     std::shared_ptr<RobotBridgeTrain> robot_bridge,
@@ -19,15 +11,33 @@ DeepSkillChaining::DeepSkillChaining(
     const std::string &pretrain_actor_path,
     const std::string &pretrain_critic1_path,
     const std::string &pretrain_critic2_path,
+    const std::string &scene_file,
     Config cfg)
-    : _robot_bridge(robot_bridge), _device(device), _global_goal(global_goal), _global_start(global_start), _cfg(std::move(cfg)),
+    : _robot_bridge(robot_bridge), _device(device), _global_goal(global_goal), _global_start(global_start), _scene_file_path(scene_file), _cfg(std::move(cfg)),
       _env(std::make_shared<TrainEnvironment>(_robot_bridge, cfg.steps_per_episode)),
       _poo(_env, _cfg.poo_layers, device, _cfg.lr_poo, _cfg.tau, _cfg.gamma, _cfg.batch_size), _rng(std::random_device{}())
 {
     _loadGlobalOption(pretrain_actor_path, pretrain_critic1_path, pretrain_critic2_path);
     _unfinished_option_idx = _global_option_idx; // assigning global option index to unfinished option index, as this is the index of the next option we will train, and we have only trained the global option at this point
 
-    // todo: put new skill here
+    _makeSkill(false, nullptr); // this is the goal option getting pushed
+}
+
+DeepSkillChaining::DeepSkillChaining(
+    std::shared_ptr<RobotBridgeTrain> robot_bridge,
+    torch::Device device,
+    AbstractedState global_goal,
+    AbstractedState global_start,
+    const std::string &scene_file,
+    Config cfg)
+    : _robot_bridge(robot_bridge), _device(device), _global_goal(global_goal), _global_start(global_start), _scene_file_path(scene_file), _cfg(std::move(cfg)),
+      _env(std::make_shared<TrainEnvironment>(_robot_bridge, cfg.steps_per_episode)),
+      _poo(_env, _cfg.poo_layers, device, _cfg.lr_poo, _cfg.tau, _cfg.gamma, _cfg.batch_size), _rng(std::random_device{}())
+{
+    _makeSkill(true, nullptr);
+
+    _unfinished_option_idx = _global_option_idx; // assigning global option index to unfinished option index, as this is the index of the next option we will train, and we have only trained the global option at this point
+
     _makeSkill(false, nullptr); // this is the goal option getting pushed
 }
 
@@ -107,6 +117,8 @@ int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout wh
                 else
                     std::cout << "   " << _skills[i]->goalHits() << "/" << _skills[i]->gestationPeriod() << "\n";
             }
+            if (_cfg.visualize_initiation_sets)
+                visualizeInitiationSets();
         }
 
         if (_containsGlobalStartState())
@@ -122,6 +134,109 @@ float DeepSkillChaining::execute()
 {
     _env->resetTo(_global_start);
     return _dscRollout(true);
+}
+
+void DeepSkillChaining::visualizeInitiationSets()
+{
+    std::vector<std::vector<std::array<float, 3>>> points_per_skill;
+    for (const auto &skill : _skills)
+    {
+        std::vector<std::array<float, 3>> points;
+        for (const auto &record : skill->getPositiveGestationRecords())
+        {
+            points.push_back(record.state.position);
+        }
+        points_per_skill.push_back(points);
+    }
+
+    std::string temp_file = "/tmp/init_sets.txt";
+    std::ofstream out(temp_file);
+    int skill_idx = 0;
+    for (const auto &points : points_per_skill)
+    {
+        for (const auto &p : points)
+        {
+            out << skill_idx << " " << p[0] << " " << p[1] << "\n";
+        }
+        skill_idx++;
+    }
+    out.close();
+
+    std::string cmd = "python3 ../visualize.py " + _scene_file_path + " " + temp_file;
+    system(cmd.c_str());
+}
+
+void DeepSkillChaining::save(const std::string &dir) const
+{
+    std::filesystem::create_directories(dir);
+    for (size_t i = 0; i < _skills.size(); ++i)
+    {
+        try
+        {
+            std::string prefix = dir + "/skill_" + std::to_string(i);
+            _skills[i]->save(prefix + "_actor.pt",
+                             prefix + "_critic1.pt",
+                             prefix + "_critic2.pt",
+                             prefix + "_classifier.svm");
+        }
+        catch (const std::exception &e)
+        {
+            std::cerr << e.what() << '\n';
+        }
+    }
+    std::ofstream meta(dir + "/skill_count.txt");
+    meta << _skills.size();
+    std::ofstream scene_meta(dir + "/scene_file.txt");
+    scene_meta << std::filesystem::path(_scene_file_path).filename().string();
+    torch::save(_poo.q, dir + "/poo_q.pt");
+    torch::save(_poo.target_q, dir + "/poo_target_q.pt");
+    std::cout << "Saved " << _skills.size() << " skills and policy-over-options to " << dir << std::endl;
+}
+
+void DeepSkillChaining::load(const std::string &dir, const std::string &scene_file)
+{
+    std::string current_scene_file = std::filesystem::path(scene_file).filename().string();
+
+    std::ifstream scene_meta(dir + "/scene_file.txt");
+    if (!scene_meta.is_open())
+        throw std::runtime_error("Missing scene_file.txt in " + dir);
+    std::string saved_scene_file;
+    scene_meta >> saved_scene_file;
+
+    if (saved_scene_file != current_scene_file)
+        throw std::runtime_error("Scene file mismatch: saved with " + saved_scene_file + ", loading with " + current_scene_file);
+
+    std::ifstream meta(dir + "/skill_count.txt");
+    if (!meta.is_open())
+        throw std::runtime_error("Missing skill_count.txt in " + dir);
+    int num_skills;
+    meta >> num_skills;
+
+    _skills.clear();
+    _poo = PolicyOverOptionsAgent(_env, _cfg.poo_layers, _device, _cfg.lr_poo, _cfg.tau, _cfg.gamma, _cfg.batch_size);
+    _unfinished_option_idx = _global_option_idx;
+
+    for (int i = 0; i < num_skills; ++i)
+    {
+        if (i == 0)
+            _makeSkill(true, nullptr);
+        else
+            _makeSkill(false, _skills.back());
+
+        std::string prefix = dir + "/skill_" + std::to_string(i);
+        _skills[i]->load(prefix + "_actor.pt",
+                         prefix + "_critic1.pt",
+                         prefix + "_critic2.pt",
+                         prefix + "_classifier.svm");
+        _skills[i]->agent().hardCopy();
+        _skills[i]->agent().toDevice(_device);
+    }
+
+    if (std::filesystem::exists(dir + "/poo_q.pt"))
+        torch::load(_poo.q, dir + "/poo_q.pt");
+    if (std::filesystem::exists(dir + "/poo_target_q.pt"))
+        torch::load(_poo.target_q, dir + "/poo_target_q.pt");
+    std::cout << "Loaded " << num_skills << " skills and policy-over-options from " << dir << std::endl;
 }
 
 /*** Private ***/
@@ -258,8 +373,6 @@ float DeepSkillChaining::_dscRollout(bool eval)
             continue;
         }
 
-        // Check global episode termination independently of local skill done.
-        // done from rollout() is the local termination condition and should not stop the episode.
         auto [g_reward, g_done] = _env->computeReward(_global_goal);
         env_done = g_done.data_ptr<float>()[0] > 0.5f;
         step += steps_taken;
@@ -278,7 +391,7 @@ float DeepSkillChaining::_dscRollout(bool eval)
                       << " global_done=" << env_done << "\n";
 
         // make a new skill if we have finished training the current option, but still have not reached the end goal
-        if (_shouldCreateNewOption())
+        if (_shouldCreateNewOption() && !eval)
         {
 
             float total_dist = 0;
@@ -336,13 +449,14 @@ void DeepSkillChaining::_makeSkill(bool is_global, std::shared_ptr<Skill> parent
                                                                _cfg.max_option_steps, _cfg.nu, parent, _cfg.gestation_n, is_global, _global_goal, global_option);
     if (!is_global)
         new_skill->initFromSkill(_skills[_global_option_idx]);
-
+    
+    new_skill->agent().hardCopy();
+    new_skill->agent().toDevice(_device);
     _unfinished_option_idx = id;
     if (parent)
         std::cout << "\nMaking New Skill With ID: " << id << " (parent=" << parent->goalHits() << "/" << parent->gestationPeriod() << " id=" << id - 1 << ")\n";
     else
         std::cout << "\nMaking New Skill With ID: " << id << "\n";
-    // if (id > 3) _robot_bridge->startRender();
     _skills.push_back(new_skill);
     _poo.addOption(0.0f);
     _poo.hardCopy();
@@ -356,13 +470,11 @@ void DeepSkillChaining::_loadGlobalOption(const std::string &actor_path,
     torch::load(_skills[0]->agent().actor_local, actor_path);
     torch::load(_skills[0]->agent().critic_local_1, critic1_path);
     torch::load(_skills[0]->agent().critic_local_2, critic2_path);
+    _skills[0]->agent().hardCopy();
     _skills[0]->agent().toDevice(_device);
-    _poo.addOption(0.0f);
-    _poo.hardCopy();
     std::cout << "=== Loaded global option oG from " << actor_path << " ===" << std::endl;
 }
 
-// sample random
 std::array<float, 4> DeepSkillChaining::_getGaussianQuaternionPerturbation(const std::array<float, 4> &q_orig, float sigma_rad)
 {
     std::normal_distribution<float> dist(0.0f, sigma_rad);
@@ -509,50 +621,19 @@ AbstractedState DeepSkillChaining::_sampleStartNearBoundary()
     return _env->getRandomValidAbstractedState();
 }
 
-// void DeepSkillChaining::save(const std::string &dir) const
-// {
-//     std::filesystem::create_directories(dir);
-//     for (size_t i = 0; i < _skills.size(); ++i)
-//     {
-//         std::string prefix = dir + "/skill_" + std::to_string(i);
-//         _skills[i]->save(prefix + "_actor.pt",
-//                          prefix + "_critic1.pt",
-//                          prefix + "_critic2.pt",
-//                          prefix + "_classifier.svm");
-//     }
-//     std::cout << "Saved " << _skills.size() << " skills to " << dir << std::endl;
-// }
-
-// void DeepSkillChaining::load(const std::string &dir, int num_skills)
-// {
-//     _skills.clear();
-//     for (int i = 0; i < num_skills; ++i)
-//     {
-//         _skills.emplace_back(_makeSkill());
-//         std::string prefix = dir + "/skill_" + std::to_string(i);
-//         _skills[i]->load(prefix + "_actor.pt",
-//                          prefix + "_critic1.pt",
-//                          prefix + "_critic2.pt",
-//                          prefix + "_classifier.svm");
-//         _poo.addOption(0.0f);
-//     }
-//     _poo.hardCopy();
-//     std::cout << "Loaded " << num_skills << " skills from " << dir << std::endl;
-// }
-
 /************************************** main **************************************/
 
 #define SCENE_FILE "../config/scene/umaze_scene_obs_free.xml"
-#define OG_ACTOR "best_actor copy.pt"
-#define OG_CRITIC1 "best_critic_1 copy.pt"
-#define OG_CRITIC2 "best_critic_2 copy.pt"
+#define OG_ACTOR "../models/best_actor.pt"
+#define OG_CRITIC1 "../models/best_critic_1.pt"
+#define OG_CRITIC2 "../models/best_critic_2.pt"
+#define DSC_SAVE_PATH "../dsc_models"
+#define TEST false // if set to true, will not train, will just load and run testing
 
 #define X_MIN -7.0f
 #define X_MAX 7.0f
 #define Y_MIN -7.0f
 #define Y_MAX 7.0f
-
-static const std::array<float, 3> GLOBAL_GOAL = {3.0f, 3.0f, 0.0f};
 
 int main(int argc, char **argv)
 {
@@ -579,14 +660,12 @@ int main(int argc, char **argv)
     cfg.gestation_n = 50; // number of total successes that should be collected during gestation phase. Perhaps use a percentage for the option being currently learnt?
     cfg.last_k = 20;
     cfg.max_option_steps = 50; // each option should be meaningful enough. 5Hz and 20 steps means each option can run for up to 4 seconds
-    cfg.refinement_eps = 20;
     cfg.nu = 0.1;
-    cfg.max_skills = 6;
-    cfg.actor_warmup_steps = 0;  // gonna keep at zero for testing purposes as well
-    cfg.warmup_episodes = 0;     // keep at zero since I am assuming we have done pretraining
-    cfg.render_training = false; // set to true to watch rollouts during training (slower)
-    cfg.verbose = true;          // set to true for per-rollout console output
-    cfg.log_interval = 50;       // print skill status table every N episodes
+    cfg.actor_warmup_steps = 0; // gonna keep at zero for testing purposes as well
+    cfg.warmup_episodes = 0;    // keep at zero since I am assuming we have done pretraining
+    cfg.verbose = true;         // set to true for per-rollout console output
+    cfg.log_interval = 5;       // print skill status table every N episodes
+    cfg.visualize_initiation_sets = true;
 
     AbstractedState global_goal = {{-4.5, 4.1, 0}, {0, 0, 0, -1}, {0, 0, 0}, {0, 0, 0}};
     AbstractedState global_start = {{-5.3, -4.5, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
@@ -594,14 +673,22 @@ int main(int argc, char **argv)
     // AbstractedState global_goal = {{3.0, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
     // AbstractedState global_start = {{-3, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 
-    DeepSkillChaining dsc(robot_bridge, device, global_goal, global_start, "../models/best_actor.pt", "../models/best_critic_1.pt", "../models/best_critic_2.pt", cfg);
+    std::string pretrained_actor_path = OG_ACTOR;
+    std::string pretrained_critic_1_path = OG_CRITIC1;
+    std::string pretrained_critic_2_path = OG_CRITIC2;
+    std::string scene_file = SCENE_FILE;
+    DeepSkillChaining dsc(robot_bridge, device, global_goal, global_start, pretrained_actor_path, pretrained_critic_1_path, pretrained_critic_2_path, scene_file, cfg);
 
-    int n = dsc.train(20000);
-    std::cout << "\nTraining complete: " << n << " skill(s) in chain." << std::endl;
-
-    // TODO: implement this stuff to visualize the output and see if things are succesful or not!
-
-    // dsc.save("dsc_models");
+    if (!TEST)
+    {
+        int n = dsc.train(20000);
+        std::cout << "\nTraining complete: " << n << " skill(s) in chain." << std::endl;
+        dsc.save(DSC_SAVE_PATH);
+    }
+    else
+    {
+        dsc.load(DSC_SAVE_PATH, SCENE_FILE);
+    }
 
     // std::cout << "\n=== Evaluation (20 episodes) ===" << std::endl;
     float total = 0.0f;
