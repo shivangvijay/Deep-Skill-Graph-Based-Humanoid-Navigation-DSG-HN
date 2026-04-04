@@ -31,7 +31,7 @@
 #define ACTOR_LAYER_SIZES {256, 256, 256}
 #define RENDER false
 #define MAX_OBSTACLES 8
-#define PRETRAIN true
+#define PRETRAIN false
 #define ACTOR_WARMUP_STEPS 20000
 
 /*
