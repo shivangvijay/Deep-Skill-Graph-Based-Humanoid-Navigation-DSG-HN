@@ -11,6 +11,7 @@
 #include "agent.h"
 #include "skill.h"
 #include <torch/torch.h>
+#include <filesystem>
 
 #define SCENE_FILE "../config/scene/umaze_scene_obs_free.xml"
 #define POLICY_DIR "config/policy/velocity"
@@ -31,12 +32,8 @@
 #define ACTOR_LAYER_SIZES {256, 256, 256}
 #define RENDER false
 #define MAX_OBSTACLES 8
-#define PRETRAIN false
-#define ACTOR_WARMUP_STEPS 20000
-
-/*
-TODO: MAKE SURE IT CAN LEARN TO AVOID OBSTACLES LIKE BEFORE (RECREATE PRIOR SUCCESS)
-*/
+#define PRETRAIN true
+#define ACTOR_WARMUP_STEPS 0000
 
 void train_her(const std::vector<Transition> &trajectory, std::shared_ptr<TrainEnvironment> env, TD3Agent &agent)
 {
@@ -89,19 +86,34 @@ int main(int argc, char **argv)
 
     if (PRETRAIN)
     {
-        torch::load(agent.actor_local, "../models/best_actor copy.pt"); // start with existing model if you want
-        torch::load(agent.critic_local_1, "../models/best_critic_1 copy.pt");
-        torch::load(agent.critic_local_2, "../models/best_critic_2 copy.pt");
-        agent.hardCopy();
+        std::filesystem::path model_dir("../models");
+        if (!std::filesystem::exists(model_dir))
+        {
+            std::cerr << "WARNING: PRETRAIN enabled but ../models does not exist. Skipping pretrained load.\n";
+        }
+        else
+        {
+            auto actor_path = model_dir / "best_actor copy.pt";
+            auto critic1_path = model_dir / "best_critic_1 copy.pt";
+            auto critic2_path = model_dir / "best_critic_2 copy.pt";
+            if (std::filesystem::exists(actor_path) && std::filesystem::exists(critic1_path) && std::filesystem::exists(critic2_path))
+            {
+                torch::load(agent.actor_local, actor_path.string());
+                torch::load(agent.critic_local_1, critic1_path.string());
+                torch::load(agent.critic_local_2, critic2_path.string());
+                agent.hardCopy();
+            }
+            else
+            {
+                std::cerr << "WARNING: Pretrained model files missing in ../models. Continuing without pretrained weights.\n";
+            }
+        }
     }
 
     int num_frames = 0;
     auto start_time = std::chrono::high_resolution_clock::now();
     int num_steps = 20000;
     int num_epochs = 60;
-
-    // for testing, gonna have a new random option that I am gonna add after 1000 steps
-    PolicyOverOptionsAgent option_agent(train_env, critic_layer_sizes, device, CRITIC_LR, TAU, GAMMA, BATCH_SIZE);
 
     std::cout << "Starting training for " << num_epochs << " epochs, " << num_steps << " steps per epoch." << std::endl;
     auto state = train_env->reset();
@@ -121,26 +133,8 @@ int main(int argc, char **argv)
 
         for (int step = 0; step < num_steps; step++)
         {
-            // if (step == 10000){
-            //     option_agent.addOption(-1.0);
-            // }
             std::cout << "\rStep: " << step + 1 << "/" << num_steps << std::flush;
-            // auto option = option_agent.getOption(state);
-            torch::Tensor action;
-            torch::Tensor scaled_action;
-            // if (option == 0)
-            // {
-            auto actions = agent.getAction(state);
-            scaled_action = std::get<0>(actions);
-            action = std::get<1>(actions);
-            // }
-            // else
-            // {
-            //     action = torch::randn(3);
-            //     scaled_action = action * torch::tensor(train_env->action_limits);
-            // }
-
-            // std::cout << " Option: " << option << std::endl;
+            auto [scaled_action, action] = agent.getAction(state);
 
             auto [next_state, reward, done] = train_env->step(scaled_action);
             auto [next_underlying_state, collision] = train_env->getUnderlyingState();
@@ -148,8 +142,6 @@ int main(int argc, char **argv)
             total_reward += reward.item<float>();
             agent.addExperience(state, action, reward, next_state, done);
             agent.learn();
-            // option_agent.addExperience(state, option, reward, next_state, done, 1);
-            // option_agent.learn();
 
             her_transitions.push_back({underlying_state, action, next_underlying_state, collision});
 
@@ -169,7 +161,6 @@ int main(int argc, char **argv)
                 underlying_state = next_underlying_state;
             }
 
-            // robot_bridge->printState(robot_bridge->getRobotState());
         }
         std::cout << std::endl;
         std::cout << "Average Reward: " << total_reward / (num_steps) << std::endl;
@@ -182,9 +173,10 @@ int main(int argc, char **argv)
             best_reward = total_reward / (num_steps);
             agent.hardCopy();
             std::cout << "New best reward! Saving model." << std::endl;
-            torch::save(agent.actor_local, "best_actor.pt");
-            torch::save(agent.critic_local_1, "best_critic_1.pt");
-            torch::save(agent.critic_local_2, "best_critic_2.pt");
+            std::filesystem::create_directories("../models");
+            torch::save(agent.actor_local, "../models/best_actor.pt");
+            torch::save(agent.critic_local_1, "../models/best_critic_1.pt");
+            torch::save(agent.critic_local_2, "../models/best_critic_2.pt");
         }
 
         agent.total_actor_loss = 0.0;

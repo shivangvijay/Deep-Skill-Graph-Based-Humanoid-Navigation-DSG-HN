@@ -87,6 +87,7 @@ public:
 
     int goalHits() const { return _goal_hits; }
     int gestationPeriod() const { return _gestation_period; }
+    const std::vector<GestationRecord>& getPositiveGestationRecords() const { return _positive_gestation_records; }
 
 private:
     std::shared_ptr<TrainEnvironment> _env;

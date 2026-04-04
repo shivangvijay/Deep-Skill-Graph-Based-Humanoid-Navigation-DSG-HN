@@ -61,9 +61,12 @@ public:
 
         bool render_training = false; // if true, startRender() is called before the training loop (slows training)
         bool verbose = false;         // per-rollout logging inside each episode
+        bool visualize_initiation_sets = false; // if true, periodically render initiation set visualization
         int log_interval = 50;        // print episode summary + skill status table every N episodes
     };
 
+    // TODO: need different constructors: one where you can pass in a global agent, and one where you can pass
+    // in nothing at all as well
     DeepSkillChaining(std::shared_ptr<RobotBridgeTrain> robot_bridge,
                       torch::Device device,
                       AbstractedState global_goal,
@@ -71,6 +74,7 @@ public:
                       const std::string &pretrain_actor_path,
                       const std::string &pretrain_critic1_path,
                       const std::string &pretrain_critic2_path,
+                      const std::string &scene_file,
                       Config cfg);
 
     // Train the chain backward from the global goal. Returns total skill count excluding the global option
@@ -79,8 +83,10 @@ public:
     // Execute one episode using πO over the trained chain. Returns cumulative reward.
     float execute();
 
-    // void save(const std::string &dir) const;
-    // void load(const std::string &dir, int num_skills);
+    void visualizeInitiationSets();
+
+    void save(const std::string &dir) const;
+    void load(const std::string &dir, const std::string &scene_file);
 
     int numSkills() const;
 
@@ -90,6 +96,7 @@ private:
     torch::Device _device;
     AbstractedState _global_goal;
     AbstractedState _global_start;
+    std::string _scene_file_path;
 
     Config _cfg;
     std::vector<std::shared_ptr<Skill>> _skills;
