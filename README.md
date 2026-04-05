@@ -214,7 +214,9 @@ To run the testing script:
 
 ### DSC Training
 
-After performing pre-training, you can use the pytorch files for training dsc. First, copy the 3 created pytorch files into a folder outside of build. Inside train/dsc.cpp, lines 546-548, update the paths to reflect the locations of the pretrained files (default path is set to default pre-training save path). Secondly, alter line 545 to reflect the desired training environment. To run training, simply execute the following commands:
+After performing pre-training, you can use the pytorch files for training dsc. If you do not have the pretrained models, see the shared drive to check if the models are available (link [here](https://drive.google.com/drive/folders/1jtjyiEPn7EOeixqb-xIo7XlFsQK4y4jU?usp=drive_link))
+
+Inside train/dsc.cpp, lines 546-548, update the paths to reflect the locations of the pretrained files (default path is set to default pre-training save path). Secondly, alter line 545 to reflect the desired training environment. To run training, simply execute the following commands:
 
 ```bash
 cd DSG_HN/train/build
