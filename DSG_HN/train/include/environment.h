@@ -188,7 +188,7 @@ public:
     {
         RobotState state = robot_bridge->getRobotState();
         bool collision = robot_bridge->inCollision();
-        return computeReward(state, collision, goal);
+        return computeReward(state, collision, goal_);
     }
     // If we do not have the ability to turn, then velocity cannot be part of goal condition
     std::pair<torch::Tensor, torch::Tensor> computeReward(const RobotState &state, bool collision, const AbstractedState &goal_)
