@@ -180,6 +180,12 @@ void RobotBridgeTrain::resetRobot(const std::array<float, 3> &pos, const std::ar
     eng->reset(pos, quat);
     env->reset();
     current_cmd = {0.0, 0.0, 0.0};
+    
+    // Settle the robot by stepping with zero velocity commands
+    for (int i = 0; i < 2; i++)
+    {
+        update();
+    }
 }
 
 void RobotBridgeTrain::resetRobot(const std::array<float, 3> &pos, const std::array<float, 4> &quat, const std::array<float, 3> &vel, const std::array<float, 3> &ang_vel)
@@ -187,6 +193,14 @@ void RobotBridgeTrain::resetRobot(const std::array<float, 3> &pos, const std::ar
     eng->reset(pos, quat, vel, ang_vel);
     env->reset();
     current_cmd = {0.0, 0.0, 0.0};
+    
+    // Settle the robot by stepping with zero velocity commands
+    // Kinda assuming spawning with 0 velocity right now, but in the future may want to change this
+    // if required to spawn with non-zero velocity
+    for (int i = 0; i < 2; i++)
+    {
+        update();
+    }
 }
 
 void RobotBridgeTrain::initSensorAddresses()
