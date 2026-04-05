@@ -14,7 +14,11 @@ find_package(yaml-cpp REQUIRED)
 set(MUJOCO_DIR "${PROJECT_SOURCE_DIR}/../../unitree_mujoco/simulate/mujoco")
 set(POLICY_CONFIG_DIR "${PROJECT_SOURCE_DIR}/../deploy/robots/g1_29dof/config")
 set(SCENE_XML_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../unitree_mujoco/unitree_robots/g1")
-set(LIBTORCH_PATH "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/libtorch")
+set(LIBTORCH_PATH "${PROJECT_SOURCE_DIR}/../../../_/DSG_HN/libtorch")
+
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES STREQUAL "")
+  set(CMAKE_CUDA_ARCHITECTURES "70;75;80;86")
+endif()
 
 list(APPEND CMAKE_PREFIX_PATH "${LIBTORCH_PATH}")
 
@@ -38,6 +42,66 @@ include_directories(
 
 file(COPY ${SCENE_XML_DIR}/ DESTINATION ${PROJECT_SOURCE_DIR}/config/scene)
 file(COPY ${POLICY_CONFIG_DIR}/ DESTINATION ${PROJECT_SOURCE_DIR}/config)
+
+add_executable(transition_train_gaussian
+  transition_train_gaussian.cpp
+)
+
+target_link_libraries(transition_train_gaussian PRIVATE
+  ${TORCH_LIBRARIES}
+  libboost_program_options.a
+  fmt
+)
+
+add_executable(transition_train_gaussian_delta
+  transition_train_gaussian_delta.cpp
+)
+
+target_link_libraries(transition_train_gaussian_delta PRIVATE
+  ${TORCH_LIBRARIES}
+  libboost_program_options.a
+  fmt
+)
+
+add_executable(transition_infer
+  transition_infer.cpp
+)
+
+target_link_libraries(transition_infer PRIVATE
+  ${TORCH_LIBRARIES}
+  libboost_program_options.a
+  fmt
+)
+
+add_executable(transition_rollout_eval
+  transition_rollout_eval.cpp
+)
+
+target_link_libraries(transition_rollout_eval PRIVATE
+  ${TORCH_LIBRARIES}
+  libboost_program_options.a
+  fmt
+)
+
+add_executable(transition_rollout_eval_delta
+  transition_rollout_eval_delta.cpp
+)
+
+target_link_libraries(transition_rollout_eval_delta PRIVATE
+  ${TORCH_LIBRARIES}
+  libboost_program_options.a
+  fmt
+)
+
+add_executable(transition_mpc_eval
+  transition_mpc_eval.cpp
+)
+
+target_link_libraries(transition_mpc_eval PRIVATE
+  ${TORCH_LIBRARIES}
+  libboost_program_options.a
+  fmt
+)
 
 link_libraries(
   unitree_sdk2 ddsc ddscxx rt pthread # dds

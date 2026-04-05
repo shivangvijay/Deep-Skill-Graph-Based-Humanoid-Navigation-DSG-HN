@@ -223,6 +223,51 @@ cd DSG_HN/train/build
 ./dsc
 ```
 
+### Transition Data Workflow
+
+Collect data:
+```bash
+cd DSG_HN/sandbox/build
+./sandbox
+```
+
+Train the Gaussian delta model:
+```bash
+cd DSG_HN/train/build
+./transition_train_gaussian_delta --csv /path/to/transitions.csv --output-dir ./output_gaussian_delta_joint
+```
+
+Evaluate the delta model at 1 s and 5 s horizons:
+```bash
+./transition_rollout_eval_delta --csv /path/to/transitions.csv --checkpoint ./output_gaussian_delta_joint/transition_gaussian_delta_model_best.pt --horizons 1,5
+```
+
+The delta model predicts full-state deltas, including base motion, joint position deltas, and joint velocity deltas.
+
+#### MPC planning over the learned transition model
+
+Once you have a trained Gaussian delta checkpoint, you can run the random-shooting MPC evaluator against the sandbox transitions and scene:
+
+```bash
+cd DSG_HN/train/build
+./transition_mpc_eval \
+   --csv ../../sandbox/build/transitions.csv \
+   --checkpoint output_gaussian_delta_joint/transition_gaussian_delta_model_best.pt \
+   --normaliser output_gaussian_delta_joint/normaliser.txt \
+   --scene ../../sandbox/build/ai_maker_space_scene.xml \
+   --start-row 0 \
+   --goal-row 200 \
+   --horizon 5 \
+   --candidates 32
+```
+
+Notes:
+
+- The MPC binary uses the same transition format as the Gaussian delta trainer.
+- The sandbox scene name is `ai_maker_space_scene.xml`, matching the scene used by `sandbox/sandbox.cpp` and the transition collector.
+- The current MPC implementation scores sampled action sequences with goal distance, action smoothness, and a collision penalty against the obstacle geoms in the sandbox scene.
+- If you train into a different output directory, update the `--checkpoint` and `--normaliser` paths accordingly.
+
 ### Deployment
 
 #### 1. (If using a Xbox Joystick) Connect the Xbox joystick
