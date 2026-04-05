@@ -27,6 +27,7 @@ TD3Agent::TD3Agent(
 {
     action_scaling_factors = torch::tensor(env->action_scaling_factors);
     action_shift_factors = torch::tensor(env->action_shift_factors);
+    toDevice(device);
     hardCopy();
 }
 

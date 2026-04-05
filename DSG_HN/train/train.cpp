@@ -13,7 +13,7 @@
 #include <torch/torch.h>
 #include <filesystem>
 
-#define SCENE_FILE "../config/scene/umaze_scene_obs_free.xml"
+#define SCENE_FILE "../config/scene/umaze_scene.xml"
 #define POLICY_DIR "config/policy/velocity"
 #define CONFIG_PATH "config/config.yaml"
 
@@ -101,6 +101,7 @@ int main(int argc, char **argv)
                 torch::load(agent.actor_local, actor_path.string());
                 torch::load(agent.critic_local_1, critic1_path.string());
                 torch::load(agent.critic_local_2, critic2_path.string());
+                agent.toDevice(device);
                 agent.hardCopy();
             }
             else

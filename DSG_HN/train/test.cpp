@@ -11,7 +11,7 @@
 #include "agent.h"
 #include <torch/torch.h>
 
-#define SCENE_FILE "../config/scene/umaze_scene_obs_free.xml"
+#define SCENE_FILE "../config/scene/umaze_scene.xml"
 #define POLICY_DIR "config/policy/velocity"
 #define CONFIG_PATH "config/config.yaml"
 

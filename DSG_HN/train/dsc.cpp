@@ -623,12 +623,12 @@ AbstractedState DeepSkillChaining::_sampleStartNearBoundary()
 
 /************************************** main **************************************/
 
-#define SCENE_FILE "../config/scene/umaze_scene_obs_free.xml"
+#define SCENE_FILE "../config/scene/umaze_scene.xml"
 #define OG_ACTOR "../models/best_actor.pt"
 #define OG_CRITIC1 "../models/best_critic_1.pt"
 #define OG_CRITIC2 "../models/best_critic_2.pt"
 #define DSC_SAVE_PATH "../dsc_models"
-#define TEST false // if set to true, will not train, will just load and run testing
+#define TEST true // if set to true, will not train, will just load and run testing
 
 #define X_MIN -7.0f
 #define X_MAX 7.0f
