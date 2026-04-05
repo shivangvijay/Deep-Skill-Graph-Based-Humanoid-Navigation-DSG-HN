@@ -8,11 +8,11 @@ Skill::Skill(
     const std::vector<int> &critic_layer_sizes,
     torch::Device device,
     float lr_actor, float lr_critic,
-    float tau, float gamma, int max_obstacles, int actor_warmup_steps,
+    float tau, float gamma, int actor_warmup_steps,
     int batch_size, int actor_update_freq, int k, int max_steps, double nu,
     std::shared_ptr<Skill> parent, int gestation_period, bool is_global, AbstractedState global_goal, std::shared_ptr<Skill> global_option)
     : _id(id), _env(env), _parent(parent), _is_global(is_global), _gestation_period(gestation_period), _k(k), _max_steps(max_steps), _agent(env, actor_layer_sizes, critic_layer_sizes, device,
-                                                                                                                                            lr_actor, lr_critic, tau, gamma, batch_size, actor_update_freq, max_obstacles, actor_warmup_steps),
+                                                                                                                                            lr_actor, lr_critic, tau, gamma, batch_size, actor_update_freq, actor_warmup_steps),
       _rng(std::random_device{}()), _global_goal(global_goal), _nu(nu), _global_option(global_option), _gamma(gamma)
 {
 }

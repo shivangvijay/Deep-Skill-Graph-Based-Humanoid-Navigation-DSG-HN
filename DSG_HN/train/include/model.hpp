@@ -8,9 +8,75 @@
 #include <boost/circular_buffer.hpp>
 #include <vector>
 #include <random>
+#include <cmath>
 
 using namespace torch;
 using Experience = std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>; // this is how we are going to save expirience in buffer
+
+inline void xavier_init_weights(torch::nn::Module &module);
+
+struct ObstacleAttentionEncoderImpl : nn::Module
+{
+    ObstacleAttentionEncoderImpl(int base_state_size_, int obstacle_feature_size_, int attention_dim_, torch::Device device_)
+        : base_state_size(base_state_size_), obstacle_feature_size(obstacle_feature_size_), attention_dim(attention_dim_), device(device_)
+    {
+        query_proj = register_module("query_proj", nn::Linear(base_state_size, attention_dim));
+        obs_embed = register_module("obs_embed", nn::Linear(obstacle_feature_size, attention_dim));
+        key_proj = register_module("key_proj", nn::Linear(attention_dim, attention_dim));
+        value_proj = register_module("value_proj", nn::Linear(attention_dim, attention_dim));
+        this->to(device);
+        xavier_init_weights(*this);
+    }
+
+    torch::Tensor forward(torch::Tensor state)
+    {
+        state = state.to(device);
+        if (state.dim() == 1)
+            state = torch::unsqueeze(state, 0);
+
+        auto base = state.narrow(-1, 0, base_state_size);
+        int64_t obs_flat_dim = state.size(-1) - base_state_size;
+        if (obs_flat_dim < obstacle_feature_size)
+        {
+            auto zero_ctx = torch::zeros({state.size(0), 2 * attention_dim}, state.options());
+            return torch::cat({base, zero_ctx}, -1);
+        }
+
+        int64_t obs_count = obs_flat_dim / obstacle_feature_size;
+        int64_t used_obs_dim = obs_count * obstacle_feature_size;
+        auto obstacle_flat = state.narrow(-1, base_state_size, used_obs_dim);
+        auto obstacle_tokens = obstacle_flat.view({state.size(0), obs_count, obstacle_feature_size});
+
+        auto obs_latent = torch::relu(obs_embed->forward(obstacle_tokens));
+        auto query = query_proj->forward(base).unsqueeze(1);
+        auto keys = key_proj->forward(obs_latent);
+        auto values = value_proj->forward(obs_latent);
+
+        auto scores = torch::bmm(query, keys.transpose(1, 2)) / std::sqrt((double)attention_dim);
+        auto weights = torch::softmax(scores, -1);
+        auto attended = torch::bmm(weights, values).squeeze(1);
+
+        auto max_pooled = std::get<0>(obs_latent.max(1));
+        auto ctx = torch::cat({attended, max_pooled}, -1);
+        return torch::cat({base, ctx}, -1);
+    }
+
+    int outputDim() const
+    {
+        return base_state_size + 2 * attention_dim;
+    }
+
+    nn::Linear query_proj{nullptr};
+    nn::Linear obs_embed{nullptr};
+    nn::Linear key_proj{nullptr};
+    nn::Linear value_proj{nullptr};
+    int base_state_size = 0;
+    int obstacle_feature_size = 4;
+    int attention_dim = 32;
+    torch::Device device = torch::kCPU;
+};
+
+TORCH_MODULE(ObstacleAttentionEncoder);
 
 inline void xavier_init_weights(torch::nn::Module &module)
 {
@@ -25,12 +91,14 @@ inline void xavier_init_weights(torch::nn::Module &module)
 
 struct CriticImpl : nn::Module
 {
-    CriticImpl(int state_size, int action_size, const std::vector<int> &layer_sizes, torch::Device device_) : device(device_)
+    CriticImpl(int base_state_size, int obstacle_feature_size, int action_size, const std::vector<int> &layer_sizes, torch::Device device_, int attention_dim = 32)
+        : device(device_)
     {
+        encoder = register_module("encoder", ObstacleAttentionEncoder(base_state_size, obstacle_feature_size, attention_dim, device_));
         hidden_layers = register_module("layers", nn::Sequential());
         for (int i = 0; i < layer_sizes.size(); i++)
         {
-            int input_size = (i == 0) ? (state_size + action_size) : layer_sizes[i - 1];
+            int input_size = (i == 0) ? (encoder->outputDim() + action_size) : layer_sizes[i - 1];
             int output_size = layer_sizes[i];
             hidden_layers->push_back(nn::Linear(input_size, output_size));
             hidden_layers->push_back(nn::ReLU());
@@ -43,10 +111,8 @@ struct CriticImpl : nn::Module
 
     torch::Tensor forward(torch::Tensor state, torch::Tensor action)
     {
-        state = state.to(device);
+        state = encoder->forward(state);
         action = action.to(device);
-        if (state.dim() == 1)
-            state = torch::unsqueeze(state, 0);
         if (action.dim() == 1)
             action = torch::unsqueeze(action, 0);
 
@@ -55,6 +121,7 @@ struct CriticImpl : nn::Module
         return output_layer->forward(x);
     }
 
+    ObstacleAttentionEncoder encoder{nullptr};
     nn::Sequential hidden_layers{nullptr};
     nn::Linear output_layer{nullptr};
     torch::Device device = torch::kCPU;
@@ -62,12 +129,14 @@ struct CriticImpl : nn::Module
 
 struct ActorImpl : nn::Module
 {
-    ActorImpl(int state_size, int action_size, const std::vector<int> &layer_sizes, torch::Device device_) : device(device_)
+    ActorImpl(int base_state_size, int obstacle_feature_size, int action_size, const std::vector<int> &layer_sizes, torch::Device device_, int attention_dim = 32)
+        : device(device_)
     {
+        encoder = register_module("encoder", ObstacleAttentionEncoder(base_state_size, obstacle_feature_size, attention_dim, device_));
         hidden_layers = register_module("layers", nn::Sequential());
         for (int i = 0; i < layer_sizes.size(); i++)
         {
-            int input_size = (i == 0) ? state_size : layer_sizes[i - 1];
+            int input_size = (i == 0) ? encoder->outputDim() : layer_sizes[i - 1];
             int output_size = layer_sizes[i];
             hidden_layers->push_back(nn::Linear(input_size, output_size));
             hidden_layers->push_back(nn::ReLU());
@@ -81,14 +150,13 @@ struct ActorImpl : nn::Module
 
     torch::Tensor forward(torch::Tensor state)
     {
-        state = state.to(device);
-        if (state.dim() == 1)
-            state = torch::unsqueeze(state, 0);
+        state = encoder->forward(state);
 
         auto x = hidden_layers->forward(state);
         return torch::tanh(output_layer->forward(x));
     }
 
+    ObstacleAttentionEncoder encoder{nullptr};
     nn::Sequential hidden_layers{nullptr};
     nn::Linear output_layer{nullptr};
     torch::Device device = torch::kCPU;
@@ -97,12 +165,14 @@ struct ActorImpl : nn::Module
 
 struct PolicyOverOptionsImpl : nn::Module
 {
-    PolicyOverOptionsImpl(int state_size, const std::vector<int> &layer_sizes, torch::Device device_) : device(device_)
+    PolicyOverOptionsImpl(int base_state_size, int obstacle_feature_size, const std::vector<int> &layer_sizes, torch::Device device_, int attention_dim = 32)
+        : device(device_)
     {
+        encoder = register_module("encoder", ObstacleAttentionEncoder(base_state_size, obstacle_feature_size, attention_dim, device_));
         hidden_layers = register_module("layers", nn::Sequential());
         for (int i = 0; i < layer_sizes.size(); i++)
         {
-            int input_size = (i == 0) ? state_size : layer_sizes[i - 1];
+            int input_size = (i == 0) ? encoder->outputDim() : layer_sizes[i - 1];
             int output_size = layer_sizes[i];
             hidden_layers->push_back(nn::Linear(input_size, output_size));
             hidden_layers->push_back(nn::ReLU());
@@ -135,14 +205,13 @@ struct PolicyOverOptionsImpl : nn::Module
 
     torch::Tensor forward(torch::Tensor state)
     {
-        state = state.to(device);
-        if (state.dim() == 1)
-            state = torch::unsqueeze(state, 0);
+        state = encoder->forward(state);
 
         auto x = hidden_layers->forward(state);
         return output_layer->forward(x);
     }
 
+    ObstacleAttentionEncoder encoder{nullptr};
     nn::Sequential hidden_layers{nullptr};
     nn::Linear output_layer{nullptr};
     torch::Device device = torch::kCPU;

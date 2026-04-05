@@ -19,7 +19,6 @@ public:
         float gamma,
         int batch_size,
         int actor_update_freq,
-        int max_obstacles,
         int actor_warmup_steps);
 
     std::pair<torch::Tensor, torch::Tensor> getAction(torch::Tensor state, bool eval = false);
@@ -57,7 +56,6 @@ private:
     int batch_size;
     float lr_critic;
     float lr_actor;
-    int total_state_dim;
     int actor_warmup_steps;
 
     void softUpdate();

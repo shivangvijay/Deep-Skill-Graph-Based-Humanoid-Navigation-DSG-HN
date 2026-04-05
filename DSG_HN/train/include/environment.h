@@ -3,6 +3,7 @@
 #include "robot_bridge_train.h"
 #include <vector>
 #include <math.h>
+#include <algorithm>
 
 /*
 
@@ -23,7 +24,7 @@ public:
         int self_dyn_dim = 3 + 3 + 3;                       // local_vel, local_ang_vel, local_accel
         int goal_dim = 3 + 4 + 3 + 3;                       // relative_pos, releative_orientation, relative_vel, relative angular vel
         int boundary_dim = 4;
-        obstacle_dim = (int)obstacles.size() * 4;
+        obstacle_dim = (int)obstacles.size() * obstacle_feature_dim;
 
         state_dim = proprio_dim + gravity_dim + self_dyn_dim + goal_dim + boundary_dim;
 
@@ -260,7 +261,7 @@ public:
         {
             dq_scaled[j] = state.dq[j] / 20; // dq scaling factor
         }
-        copy_to_ptr(state.dq);
+        copy_to_ptr(dq_scaled);
 
         // local dynamics
         copy_to_ptr(rotateVectorByQuat({0, 0, 1}, state.orientation, true));      // local_up
@@ -312,17 +313,9 @@ public:
         data_ptr[offset++] = dist_back / env_scaling_factors.position[1];
         data_ptr[offset++] = dist_front / env_scaling_factors.position[1];
 
-        // local obstacles
-        std::vector<Obstacle> sorted_obs = obstacles;
-        std::sort(sorted_obs.begin(), sorted_obs.end(), [&](const Obstacle &a, const Obstacle &b)
-                  {
-        float distA = std::pow(a.position[0]-state.position[0], 2) + std::pow(a.position[1]-state.position[1], 2);
-        float distB = std::pow(b.position[0]-state.position[0], 2) + std::pow(b.position[1]-state.position[1], 2);
-        return distA < distB; });
-
-        for (int i = 0; i < sorted_obs.size(); i++)
+        for (int i = 0; i < obstacles.size(); i++)
         {
-            const auto &obs = sorted_obs[i];
+            const auto &obs = obstacles[i];
             std::array<float, 3> r_obs = {obs.position[0] - state.position[0],
                                           obs.position[1] - state.position[1],
                                           obs.position[2] - state.position[2]};
@@ -338,6 +331,7 @@ public:
 
     int state_dim;
     int obstacle_dim;
+    int obstacle_feature_dim = 4;
     int action_dim = 3;
     std::vector<float> action_scaling_factors = {0.75, 0.3, 1.0};
     std::vector<float> action_shift_factors = {0.25, 0.0, 0.0};
