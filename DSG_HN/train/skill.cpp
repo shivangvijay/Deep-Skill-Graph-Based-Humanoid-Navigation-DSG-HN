@@ -257,10 +257,18 @@ void Skill::save(const std::string &actor_path,
     torch::save(_agent.actor_local, actor_path);
     torch::save(_agent.critic_local_1, critic1_path);
     torch::save(_agent.critic_local_2, critic2_path);
+    
     if (!_is_global && _classifier.trained())
+    {
         _classifier.save(classifier_path);
+        std::cout << "[Skill " << _id << "] Saved optimistic classifier to " << classifier_path << "\n";
+    }
+    
     if (_pessimistic_classifier.trained())
+    {
         _pessimistic_classifier.save(classifier_path + "_pessimistic");
+        std::cout << "[Skill " << _id << "] Saved pessimistic classifier to " << classifier_path + "_pessimistic" << "\n";
+    }
 
     if (!_is_global && !_positive_gestation_records.empty())
     {
@@ -292,16 +300,31 @@ void Skill::load(const std::string &actor_path,
     torch::load(_agent.critic_local_1, critic1_path);
     torch::load(_agent.critic_local_2, critic2_path);
 
-    if (!_is_global)
+    if (!_is_global && std::filesystem::exists(classifier_path))
     {
-        std::ifstream f(classifier_path);
-        if (f.good())
+        try
+        {
             _classifier.load(classifier_path);
+            std::cout << "[Skill " << _id << "] Loaded optimistic classifier from " << classifier_path << "\n";
+        }
+        catch (const std::exception &e)
+        {
+            std::cerr << "[Skill " << _id << "] Failed to load optimistic classifier: " << e.what() << "\n";
+        }
     }
 
-    std::ifstream f_pess(classifier_path + "_pessimistic");
-    if (f_pess.good())
-        _pessimistic_classifier.load(classifier_path + "_pessimistic");
+    if (std::filesystem::exists(classifier_path + "_pessimistic"))
+    {
+        try
+        {
+            _pessimistic_classifier.load(classifier_path + "_pessimistic");
+            std::cout << "[Skill " << _id << "] Loaded pessimistic classifier from " << classifier_path + "_pessimistic" << "\n";
+        }
+        catch (const std::exception &e)
+        {
+            std::cerr << "[Skill " << _id << "] Failed to load pessimistic classifier: " << e.what() << "\n";
+        }
+    }
 
     std::ifstream f_pos(classifier_path + "_positives.txt");
     if (f_pos.good() && !_is_global)

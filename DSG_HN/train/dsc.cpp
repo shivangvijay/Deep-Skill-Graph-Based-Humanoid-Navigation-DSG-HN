@@ -216,6 +216,7 @@ void DeepSkillChaining::load(const std::string &dir, const std::string &scene_fi
     _poo = PolicyOverOptionsAgent(_env, _cfg.poo_layers, _device, _cfg.lr_poo, _cfg.tau, _cfg.gamma, _cfg.batch_size);
     _unfinished_option_idx = _global_option_idx;
 
+    _skills.clear(); // remove existing skills
     for (int i = 0; i < num_skills; ++i)
     {
         if (i == 0)
