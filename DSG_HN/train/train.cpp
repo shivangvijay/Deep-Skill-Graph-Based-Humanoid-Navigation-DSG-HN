@@ -31,7 +31,7 @@
 #define CRITIC_LAYER_SIZES {256, 256, 256}
 #define ACTOR_LAYER_SIZES {256, 256, 256}
 #define RENDER false
-#define PRETRAIN true
+#define PRETRAIN false
 #define ACTOR_WARMUP_STEPS 0000
 
 void train_her(const std::vector<Transition> &trajectory, std::shared_ptr<TrainEnvironment> env, TD3Agent &agent)
