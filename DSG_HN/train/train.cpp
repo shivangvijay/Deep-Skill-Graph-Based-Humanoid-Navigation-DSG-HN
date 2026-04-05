@@ -31,7 +31,6 @@
 #define CRITIC_LAYER_SIZES {256, 256, 256}
 #define ACTOR_LAYER_SIZES {256, 256, 256}
 #define RENDER false
-#define MAX_OBSTACLES 8
 #define PRETRAIN false
 #define ACTOR_WARMUP_STEPS 0000
 
@@ -82,7 +81,7 @@ int main(int argc, char **argv)
     std::vector<int> critic_layer_sizes = CRITIC_LAYER_SIZES;
     std::vector<int> actor_layer_sizes = ACTOR_LAYER_SIZES;
 
-    TD3Agent agent(train_env, actor_layer_sizes, critic_layer_sizes, device, ACTOR_LR, CRITIC_LR, TAU, GAMMA, BATCH_SIZE, ACTOR_UPDATE_FREQ, MAX_OBSTACLES, ACTOR_WARMUP_STEPS);
+    TD3Agent agent(train_env, actor_layer_sizes, critic_layer_sizes, device, ACTOR_LR, CRITIC_LR, TAU, GAMMA, BATCH_SIZE, ACTOR_UPDATE_FREQ, ACTOR_WARMUP_STEPS);
 
     if (PRETRAIN)
     {

@@ -71,7 +71,7 @@ int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout wh
         //     auto start = _sampleStartInterpolated();
         //     _env->resetTo(start);
         // }
-        else if (p >= 0.2 && p < 0.6)
+        else if (p >= 0.2 && p < 0.8)
         {
             auto start = _sampleStartNearBoundary();
             _env->resetTo(start);
@@ -216,6 +216,7 @@ void DeepSkillChaining::load(const std::string &dir, const std::string &scene_fi
     _poo = PolicyOverOptionsAgent(_env, _cfg.poo_layers, _device, _cfg.lr_poo, _cfg.tau, _cfg.gamma, _cfg.batch_size);
     _unfinished_option_idx = _global_option_idx;
 
+    _skills.clear(); // remove existing skills
     for (int i = 0; i < num_skills; ++i)
     {
         if (i == 0)
@@ -309,21 +310,31 @@ std::pair<int, AbstractedState> DeepSkillChaining::_pickOption(bool eval)
 
     int best_option = _global_option_idx;
     float best_q_val = std::numeric_limits<float>::lowest();
-    for (int o = _global_option_idx + 1; o < _skills.size(); o++)
-    {
-        // pass global goal in here, as the only option that will use this is the first/goal option whose local
-        // goal is the same as the global goal
-        if (_skills[o]->canStart(global_state) && !_skills[o]->atTermination(_global_goal))
-        {
-            if (!eval)
-            {
-                best_option = o;
-                break;
+
+    // Collect valid options split by pessimistic availability
+    std::vector<int> pessimistic_options;
+    std::vector<int> optimistic_options;
+
+    for (int o = _global_option_idx + 1; o < _skills.size(); o++) {
+        if (_skills[o]->canStart(global_state) && !_skills[o]->atTermination(_global_goal)) {
+            if (_skills[o]->canStartPessimistic(global_state)) {
+                pessimistic_options.push_back(o);
+            } else {
+                optimistic_options.push_back(o);
             }
-            else if (q_vals[o].item<float>() > best_q_val)
-            {
+        }
+    }
+
+    // Pick best from pessimistic, fallback to optimistic
+    const auto& candidates = pessimistic_options.empty() ? optimistic_options : pessimistic_options;
+
+    if (!eval) {
+        best_option = candidates.empty() ? _global_option_idx : candidates[0];
+    } else {
+        for (int o : candidates) {
+            if (q_vals[o].item<float>() > best_q_val) {
+                best_q_val = q_vals[o].item<float>();
                 best_option = o;
-                best_q_val = q_vals[0].item<float>();
             }
         }
     }
@@ -444,12 +455,12 @@ void DeepSkillChaining::_makeSkill(bool is_global, std::shared_ptr<Skill> parent
     std::shared_ptr<Skill> global_option = (is_global) ? nullptr : _skills[_global_option_idx];
     std::shared_ptr<Skill> new_skill = std::make_shared<Skill>(id, _env,
                                                                _cfg.actor_layers, _cfg.critic_layers, _device,
-                                                               lr_actor, lr_critic, _cfg.tau, _cfg.gamma, _cfg.max_obstacles, _cfg.actor_warmup_steps,
+                                                               lr_actor, lr_critic, _cfg.tau, _cfg.gamma, _cfg.actor_warmup_steps,
                                                                _cfg.batch_size, _cfg.actor_update_freq, _cfg.last_k,
                                                                _cfg.max_option_steps, _cfg.nu, parent, _cfg.gestation_n, is_global, _global_goal, global_option);
     if (!is_global)
         new_skill->initFromSkill(_skills[_global_option_idx]);
-    
+
     new_skill->agent().hardCopy();
     new_skill->agent().toDevice(_device);
     _unfinished_option_idx = id;
@@ -458,7 +469,7 @@ void DeepSkillChaining::_makeSkill(bool is_global, std::shared_ptr<Skill> parent
     else
         std::cout << "\nMaking New Skill With ID: " << id << "\n";
     _skills.push_back(new_skill);
-    _poo.addOption(0.0f);
+    _poo.addOption(-5.0f); // Start new options with pessimistic bias to discourage premature selection
     _poo.hardCopy();
 }
 
@@ -610,8 +621,18 @@ AbstractedState DeepSkillChaining::_sampleStartNearBoundary()
 
         state.orientation = _getGaussianQuaternionPerturbation(state.orientation, std_rot);
 
+        bool any_predecessor_can_start = false;
+        for (int o = _global_option_idx + 1; o < _unfinished_option_idx; o++)
+        {
+            if (_skills[o]->canStart(state))
+            {
+                any_predecessor_can_start = true;
+                break;
+            }
+        }
+
         if (_robot_bridge->isConfigurationValid(state.position, state.orientation, state.velocity, state.angular_velocity) &&
-            (_unfinished_option_idx == _global_option_idx + 1 || !_skills[_unfinished_option_idx - 1]->canStart(state)))
+            !any_predecessor_can_start)
         {
             return state;
         }
@@ -657,14 +678,14 @@ int main(int argc, char **argv)
         SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, /*render=*/false);
 
     DeepSkillChaining::Config cfg;
-    cfg.gestation_n = 50; // number of total successes that should be collected during gestation phase. Perhaps use a percentage for the option being currently learnt?
+    cfg.gestation_n = 30; // number of total successes that should be collected during gestation phase. Perhaps use a percentage for the option being currently learnt?
     cfg.last_k = 20;
     cfg.max_option_steps = 50; // each option should be meaningful enough. 5Hz and 20 steps means each option can run for up to 4 seconds
-    cfg.nu = 0.1;
+    cfg.nu = 0.2;
     cfg.actor_warmup_steps = 0; // gonna keep at zero for testing purposes as well
     cfg.warmup_episodes = 0;    // keep at zero since I am assuming we have done pretraining
     cfg.verbose = true;         // set to true for per-rollout console output
-    cfg.log_interval = 5;       // print skill status table every N episodes
+    cfg.log_interval = 50;     // print skill status table every N episodes
     cfg.visualize_initiation_sets = true;
 
     AbstractedState global_goal = {{-4.5, 4.1, 0}, {0, 0, 0, -1}, {0, 0, 0}, {0, 0, 0}};

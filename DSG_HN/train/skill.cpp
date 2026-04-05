@@ -8,11 +8,11 @@ Skill::Skill(
     const std::vector<int> &critic_layer_sizes,
     torch::Device device,
     float lr_actor, float lr_critic,
-    float tau, float gamma, int max_obstacles, int actor_warmup_steps,
+    float tau, float gamma, int actor_warmup_steps,
     int batch_size, int actor_update_freq, int k, int max_steps, double nu,
     std::shared_ptr<Skill> parent, int gestation_period, bool is_global, AbstractedState global_goal, std::shared_ptr<Skill> global_option)
     : _id(id), _env(env), _parent(parent), _is_global(is_global), _gestation_period(gestation_period), _k(k), _max_steps(max_steps), _agent(env, actor_layer_sizes, critic_layer_sizes, device,
-                                                                                                                                            lr_actor, lr_critic, tau, gamma, batch_size, actor_update_freq, max_obstacles, actor_warmup_steps),
+                                                                                                                                            lr_actor, lr_critic, tau, gamma, batch_size, actor_update_freq, actor_warmup_steps),
       _rng(std::random_device{}()), _global_goal(global_goal), _nu(nu), _global_option(global_option), _gamma(gamma)
 {
 }
@@ -96,7 +96,7 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
         {
             if (_parent->canStartPessimistic(_env->getAbstractedState()))
             {
-                reward = torch::tensor({50.0f}, torch::kFloat32);
+                reward = torch::tensor({20.0f}, torch::kFloat32); // make reward a bit smaller than the actual goal reward to encourage shorter options, but still positive to encourage reaching the parent initiation set
                 done = torch::tensor({1.0f}, torch::kFloat32);
             }
         }
@@ -257,10 +257,18 @@ void Skill::save(const std::string &actor_path,
     torch::save(_agent.actor_local, actor_path);
     torch::save(_agent.critic_local_1, critic1_path);
     torch::save(_agent.critic_local_2, critic2_path);
+    
     if (!_is_global && _classifier.trained())
+    {
         _classifier.save(classifier_path);
+        std::cout << "[Skill " << _id << "] Saved optimistic classifier to " << classifier_path << "\n";
+    }
+    
     if (_pessimistic_classifier.trained())
+    {
         _pessimistic_classifier.save(classifier_path + "_pessimistic");
+        std::cout << "[Skill " << _id << "] Saved pessimistic classifier to " << classifier_path + "_pessimistic" << "\n";
+    }
 
     if (!_is_global && !_positive_gestation_records.empty())
     {
@@ -292,16 +300,31 @@ void Skill::load(const std::string &actor_path,
     torch::load(_agent.critic_local_1, critic1_path);
     torch::load(_agent.critic_local_2, critic2_path);
 
-    if (!_is_global)
+    if (!_is_global && std::filesystem::exists(classifier_path))
     {
-        std::ifstream f(classifier_path);
-        if (f.good())
+        try
+        {
             _classifier.load(classifier_path);
+            std::cout << "[Skill " << _id << "] Loaded optimistic classifier from " << classifier_path << "\n";
+        }
+        catch (const std::exception &e)
+        {
+            std::cerr << "[Skill " << _id << "] Failed to load optimistic classifier: " << e.what() << "\n";
+        }
     }
 
-    std::ifstream f_pess(classifier_path + "_pessimistic");
-    if (f_pess.good())
-        _pessimistic_classifier.load(classifier_path + "_pessimistic");
+    if (std::filesystem::exists(classifier_path + "_pessimistic"))
+    {
+        try
+        {
+            _pessimistic_classifier.load(classifier_path + "_pessimistic");
+            std::cout << "[Skill " << _id << "] Loaded pessimistic classifier from " << classifier_path + "_pessimistic" << "\n";
+        }
+        catch (const std::exception &e)
+        {
+            std::cerr << "[Skill " << _id << "] Failed to load pessimistic classifier: " << e.what() << "\n";
+        }
+    }
 
     std::ifstream f_pos(classifier_path + "_positives.txt");
     if (f_pos.good() && !_is_global)

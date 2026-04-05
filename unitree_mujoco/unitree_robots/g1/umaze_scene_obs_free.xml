@@ -1,0 +1,88 @@
+<!-- G1 29-DOF U-maze scene for DSG/DSC training
+     Arena: 14x14 m (±7 in x and y)
+
+     Layout (top-down, north = +y):
+
+       y=7   ############################
+             #                          #
+       y=5   #      [C6]                #
+             #                          #
+       y=3   #   [C3]     [C5]          #
+             #                          #
+       y=1.0 # ###########              #   <- cylinder wall (gap on east, x > ~1.5)
+             #        [C4]              #
+       y=-2  #   [C2]   [C1]            #
+             #                          #
+       y=-4  #      [C7]                #
+             #                          #
+       y=-7  ############################
+             x=-7                    x=7
+
+     Same task: must go around the right-side gap.
+
+     Naming convention:
+       layout_*   -> parsed into policy state
+       boundary_* -> not observed
+-->
+
+<mujoco model="g1_29dof scene">
+  <include file="g1_29dof.xml"/>
+
+  <statistic center="0 0 0.5" extent="4.5"/>
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="-130" elevation="-20"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient"
+             rgb1="0.3 0.5 0.7" rgb2="0 0 0"
+             width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker"
+             mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3"
+             markrgb="0.8 0.8 0.8"
+             width="300" height="300"/>
+    <material name="groundplane" texture="groundplane"
+              texuniform="true" texrepeat="5 5"
+              reflectance="0.2"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
+
+    <!-- Floor -->
+    <geom name="floor" type="plane" size="0 0 0.05" material="groundplane"/>
+
+    <!-- Boundaries -->
+    <geom name="boundary_north" type="box" pos="0 7.1 1"  size="7 0.2 1"/>
+    <geom name="boundary_south" type="box" pos="0 -7.1 1" size="7 0.2 1"/>
+    <geom name="boundary_east"  type="box" pos="7.1 0 1"  size="0.2 7 1"/>
+    <geom name="boundary_west"  type="box" pos="-7.1 0 1" size="0.2 7 1"/>
+
+    <!-- ========================= -->
+    <!-- CYLINDER WALL (extended) -->
+    <!-- ========================= -->
+    <!-- y = 1.0, gap for x > ~1.5 -->
+
+    <geom name="layout_wall_0" type="cylinder" pos="-6.5 1.0 0.5" size="0.4 0.5"/>
+    <geom name="layout_wall_1" type="cylinder" pos="-5.7 1.0 0.5" size="0.4 0.5"/>
+    <geom name="layout_wall_2" type="cylinder" pos="-4.9 1.0 0.5" size="0.4 0.5"/>
+    <geom name="layout_wall_3" type="cylinder" pos="-4.1 1.0 0.5" size="0.4 0.5"/>
+    <geom name="layout_wall_4" type="cylinder" pos="-3.3 1.0 0.5" size="0.4 0.5"/>
+    <geom name="layout_wall_5" type="cylinder" pos="-2.5 1.0 0.5" size="0.4 0.5"/>
+    <geom name="layout_wall_6" type="cylinder" pos="-1.7 1.0 0.5" size="0.4 0.5"/>
+    <geom name="layout_wall_7" type="cylinder" pos="-0.9 1.0 0.5" size="0.4 0.5"/>
+    <geom name="layout_wall_8" type="cylinder" pos="-0.1 1.0 0.5" size="0.4 0.5"/>
+    <geom name="layout_wall_9" type="cylinder" pos="0.7  1.0 0.5" size="0.4 0.5"/>
+    <geom name="layout_wall_10" type="cylinder" pos="1.5 1.0 0.5" size="0.4 0.5"/>
+
+    <!-- Gap continues to x = 7 -->
+
+    <!-- ========================= -->
+    <!-- CLUTTER (unchanged) -->
+    <!-- ========================= -->
+
+  </worldbody>
+</mujoco>

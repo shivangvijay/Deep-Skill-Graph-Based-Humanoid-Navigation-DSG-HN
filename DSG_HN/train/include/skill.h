@@ -45,7 +45,7 @@ public:
           const std::vector<int> &critic_layer_sizes,
           torch::Device device,
           float lr_actor, float lr_critic,
-          float tau, float gamma, int max_obstacles, int actor_warmup_steps,
+          float tau, float gamma, int actor_warmup_steps,
           int batch_size, int actor_update_freq, int k, int max_steps, double nu,
           std::shared_ptr<Skill> parent, int gestation_period, bool is_global, AbstractedState global_goal,
           std::shared_ptr<Skill> global_option);
