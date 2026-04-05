@@ -96,7 +96,7 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
         {
             if (_parent->canStartPessimistic(_env->getAbstractedState()))
             {
-                reward = torch::tensor({50.0f}, torch::kFloat32);
+                reward = torch::tensor({20.0f}, torch::kFloat32); // make reward a bit smaller than the actual goal reward to encourage shorter options, but still positive to encourage reaching the parent initiation set
                 done = torch::tensor({1.0f}, torch::kFloat32);
             }
         }

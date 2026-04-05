@@ -71,7 +71,7 @@ int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout wh
         //     auto start = _sampleStartInterpolated();
         //     _env->resetTo(start);
         // }
-        else if (p >= 0.2 && p < 0.6)
+        else if (p >= 0.2 && p < 0.8)
         {
             auto start = _sampleStartNearBoundary();
             _env->resetTo(start);
@@ -621,8 +621,18 @@ AbstractedState DeepSkillChaining::_sampleStartNearBoundary()
 
         state.orientation = _getGaussianQuaternionPerturbation(state.orientation, std_rot);
 
+        bool any_predecessor_can_start = false;
+        for (int o = _global_option_idx + 1; o < _unfinished_option_idx; o++)
+        {
+            if (_skills[o]->canStart(state))
+            {
+                any_predecessor_can_start = true;
+                break;
+            }
+        }
+
         if (_robot_bridge->isConfigurationValid(state.position, state.orientation, state.velocity, state.angular_velocity) &&
-            (_unfinished_option_idx == _global_option_idx + 1 || !_skills[_unfinished_option_idx - 1]->canStart(state)))
+            !any_predecessor_can_start)
         {
             return state;
         }
@@ -639,7 +649,7 @@ AbstractedState DeepSkillChaining::_sampleStartNearBoundary()
 #define OG_CRITIC1 "../models/best_critic_1.pt"
 #define OG_CRITIC2 "../models/best_critic_2.pt"
 #define DSC_SAVE_PATH "../dsc_models"
-#define TEST true // if set to true, will not train, will just load and run testing
+#define TEST false // if set to true, will not train, will just load and run testing
 
 #define X_MIN -7.0f
 #define X_MAX 7.0f
@@ -668,14 +678,14 @@ int main(int argc, char **argv)
         SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, /*render=*/false);
 
     DeepSkillChaining::Config cfg;
-    cfg.gestation_n = 50; // number of total successes that should be collected during gestation phase. Perhaps use a percentage for the option being currently learnt?
+    cfg.gestation_n = 30; // number of total successes that should be collected during gestation phase. Perhaps use a percentage for the option being currently learnt?
     cfg.last_k = 20;
     cfg.max_option_steps = 50; // each option should be meaningful enough. 5Hz and 20 steps means each option can run for up to 4 seconds
-    cfg.nu = 0.1;
+    cfg.nu = 0.2;
     cfg.actor_warmup_steps = 0; // gonna keep at zero for testing purposes as well
     cfg.warmup_episodes = 0;    // keep at zero since I am assuming we have done pretraining
     cfg.verbose = true;         // set to true for per-rollout console output
-    cfg.log_interval = 100;     // print skill status table every N episodes
+    cfg.log_interval = 50;     // print skill status table every N episodes
     cfg.visualize_initiation_sets = true;
 
     AbstractedState global_goal = {{-4.5, 4.1, 0}, {0, 0, 0, -1}, {0, 0, 0}, {0, 0, 0}};

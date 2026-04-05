@@ -210,6 +210,15 @@ public:
 
         float reward = 0;
         bool terminated = false;
+
+        // Dense shaping near obstacles helps the policy learn to avoid collisions before impact.
+        float min_obs_dist = robot_bridge->distanceToNearestObstacle(state.position, state.orientation);
+        constexpr float safe_margin = 0.8f;
+        if (min_obs_dist < safe_margin)
+        {
+            reward -= 2.0f * (safe_margin - min_obs_dist);
+        }
+
         if (collision ||
             state.position[0] > robot_bridge->x_max || state.position[0] < robot_bridge->x_min ||
             state.position[1] > robot_bridge->y_max || state.position[1] < robot_bridge->y_min)

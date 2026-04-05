@@ -15,10 +15,10 @@
 #define POLICY_DIR "config/policy/velocity"
 #define CONFIG_PATH "config/config.yaml"
 
-#define X_MIN -3.0f
-#define X_MAX 3.0f
-#define Y_MIN -3.0f
-#define Y_MAX 3.0f
+#define X_MIN -7.0f
+#define X_MAX 7.0f
+#define Y_MIN -7.0f
+#define Y_MAX 7.0f
 
 #define CRITIC_LR 1e-3
 #define ACTOR_LR 1e-3
@@ -26,8 +26,8 @@
 #define GAMMA 0.99
 #define BATCH_SIZE 16
 #define ACTOR_UPDATE_FREQ 2
-#define CRITIC_LAYER_SIZES {128, 256, 128}
-#define ACTOR_LAYER_SIZES {64, 128, 64}
+#define CRITIC_LAYER_SIZES {256, 256, 256}
+#define ACTOR_LAYER_SIZES {256, 256, 256}
 #define RENDER true
 
 

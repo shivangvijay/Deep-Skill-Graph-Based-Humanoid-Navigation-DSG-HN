@@ -82,10 +82,16 @@ inline void xavier_init_weights(torch::nn::Module &module)
 {
     torch::NoGradGuard noGrad;
 
-    if (auto *linear = module.as<torch::nn::Linear>())
+    if (auto *linear = module.as<torch::nn::LinearImpl>())
     {
         torch::nn::init::xavier_normal_(linear->weight);
-        torch::nn::init::constant_(linear->bias, 0.01);
+        if (linear->bias.defined())
+            torch::nn::init::constant_(linear->bias, 0.01);
+    }
+
+    for (const auto &child : module.children())
+    {
+        xavier_init_weights(*child);
     }
 }
 
