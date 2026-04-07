@@ -19,14 +19,14 @@ public:
         RobotState state = robot_bridge->getRobotState();
         obstacles = robot_bridge->getObstacles();
 
-        int proprio_dim = state.q.size() + state.dq.size(); // 2 * DOF
         int gravity_dim = 3;                                // local_up
-        int self_dyn_dim = 3 + 3 + 3;                       // local_vel, local_ang_vel, local_accel
-        int goal_dim = 3 + 4 + 3 + 3;                       // relative_pos, releative_orientation, relative_vel, relative angular vel
+        int self_dyn_dim = 3 + 3;                            // local_vel, local_ang_vel
+        int goal_dim = 3;                                    // relative_pos (body frame)
         int boundary_dim = 4;
+        int last_action_dim = 3;                             // previous velocity command
         obstacle_dim = (int)obstacles.size() * obstacle_feature_dim;
 
-        state_dim = proprio_dim + gravity_dim + self_dyn_dim + goal_dim + boundary_dim;
+        state_dim = gravity_dim + self_dyn_dim + goal_dim + boundary_dim + last_action_dim;
 
         std::array<float, 3> pos_scales = {(robot_bridge->x_max - robot_bridge->x_min) / 2, (robot_bridge->y_max - robot_bridge->y_min) / 2, 0.5}; // some of these may need to be tuned later
         std::array<float, 4> orientation_scales = {1, 1, 1, 1};
@@ -62,6 +62,7 @@ public:
         obstacles = robot_bridge->getObstacles();
 
         current_step = 0;
+        last_action = {0.0f, 0.0f, 0.0f};
 
         return transformState(robot_bridge->getRobotState());
     }
@@ -106,6 +107,7 @@ public:
         robot_bridge->publishVelCommand(cmd);
         robot_bridge->update();
         current_step++;
+        last_action = {cmd[0], cmd[1], cmd[2]};
         auto [reward, terminated] = computeReward(goal);
 
         return {
@@ -137,6 +139,7 @@ public:
         obstacles = robot_bridge->getObstacles();
 
         current_step = 0;
+        last_action = {0.0f, 0.0f, 0.0f};
         return transformState(robot_bridge->getRobotState());
     }
 
@@ -259,57 +262,20 @@ public:
             offset += src.size();
         };
 
-        // note: pos, vel, and orientation are given in global frame
-        // accel, angular vel given in local frame
-
-        copy_to_ptr(state.q);
-
-        std::array<float, DOF> dq_scaled;
-
-        for (int j = 0; j < DOF; j++)
-        {
-            dq_scaled[j] = state.dq[j] / 20; // dq scaling factor
-        }
-        copy_to_ptr(dq_scaled);
-
         // local dynamics
-        copy_to_ptr(rotateVectorByQuat({0, 0, 1}, state.orientation, true));      // local_up
-        copy_to_ptr(rotateVectorByQuat(state.velocity, state.orientation, true)); // local_vel
-        copy_to_ptr(state.angular_velocity);                                      // Already local
-        copy_to_ptr(state.accel);                                                 // Already local
+        copy_to_ptr(rotateVectorByQuat({0, 0, 1}, state.orientation, true));      // local_up (3)
+        copy_to_ptr(rotateVectorByQuat(state.velocity, state.orientation, true)); // local_vel (3)
+        copy_to_ptr(state.angular_velocity);                                      // Already local (3)
 
-        // relative values
+        // goal-relative position in body frame
         auto &g_pos = goal_.position;
-        auto &g_quat = goal_.orientation;
-        auto &g_vel = goal_.velocity;
-        auto &g_ang_vel = goal_.angular_velocity;
 
         std::array<float, 3> r_pos = {g_pos[0] - state.position[0], g_pos[1] - state.position[1], g_pos[2] - state.position[2]};
         r_pos[0] /= env_scaling_factors.position[0];
         r_pos[1] /= env_scaling_factors.position[1];
         r_pos[2] /= env_scaling_factors.position[2];
 
-        copy_to_ptr(rotateVectorByQuat(r_pos, state.orientation, true));
-
-        copy_to_ptr(quaternionDelta(g_quat, state.orientation));
-
-        std::array<float, 3> v_err = {g_vel[0] - state.velocity[0], g_vel[1] - state.velocity[1], g_vel[2] - state.velocity[2]};
-        v_err[0] /= env_scaling_factors.velocity[0];
-        v_err[1] /= env_scaling_factors.velocity[1];
-        v_err[2] /= env_scaling_factors.velocity[2];
-        copy_to_ptr(rotateVectorByQuat(v_err, state.orientation, true));
-
-        std::array<float, 3> local_goal_ang_vel = rotateVectorByQuat(g_ang_vel, state.orientation, true);
-
-        std::array<float, 3> ang_vel_err = {
-            local_goal_ang_vel[0] - state.angular_velocity[0],
-            local_goal_ang_vel[1] - state.angular_velocity[1],
-            local_goal_ang_vel[2] - state.angular_velocity[2]};
-        ang_vel_err[0] /= env_scaling_factors.angular_velocity[0];
-        ang_vel_err[1] /= env_scaling_factors.angular_velocity[1];
-        ang_vel_err[2] /= env_scaling_factors.angular_velocity[2];
-
-        copy_to_ptr(ang_vel_err);
+        copy_to_ptr(rotateVectorByQuat(r_pos, state.orientation, true));          // relative_pos (3)
 
         // relative distance to boundary
         float dist_left = state.position[0] - robot_bridge->x_min;
@@ -335,6 +301,8 @@ public:
             data_ptr[offset++] = obs.size[0];
         }
 
+        copy_to_ptr(last_action);                                                // last_action (3)
+
         return tensor_state;
     }
 
@@ -353,6 +321,7 @@ private:
     int max_steps;
     int current_step = 0;
     std::vector<Obstacle> obstacles;
+    std::array<float, 3> last_action = {0.0f, 0.0f, 0.0f};
 
     std::array<float, 4> quaternionDelta(const std::array<float, 4> &a, const std::array<float, 4> &b) // returns a - b
     {
