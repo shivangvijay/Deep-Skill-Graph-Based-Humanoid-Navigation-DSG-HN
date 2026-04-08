@@ -68,4 +68,17 @@ public:
     mjvPerturb pert; // mouse perturbation
 
     void initViz();
+
+    void setGoalMarker(float x, float y, float z)
+    {
+        goal_marker_pos[0] = x;
+        goal_marker_pos[1] = y;
+        goal_marker_pos[2] = z;
+        goal_marker_active = true;
+    }
+
+    void clearGoalMarker() { goal_marker_active = false; }
+
+    float goal_marker_pos[3] = {0, 0, 0};
+    bool goal_marker_active = false;
 };

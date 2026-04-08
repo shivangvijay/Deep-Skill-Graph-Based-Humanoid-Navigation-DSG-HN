@@ -113,6 +113,16 @@ void MuJoCoEngine::render()
 
     mjv_updateScene(m, d, &opt, NULL, &cam, mjCAT_ALL, &scn);
 
+    if (goal_marker_active && scn.ngeom < scn.maxgeom)
+    {
+        mjvGeom *g = &scn.geoms[scn.ngeom];
+        mjtNum pos[3] = {(mjtNum)goal_marker_pos[0], (mjtNum)goal_marker_pos[1], (mjtNum)goal_marker_pos[2]};
+        mjtNum size[3] = {0.15, 0.15, 0.15};
+        float rgba[4] = {1.0f, 0.0f, 0.0f, 0.8f};
+        mjv_initGeom(g, mjGEOM_SPHERE, size, pos, NULL, rgba);
+        scn.ngeom++;
+    }
+
     mjr_render(viewport, &scn, &con);
 
     glfwSwapBuffers(window);

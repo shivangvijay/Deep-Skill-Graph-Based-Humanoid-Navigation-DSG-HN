@@ -12,6 +12,7 @@
 #include "skill.h"
 #include <torch/torch.h>
 #include <filesystem>
+#include <random>
 
 #define SCENE_FILE "../config/scene/umaze_scene.xml"
 #define POLICY_DIR "config/policy/velocity"
@@ -32,26 +33,72 @@
 #define ACTOR_LAYER_SIZES {256, 256, 256}
 #define RENDER false
 #define PRETRAIN false
-#define ACTOR_WARMUP_STEPS 0000
+#define ACTOR_WARMUP_STEPS 5000
+
+static std::mt19937 her_rng(std::random_device{}());
+
+int findSafeGoalIndex(const std::vector<Transition> &trajectory)
+{
+    constexpr int skip_last = 3;
+    int end_idx = (int)trajectory.size() - 1;
+
+    if (trajectory.back().in_collision)
+    {
+        for (int i = end_idx; i >= 0; i--)
+        {
+            if (!trajectory[i].in_collision)
+            {
+                end_idx = std::max(0, i - skip_last);
+                break;
+            }
+        }
+    }
+    return end_idx;
+}
 
 void train_her(const std::vector<Transition> &trajectory, std::shared_ptr<TrainEnvironment> env, TD3Agent &agent)
 {
-    if (trajectory.size() == 0 || trajectory.back().in_collision == true)
+    if (trajectory.size() < 2)
         return;
 
-    AbstractedState augmented_goal;
-    augmented_goal.position = trajectory.back().state.position;
-    augmented_goal.orientation = trajectory.back().state.orientation;
-    augmented_goal.velocity = trajectory.back().state.velocity;
-    augmented_goal.angular_velocity = trajectory.back().state.angular_velocity;
+    int safe_end = findSafeGoalIndex(trajectory);
+    if (safe_end < 1)
+        return;
 
-    for (const auto &t : trajectory)
+    // "Final" strategy: use the safe end state as the goal for all transitions
+    AbstractedState final_goal;
+    final_goal.position = trajectory[safe_end].next_state.position;
+    final_goal.orientation = trajectory[safe_end].next_state.orientation;
+    final_goal.velocity = {0, 0, 0};
+    final_goal.angular_velocity = {0, 0, 0};
+
+    for (int i = 0; i <= safe_end; i++)
     {
-        auto augmented_state = env->transformState(t.state, augmented_goal);
-        auto augmented_next_state = env->transformState(t.next_state, augmented_goal);
+        const auto &t = trajectory[i];
+        auto aug_state = env->transformState(t.state, final_goal);
+        auto aug_next = env->transformState(t.next_state, final_goal);
+        auto [aug_reward, aug_done] = env->computeReward(t.state, t.in_collision, final_goal);
+        agent.addExperience(aug_state, t.action, aug_reward, aug_next, aug_done);
+        agent.learn();
+    }
 
-        auto [augmented_reward, augmented_done] = env->computeReward(t.state, t.in_collision, augmented_goal);
-        agent.addExperience(augmented_state, t.action, augmented_reward, augmented_next_state, augmented_done);
+    // "Future" strategy: for each transition, pick a random future state as goal
+    for (int i = 0; i < safe_end; i++)
+    {
+        std::uniform_int_distribution<int> dist(i + 1, safe_end);
+        int future_idx = dist(her_rng);
+
+        AbstractedState future_goal;
+        future_goal.position = trajectory[future_idx].next_state.position;
+        future_goal.orientation = trajectory[future_idx].next_state.orientation;
+        future_goal.velocity = {0, 0, 0};
+        future_goal.angular_velocity = {0, 0, 0};
+
+        const auto &t = trajectory[i];
+        auto aug_state = env->transformState(t.state, future_goal);
+        auto aug_next = env->transformState(t.next_state, future_goal);
+        auto [aug_reward, aug_done] = env->computeReward(t.state, t.in_collision, future_goal);
+        agent.addExperience(aug_state, t.action, aug_reward, aug_next, aug_done);
         agent.learn();
     }
 }
@@ -64,7 +111,7 @@ int main(int argc, char **argv)
     auto policy_dir = param::parser_policy_dir(rel_path);
 
     std::shared_ptr<RobotBridgeTrain> robot_bridge = std::make_shared<RobotBridgeTrain>(SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, render); // eng, std::move(env), render);
-    std::shared_ptr<TrainEnvironment> train_env = std::make_shared<TrainEnvironment>(robot_bridge, 1000);
+    std::shared_ptr<TrainEnvironment> train_env = std::make_shared<TrainEnvironment>(robot_bridge, 400);
 
     torch::Device device(torch::kCPU);
     if (torch::cuda::is_available())
@@ -117,6 +164,7 @@ int main(int argc, char **argv)
 
     std::cout << "Starting training for " << num_epochs << " epochs, " << num_steps << " steps per epoch." << std::endl;
     auto state = train_env->reset();
+    if (render) train_env->updateGoalMarker();
     auto underlying_state = train_env->getUnderlyingState().first;
 
     std::vector<Transition> her_transitions;
@@ -127,6 +175,7 @@ int main(int argc, char **argv)
         float total_reward = 0.0f;
 
         torch::Tensor state = train_env->reset();
+        if (render) train_env->updateGoalMarker();
         std::cout << "Epoch " << epoch + 1 << "/" << num_epochs << " " << std::endl;
         int num_success = 0;
         int num_episodes = 0;
@@ -153,6 +202,7 @@ int main(int argc, char **argv)
                 train_her(her_transitions, train_env, agent);
                 her_transitions.clear();
                 state = train_env->reset();
+                if (render) train_env->updateGoalMarker();
                 underlying_state = train_env->getUnderlyingState().first;
             }
             else
@@ -163,10 +213,22 @@ int main(int argc, char **argv)
 
         }
         std::cout << std::endl;
+        float success_rate = (num_episodes > 0) ? (float)num_success / num_episodes * 100.0f : 0.0f;
         std::cout << "Average Reward: " << total_reward / (num_steps) << std::endl;
         std::cout << "Average Actor Loss: " << agent.total_actor_loss / (num_steps / ACTOR_UPDATE_FREQ) << std::endl;
         std::cout << "Average Critic Loss: " << agent.total_critic_loss / (num_steps) << std::endl;
-        std::cout << "Success Rate: " << (float)num_success / num_episodes * 100.0f << "%" << std::endl;
+        std::cout << "Success Rate: " << success_rate << "%" << std::endl;
+        std::cout << "Max Goal Distance: " << train_env->getMaxGoalDistance() << "m" << std::endl;
+
+        if (success_rate > 65.0f)
+            train_env->increaseGoalDistance(2.0f);
+        else if (success_rate < 10.0f)
+            train_env->decreaseGoalDistance(1.0f);
+
+        // Decay exploration noise: 0.3 → 0.05 linearly over all epochs
+        float noise = 0.3f - (0.3f - 0.05f) * ((float)epoch / (float)(num_epochs - 1));
+        agent.setExplorationNoise(noise);
+        std::cout << "Exploration Noise: " << noise << std::endl;
 
         if (total_reward / (num_steps) > best_reward)
         {

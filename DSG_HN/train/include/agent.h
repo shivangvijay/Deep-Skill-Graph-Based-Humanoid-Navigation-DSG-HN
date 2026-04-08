@@ -31,6 +31,9 @@ public:
     double total_actor_loss = 0.0;
     double total_critic_loss = 0.0;
     int learn_step = 0;
+    float exploration_noise = 0.3f;
+
+    void setExplorationNoise(float noise) { exploration_noise = noise; }
 
     Actor actor_local;
     Critic critic_local_1;

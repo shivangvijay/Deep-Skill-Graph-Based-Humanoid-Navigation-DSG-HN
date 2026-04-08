@@ -1,5 +1,6 @@
 #include "skill.h"
 #include <fstream>
+#include <random>
 
 Skill::Skill(
     int id,
@@ -381,30 +382,67 @@ float Skill::distanceToState(const AbstractedState &state) const
 
 void Skill::_herUpdate(const std::vector<Transition> &trajectory)
 {
-    if (trajectory.size() == 0 || trajectory.back().in_collision == true)
+    if (trajectory.size() < 2)
         return;
 
-    AbstractedState augmented_goal;
-    augmented_goal.position = trajectory.back().state.position;
-    augmented_goal.orientation = trajectory.back().state.orientation;
-    augmented_goal.velocity = trajectory.back().state.velocity;
-    augmented_goal.angular_velocity = trajectory.back().state.angular_velocity;
+    constexpr int skip_last = 3;
+    int end_idx = (int)trajectory.size() - 1;
 
-    for (const auto &t : trajectory)
+    if (trajectory.back().in_collision)
     {
-        auto augmented_state = _env->transformState(t.state, augmented_goal);
-        auto augmented_next_state = _env->transformState(t.next_state, augmented_goal);
+        for (int i = end_idx; i >= 0; i--)
+        {
+            if (!trajectory[i].in_collision)
+            {
+                end_idx = std::max(0, i - skip_last);
+                break;
+            }
+        }
+    }
 
-        auto [augmented_reward, augmented_done] = _env->computeReward(t.state, t.in_collision, augmented_goal);
-        _agent.addExperience(augmented_state, t.action, augmented_reward, augmented_next_state, augmented_done);
+    if (end_idx < 1)
+        return;
+
+    auto add_her_experience = [&](const Transition &t, const AbstractedState &goal)
+    {
+        auto aug_state = _env->transformState(t.state, goal);
+        auto aug_next = _env->transformState(t.next_state, goal);
+        auto [aug_reward, aug_done] = _env->computeReward(t.state, t.in_collision, goal);
+        _agent.addExperience(aug_state, t.action, aug_reward, aug_next, aug_done);
         _agent.learn();
 
         if (!_is_global)
         {
             auto &global_agent = _global_option->agent();
-            global_agent.addExperience(augmented_state, t.action, augmented_reward, augmented_next_state, augmented_done);
+            global_agent.addExperience(aug_state, t.action, aug_reward, aug_next, aug_done);
             global_agent.learn();
         }
+    };
+
+    // "Final" strategy
+    AbstractedState final_goal;
+    final_goal.position = trajectory[end_idx].next_state.position;
+    final_goal.orientation = trajectory[end_idx].next_state.orientation;
+    final_goal.velocity = {0, 0, 0};
+    final_goal.angular_velocity = {0, 0, 0};
+
+    for (int i = 0; i <= end_idx; i++)
+        add_her_experience(trajectory[i], final_goal);
+
+    // "Future" strategy
+    static std::mt19937 rng(std::random_device{}());
+    for (int i = 0; i < end_idx; i++)
+    {
+        std::uniform_int_distribution<int> dist(i + 1, end_idx);
+        int future_idx = dist(rng);
+
+        AbstractedState future_goal;
+        future_goal.position = trajectory[future_idx].next_state.position;
+        future_goal.orientation = trajectory[future_idx].next_state.orientation;
+        future_goal.velocity = {0, 0, 0};
+        future_goal.angular_velocity = {0, 0, 0};
+
+        add_her_experience(trajectory[i], future_goal);
     }
 }
 

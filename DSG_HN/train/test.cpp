@@ -64,15 +64,28 @@ int main(int argc, char **argv)
     agent.toDevice(device);
 
     torch::Tensor state = train_env->reset();
+    train_env->updateGoalMarker();
+    int num_success = 0;
+    int num_episodes = 0;
     while (true)
     {
         auto [action, _] = agent.getAction(state, true);
         auto [next_state, reward, done] = train_env->step(action);
         if (done.data_ptr<float>()[0] > 0.5)
         {
+            num_episodes++;
             if (reward.data_ptr<float>()[0] > 40.0)
-                std::cout << "Episode Success: " << reward.item<float>() << std::endl;
+            {
+                num_success++;
+                std::cout << "SUCCESS | ";
+            }
+            else
+            {
+                std::cout << "FAIL    | ";
+            }
+            std::cout << "Success Rate: " << (float)num_success / num_episodes * 100.0f << "% (" << num_success << "/" << num_episodes << ")" << std::endl;
             state = train_env->reset();
+            train_env->updateGoalMarker();
         }
         else
             state = next_state;

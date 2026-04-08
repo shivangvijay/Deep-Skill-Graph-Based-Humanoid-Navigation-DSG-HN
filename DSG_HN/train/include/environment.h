@@ -38,10 +38,25 @@ public:
 
     torch::Tensor reset() // if no arguments passed, just reset to random position. If goal fixed, use that, else sample randomly
     {
-        // pick random valid goal position
+        auto start = robot_bridge->generateRandomValidConfiguration();
+        start.velocity[0] = 0;
+        start.velocity[1] = 0;
+        start.velocity[2] = 0;
+        start.angular_velocity[0] = 0;
+        start.angular_velocity[1] = 0;
+        start.angular_velocity[2] = 0;
+
         if (!_goal_fixed)
         {
-            goal = robot_bridge->generateRandomValidConfiguration();
+            int attempts = 0;
+            do
+            {
+                goal = robot_bridge->generateRandomValidConfiguration();
+                float dist = _euclidean2D(start.position, goal.position);
+                if (dist >= min_goal_distance && dist <= max_goal_distance)
+                    break;
+            } while (++attempts < 200);
+
             goal.velocity[0] = 0;
             goal.velocity[1] = 0;
             goal.velocity[2] = 0;
@@ -50,19 +65,14 @@ public:
             goal.angular_velocity[2] = 0;
         }
 
-        auto start = robot_bridge->generateRandomValidConfiguration();
-        start.velocity[0] = 0;
-        start.velocity[1] = 0;
-        start.velocity[2] = 0;
-        start.angular_velocity[0] = 0;
-        start.angular_velocity[1] = 0;
-        start.angular_velocity[2] = 0;
         robot_bridge->resetRobot(start.position, start.orientation, start.velocity, start.angular_velocity);
 
         obstacles = robot_bridge->getObstacles();
 
         current_step = 0;
         last_action = {0.0f, 0.0f, 0.0f};
+        prev_action = {0.0f, 0.0f, 0.0f};
+        prev_dist_to_goal = _euclidean2D(start.position, goal.position);
 
         return transformState(robot_bridge->getRobotState());
     }
@@ -107,6 +117,7 @@ public:
         robot_bridge->publishVelCommand(cmd);
         robot_bridge->update();
         current_step++;
+        prev_action = last_action;
         last_action = {cmd[0], cmd[1], cmd[2]};
         auto [reward, terminated] = computeReward(goal);
 
@@ -140,6 +151,8 @@ public:
 
         current_step = 0;
         last_action = {0.0f, 0.0f, 0.0f};
+        prev_action = {0.0f, 0.0f, 0.0f};
+        prev_dist_to_goal = _euclidean2D(clamped_pos, goal.position);
         return transformState(robot_bridge->getRobotState());
     }
 
@@ -183,6 +196,23 @@ public:
         _goal_fixed = false;
     }
 
+    void increaseGoalDistance(float delta)
+    {
+        max_goal_distance = std::min(max_goal_distance + delta, 11.0f);
+    }
+
+    void decreaseGoalDistance(float delta)
+    {
+        max_goal_distance = std::max(max_goal_distance - delta, min_goal_distance + 0.5f);
+    }
+
+    float getMaxGoalDistance() const { return max_goal_distance; }
+
+    void updateGoalMarker()
+    {
+        robot_bridge->getEngine()->setGoalMarker(goal.position[0], goal.position[1], 0.5f);
+    }
+
     std::pair<torch::Tensor, torch::Tensor> computeReward()
     {
         return computeReward(goal);
@@ -194,27 +224,18 @@ public:
         bool collision = robot_bridge->inCollision();
         return computeReward(state, collision, goal_);
     }
-    // If we do not have the ability to turn, then velocity cannot be part of goal condition
+
     std::pair<torch::Tensor, torch::Tensor> computeReward(const RobotState &state, bool collision, const AbstractedState &goal_)
     {
         auto goal_position = goal_.position;
-        auto goal_orientation = goal_.orientation;
-        auto goal_velocity = goal_.velocity;
-        auto goal_angular_velocity = goal_.angular_velocity;
-        // auto &[goal_position, goal_orientation, goal_velocity, goal_angular_velocity] = goal_;
 
         float pos_error = std::sqrt((state.position[0] - goal_position[0]) * (state.position[0] - goal_position[0]) +
                                     (state.position[1] - goal_position[1]) * (state.position[1] - goal_position[1]));
 
-        float vel_error = std::sqrt((state.velocity[0] - goal_velocity[0]) * (state.velocity[0] - goal_velocity[0]) +
-                                    (state.velocity[1] - goal_velocity[1]) * (state.velocity[1] - goal_velocity[1]));
-
-        // std::cout << " " << vel_error << std::endl;
-
         float reward = 0;
         bool terminated = false;
 
-        // Dense shaping near obstacles helps the policy learn to avoid collisions before impact.
+        // 1. Obstacle proximity penalty (dense)
         float min_obs_dist = robot_bridge->distanceToNearestObstacle(state.position, state.orientation);
         constexpr float safe_margin = 0.8f;
         if (min_obs_dist < safe_margin)
@@ -222,6 +243,7 @@ public:
             reward -= 2.0f * (safe_margin - min_obs_dist);
         }
 
+        // 2. Terminal conditions
         if (collision ||
             state.position[0] > robot_bridge->x_max || state.position[0] < robot_bridge->x_min ||
             state.position[1] > robot_bridge->y_max || state.position[1] < robot_bridge->y_min)
@@ -229,21 +251,38 @@ public:
             reward -= 30;
             terminated = true;
         }
-        else if (pos_error < 0.5) // && vel_error < 0.25) // commenting out vel for now cause of aformentioned issues. Also ignoring ang vel and orientation for the same reasons
+        else if (pos_error < 0.5)
         {
             reward += 50;
             terminated = true;
         }
         else
         {
-            reward -= (pos_error / 50.0); // + (vel_error / 10.0);
+            // 3. Distance reduction reward (dense, directional)
+            float dist_reduction = prev_dist_to_goal - pos_error;
+            reward += 5.0f * dist_reduction;
+
+            // 4. Time penalty (dense, direction-agnostic)
+            reward -= 0.1f;
+
+            // 5. Smoothness penalty (dense, direction-agnostic)
+            float action_jerk = std::abs(last_action[0] - prev_action[0]) +
+                                std::abs(last_action[1] - prev_action[1]) +
+                                std::abs(last_action[2] - prev_action[2]);
+            reward -= 0.5f * action_jerk;
         }
+
+        // 6. Timeout penalty
         if (current_step >= max_steps)
         {
+            reward -= 10;
             terminated = true;
         }
+
+        prev_dist_to_goal = pos_error;
+
         return {torch::tensor({reward}, torch::kFloat32),
-                torch::tensor({(float)terminated}, torch::kFloat32)}; // Usually better to store 'done' as a float (0.0 or 1.0) for RL math};
+                torch::tensor({(float)terminated}, torch::kFloat32)};
     }
 
     torch::Tensor transformState(const RobotState &state, const AbstractedState &goal_)
@@ -314,6 +353,9 @@ public:
     std::vector<float> action_shift_factors = {0.25, 0.0, 0.0};
     AbstractedState env_scaling_factors;
 
+    float max_goal_distance = 3.0f;
+    float min_goal_distance = 1.0f;
+
 private:
     std::shared_ptr<RobotBridgeTrain> robot_bridge;
     AbstractedState goal = {{0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
@@ -322,6 +364,15 @@ private:
     int current_step = 0;
     std::vector<Obstacle> obstacles;
     std::array<float, 3> last_action = {0.0f, 0.0f, 0.0f};
+    std::array<float, 3> prev_action = {0.0f, 0.0f, 0.0f};
+    float prev_dist_to_goal = 0.0f;
+
+    float _euclidean2D(const std::array<float, 3> &a, const std::array<float, 3> &b) const
+    {
+        float dx = a[0] - b[0];
+        float dy = a[1] - b[1];
+        return std::sqrt(dx * dx + dy * dy);
+    }
 
     std::array<float, 4> quaternionDelta(const std::array<float, 4> &a, const std::array<float, 4> &b) // returns a - b
     {

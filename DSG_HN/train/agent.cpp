@@ -44,7 +44,8 @@ std::pair<torch::Tensor, torch::Tensor> TD3Agent::getAction(torch::Tensor state,
     auto action = actor_local->forward(state.to(device)).to(torch::kCPU);
     if (!eval)
     {
-        auto noise = (torch::randn_like(action) * 0.1).clamp(-0.2, 0.2); // Add some noise for exploration. Need to respect action limits
+        float clip = exploration_noise * 2.0f;
+        auto noise = (torch::randn_like(action) * exploration_noise).clamp(-clip, clip);
         action = torch::clamp(action + noise, -1.0, 1.0);
     }
     torch::Tensor scaled_action = action * action_scaling_factors + action_shift_factors; // Scale action to environment limits
