@@ -65,3 +65,7 @@ target_link_libraries(test PRIVATE ${COMMON_LIBS})
 
 add_executable(dsc ${TRAIN_DIR}/dsc.cpp ${COMMON_SOURCES})
 target_link_libraries(dsc PRIVATE ${COMMON_LIBS})
+
+add_executable(dsg ${TRAIN_DIR}/dsg.cpp ${TRAIN_DIR}/dsc.cpp ${COMMON_SOURCES})
+target_link_libraries(dsg PRIVATE ${COMMON_LIBS})
+target_compile_definitions(dsg PRIVATE DSG_BUILD)

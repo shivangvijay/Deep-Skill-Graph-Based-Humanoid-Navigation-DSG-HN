@@ -141,3 +141,14 @@ add_executable(dsc
   ${PROJECT_SOURCE_DIR}/../robot_bridge/robot_bridge.cpp
   ${PROJECT_SOURCE_DIR}/../robot_bridge/robot_bridge_train.cpp
 )
+
+add_executable(dsg
+  dsg.cpp
+  dsc.cpp
+  agent.cpp
+  skill.cpp
+  ${PROJECT_SOURCE_DIR}/../robot_bridge/mujoco_utils/mujoco_engine.cpp
+  ${PROJECT_SOURCE_DIR}/../robot_bridge/robot_bridge.cpp
+  ${PROJECT_SOURCE_DIR}/../robot_bridge/robot_bridge_train.cpp
+)
+target_compile_definitions(dsg PRIVATE DSG_BUILD)

@@ -89,6 +89,14 @@ public:
     int gestationPeriod() const { return _gestation_period; }
     const std::vector<GestationRecord>& getPositiveGestationRecords() const { return _positive_gestation_records; }
 
+    // Child skills that target this skill's initiation set as their termination condition.
+    // Populated by DeepSkillGraph when creating sibling options under the same parent.
+    std::vector<std::shared_ptr<Skill>> children;
+
+    // Returns true if the visited trajectory covers a region not already saturated by mature siblings.
+    // Used to gate positive data acceptance in DSG — prevents redundant children under one parent.
+    bool isValidInitData(const std::vector<GestationRecord> &visited) const;
+
 private:
     std::shared_ptr<TrainEnvironment> _env;
     std::shared_ptr<Skill> _parent;

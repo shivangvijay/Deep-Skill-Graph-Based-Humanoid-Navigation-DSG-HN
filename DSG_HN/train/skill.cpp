@@ -137,7 +137,9 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
 
     if (!_is_global && train)
     {
-        _fitClassifier(visited, atTermination(goal));
+        bool term = atTermination(goal);
+        bool valid = !term || isValidInitData(visited); // always accept failures; gate successes by sibling overlap
+        _fitClassifier(visited, term && valid);
     }
 
     torch::Tensor end_state_poo = _env->getStateRelativeToGoal(_global_goal);
@@ -375,6 +377,35 @@ float Skill::distanceToState(const AbstractedState &state) const
         max_dist = std::max(dist, max_dist);
     }
     return max_dist;
+}
+
+bool Skill::isValidInitData(const std::vector<GestationRecord> &visited) const
+{
+    if (!_parent || visited.empty())
+        return true;
+
+    // gather mature siblings with a trained pessimistic classifier
+    std::vector<std::shared_ptr<Skill>> siblings;
+    for (const auto &s : _parent->children)
+        if (s.get() != this && s->getTrainingPhase() != "gestation" && s->_pessimistic_classifier.trained())
+            siblings.push_back(s);
+
+    if (siblings.empty())
+        return true;
+
+    // count visited states inside a sibling's pessimistic region but outside parent's pessimistic region
+    // mirrors Python: accept if 0 < ratio <= 0.35
+    float sibling_count = 0.0f;
+    for (const auto &rec : visited)
+        for (const auto &sib : siblings)
+            if (sib->canStartPessimistic(rec.state) && !_parent->canStartPessimistic(rec.state))
+            {
+                sibling_count += 1.0f;
+                break; // count each state once even if multiple siblings match
+            }
+
+    float ratio = sibling_count / static_cast<float>(visited.size());
+    return ratio > 0.0f && ratio <= 0.35f;
 }
 
 /*** Private ***/
