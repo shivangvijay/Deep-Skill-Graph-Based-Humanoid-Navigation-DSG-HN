@@ -123,6 +123,18 @@ void MuJoCoEngine::render()
         scn.ngeom++;
     }
 
+    for (const auto &obs : obstacle_markers)
+    {
+        if (scn.ngeom >= scn.maxgeom) break;
+        mjvGeom *g = &scn.geoms[scn.ngeom];
+        mjtNum pos[3] = {(mjtNum)obs.x, (mjtNum)obs.y, 0.02};
+        float total_r = obs.radius + obstacle_margin;
+        mjtNum size[3] = {(mjtNum)total_r, (mjtNum)total_r, 0.01};
+        float rgba[4] = {1.0f, 1.0f, 0.0f, 0.3f};
+        mjv_initGeom(g, mjGEOM_CYLINDER, size, pos, NULL, rgba);
+        scn.ngeom++;
+    }
+
     mjr_render(viewport, &scn, &con);
 
     glfwSwapBuffers(window);

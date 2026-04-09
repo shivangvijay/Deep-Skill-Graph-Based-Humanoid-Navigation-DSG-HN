@@ -13,6 +13,7 @@
 #include <torch/torch.h>
 #include <filesystem>
 #include <random>
+#include <fstream>
 
 #define SCENE_FILE "../config/scene/umaze_scene.xml"
 #define POLICY_DIR "config/policy/velocity"
@@ -170,6 +171,10 @@ int main(int argc, char **argv)
     std::vector<Transition> her_transitions;
     float best_reward = -std::numeric_limits<float>::infinity();
 
+    std::filesystem::create_directories("../models/logs");
+    std::ofstream log_file("../models/logs/training_log.csv");
+    log_file << "epoch,avg_reward,actor_loss,critic_loss,success_rate,max_goal_dist,noise" << std::endl;
+
     for (int epoch = 0; epoch < num_epochs; epoch++)
     {
         float total_reward = 0.0f;
@@ -230,12 +235,28 @@ int main(int argc, char **argv)
         agent.setExplorationNoise(noise);
         std::cout << "Exploration Noise: " << noise << std::endl;
 
-        if (total_reward / (num_steps) > best_reward)
+        float avg_reward = total_reward / (num_steps);
+        float avg_actor_loss = agent.total_actor_loss / std::max(1, num_steps / ACTOR_UPDATE_FREQ);
+        float avg_critic_loss = agent.total_critic_loss / std::max(1, num_steps);
+
+        // Log to CSV
+        log_file << epoch + 1 << "," << avg_reward << "," << avg_actor_loss << ","
+                 << avg_critic_loss << "," << success_rate << ","
+                 << train_env->getMaxGoalDistance() << "," << noise << std::endl;
+
+        // Save checkpoint every epoch
+        std::string epoch_dir = "../models/epoch" + std::to_string(epoch + 1);
+        std::filesystem::create_directories(epoch_dir);
+        torch::save(agent.actor_local, epoch_dir + "/actor.pt");
+        torch::save(agent.critic_local_1, epoch_dir + "/critic_1.pt");
+        torch::save(agent.critic_local_2, epoch_dir + "/critic_2.pt");
+
+        // Also save as best if it beats previous best
+        if (avg_reward > best_reward)
         {
-            best_reward = total_reward / (num_steps);
+            best_reward = avg_reward;
             agent.hardCopy();
-            std::cout << "New best reward! Saving model." << std::endl;
-            std::filesystem::create_directories("../models");
+            std::cout << "New best reward! Saving best model." << std::endl;
             torch::save(agent.actor_local, "../models/best_actor.pt");
             torch::save(agent.critic_local_1, "../models/best_critic_1.pt");
             torch::save(agent.critic_local_2, "../models/best_critic_2.pt");
