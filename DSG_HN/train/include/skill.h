@@ -69,7 +69,8 @@ public:
     void initFromSkill(std::shared_ptr<Skill> other);
 
     // Sample a random gestation record as a subgoal for the preceding skill.
-    AbstractedState sampleSubgoalState(bool uniform) const;
+    // When not uniform, prefers nearby reachable (no obstacle crossing) samples.
+    AbstractedState sampleSubgoalState() const;
     std::string getTrainingPhase() const;
     bool atTermination(const AbstractedState &goal) const;
 
@@ -126,6 +127,11 @@ private:
     void _fitClassifier(const std::vector<GestationRecord> &states, bool term_success);
 
     float _euclideanDistance(const std::array<float, 3> &a, const std::array<float, 3> &b, bool sqrt) const;
+    float _euclideanDistance2D(const std::array<float, 3> &a, const std::array<float, 3> &b, bool sqrt) const;
     float _euclideanDistance(const std::array<float, 4> &a, const std::array<float, 4> &b, bool sqrt) const;
+    
     void _herUpdate(const std::vector<Transition>& trajectory);
+
+    // Returns true if the 2D line segment from a to b intersects any cylindrical obstacle.
+    bool _segmentIntersectsObstacle(const std::array<float, 3> &a, const std::array<float, 3> &b) const;
 };

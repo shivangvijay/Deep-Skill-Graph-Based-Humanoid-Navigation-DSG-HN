@@ -149,25 +149,6 @@ public:
         robot_bridge->resetRobot(clamped_pos, quat, vel, ang_vel);
         obstacles = robot_bridge->getObstacles();
 
-        if (robot_bridge->inCollision())
-        {
-            std::cerr << "Warning: resetTo() in collision after settling. Attempting nearby reset.\n";
-            for (int i = 0; i < 20; i++)
-            {
-                std::array<float, 3> perturbed_pos = {
-                    clamped_pos[0] + ((float)rand() / RAND_MAX - 0.5f) * 2.0f,
-                    clamped_pos[1] + ((float)rand() / RAND_MAX - 0.5f) * 2.0f,
-                    clamped_pos[2]};
-                // resetRobot runs settling steps, so check collision after it settles
-                robot_bridge->resetRobot(perturbed_pos, quat, vel, ang_vel);
-                obstacles = robot_bridge->getObstacles();
-                if (!robot_bridge->inCollision())
-                {
-                    std::cerr << "Successfully reset to valid configuration after " << i + 1 << " attempts.\n";
-                    break;
-                }
-            }
-        }
         current_step = 0;
         last_action = {0.0f, 0.0f, 0.0f};
         prev_action = {0.0f, 0.0f, 0.0f};
@@ -244,7 +225,7 @@ public:
         return computeReward(state, collision, goal_);
     }
 
-    std::pair<torch::Tensor, torch::Tensor> computeReward(const RobotState &state, bool collision, const AbstractedState &goal_)
+    std::pair<torch::Tensor, torch::Tensor> computeReward(const RobotState &state, bool collision, const AbstractedState &goal_, bool use_goal_radius = true)
     {
         auto goal_position = goal_.position;
 
@@ -270,7 +251,7 @@ public:
             reward -= 30;
             terminated = true;
         }
-        else if (pos_error < 0.5)
+        else if (use_goal_radius && pos_error < 0.5)
         {
             reward += 50;
             terminated = true;
@@ -374,6 +355,8 @@ public:
 
     float max_goal_distance = 3.0f;
     float min_goal_distance = 1.0f;
+
+    const std::vector<Obstacle> &getObstacles() const { return obstacles; }
 
 private:
     std::shared_ptr<RobotBridgeTrain> robot_bridge;

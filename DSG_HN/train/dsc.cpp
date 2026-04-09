@@ -266,7 +266,7 @@ void DeepSkillChaining::_validateOption()
     int num_successes = 0;
     for (int i = 0; i < _cfg.gestation_n; i++)
     {
-        auto start = _skills[validate_idx]->sampleSubgoalState(true);
+        auto start = _skills[validate_idx]->sampleSubgoalState();
         auto goal = _skills[validate_idx]->getLocalGoal();
         _env->resetTo(start);
         auto [_, __, ___, ____, _____] = _skills[validate_idx]->rollout(goal);
@@ -362,7 +362,7 @@ std::pair<int, AbstractedState> DeepSkillChaining::_pickOption(bool eval)
         }
         if (closest_option != -1)
         {
-            return {_global_option_idx, _skills[closest_option]->sampleSubgoalState(false)};
+            return {_global_option_idx, _skills[closest_option]->sampleSubgoalState()};
         }
         else
         {
@@ -373,6 +373,7 @@ std::pair<int, AbstractedState> DeepSkillChaining::_pickOption(bool eval)
     {
         return {best_option, _skills[best_option]->getLocalGoal()};
     }
+
 }
 
 float DeepSkillChaining::_dscRollout(bool eval)
@@ -389,16 +390,14 @@ float DeepSkillChaining::_dscRollout(bool eval)
         env_done = g_done.data_ptr<float>()[0] > 0.5f;
 
         if (steps_taken == 0) // this condition occurs when we just finished training a new skill, but then find ourselves in the initiation set of that skill while trying to train the new skill
-        {
-            step++;
-            continue;
-        }
+            break;
+        
 
         step += steps_taken;
         total_reward += cum_reward;
 
-        float clipped_reward = std::clamp(cum_reward, -100.0f, 100.0f); // clipping reward since sometimes not terminating makes the reward spike and want to limit that effect.
-        _poo.addExperience(first_state_poo, option, clipped_reward, last_state_poo, env_done, steps_taken);
+        //float clipped_reward = std::clamp(cum_reward, -100.0f, 100.0f); // clipping reward since sometimes not terminating makes the reward spike and want to limit that effect.
+        _poo.addExperience(first_state_poo, option, cum_reward, last_state_poo, env_done, steps_taken);
         _poo.learn();
 
         if (_cfg.verbose)
@@ -416,7 +415,7 @@ float DeepSkillChaining::_dscRollout(bool eval)
             float total_dist = 0;
             for (int i = 0; i < _cfg.gestation_n; i++)
             {
-                AbstractedState sample = _skills[_unfinished_option_idx]->sampleSubgoalState(false);
+                AbstractedState sample = _skills[_unfinished_option_idx]->sampleSubgoalState();
                 float dx = sample.position[0] - _global_start.position[0];
                 float dy = sample.position[1] - _global_start.position[1];
                 float dz = sample.position[2] - _global_start.position[2];
@@ -651,12 +650,12 @@ AbstractedState DeepSkillChaining::_sampleStartNearBoundary()
 
 /************************************** main **************************************/
 
-#define SCENE_FILE "../config/scene/umaze_scene.xml"
+#define SCENE_FILE "../config/scene/umaze_scene_obs_free.xml"
 #define OG_ACTOR "../models/best_actor.pt"
 #define OG_CRITIC1 "../models/best_critic_1.pt"
 #define OG_CRITIC2 "../models/best_critic_2.pt"
 #define DSC_SAVE_PATH "../dsc_models"
-#define TEST true // if set to true, will not train, will just load and run testing
+#define TEST false // if set to true, will not train, will just load and run testing
 
 #define X_MIN -7.0f
 #define X_MAX 7.0f
@@ -688,7 +687,7 @@ int main(int argc, char **argv)
     cfg.gestation_n = 30; // number of total successes that should be collected during gestation phase. Perhaps use a percentage for the option being currently learnt?
     cfg.last_k = 20;
     cfg.max_option_steps = 50; // each option should be meaningful enough. 5Hz and 20 steps means each option can run for up to 4 seconds
-    cfg.nu = 0.15;
+    cfg.nu = 0.1;
     cfg.actor_warmup_steps = 0; // gonna keep at zero for testing purposes as well
     cfg.warmup_episodes = 0;    // keep at zero since I am assuming we have done pretraining
     cfg.verbose = true;         // set to true for per-rollout console output
