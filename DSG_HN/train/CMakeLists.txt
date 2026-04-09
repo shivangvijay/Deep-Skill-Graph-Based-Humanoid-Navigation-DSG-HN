@@ -15,7 +15,7 @@ set(MUJOCO_DIR "${PROJECT_SOURCE_DIR}/../../unitree_mujoco/simulate/mujoco")
 set(POLICY_CONFIG_DIR "${PROJECT_SOURCE_DIR}/../deploy/robots/g1_29dof/config")
 set(SCENE_XML_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../unitree_mujoco/unitree_robots/g1")
 set(JOYSTICK_SRC "${PROJECT_SOURCE_DIR}/../../unitree_mujoco/simulate/src")
-set(LIBTORCH_PATH "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/libtorch")
+set(LIBTORCH_PATH "$ENV{HOME}/miniconda3/lib/python3.13/site-packages/torch")
 
 list(APPEND CMAKE_PREFIX_PATH "${LIBTORCH_PATH}")
 
@@ -100,4 +100,22 @@ endif()
 add_executable(sandbox_mpc
   $<TARGET_OBJECTS:sandbox_mpc_bridge>
   $<TARGET_OBJECTS:sandbox_mpc_torch_obj>
+)
+
+add_executable(transition_train_transformer_delta
+  transition_train_transformer_delta.cpp
+)
+target_link_libraries(transition_train_transformer_delta PRIVATE
+  ${TORCH_LIBRARIES}
+  libboost_program_options.a
+  fmt
+)
+
+add_executable(transition_rollout_eval_transformer_delta
+  transition_rollout_eval_transformer_delta.cpp
+)
+target_link_libraries(transition_rollout_eval_transformer_delta PRIVATE
+  ${TORCH_LIBRARIES}
+  libboost_program_options.a
+  fmt
 )
