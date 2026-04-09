@@ -130,10 +130,10 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
         current_gamma *= _gamma;
     }
 
-    // if (train)
-    // {
-    //     _herUpdate(her_transitions);
-    // }
+    if (train)
+    {
+        _herUpdate(her_transitions);
+    }
 
     if (!_is_global && atTermination(goal) && num_steps > 0) // can not reach goal, but still reach next option
     {

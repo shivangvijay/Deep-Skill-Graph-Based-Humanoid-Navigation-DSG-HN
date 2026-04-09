@@ -40,6 +40,7 @@ int main(int argc, char **argv)
 
     std::shared_ptr<RobotBridgeTrain> robot_bridge = std::make_shared<RobotBridgeTrain>(SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, render);
     std::shared_ptr<TrainEnvironment> train_env = std::make_shared<TrainEnvironment>(robot_bridge, 600);
+    train_env->max_goal_distance = 9.0f;
 
     torch::Device device(torch::kCPU);
     if (torch::cuda::is_available())

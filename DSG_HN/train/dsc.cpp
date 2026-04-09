@@ -381,9 +381,19 @@ float DeepSkillChaining::_dscRollout(bool eval)
     int step = 0;
     bool env_done = false;
     float total_reward = 0;
+
+    auto eng = _robot_bridge->getEngine();
+    if (eng->render_m)
+    {
+        eng->setGoalMarker(_global_goal.position[0], _global_goal.position[1], 0.5f);
+    }
+
     while (step < _cfg.steps_per_episode && !env_done)
     {
         auto [option, goal] = _pickOption(eval);
+
+        eng->setGoalMarker(goal.position[0], goal.position[1], 0.5f);
+
         auto [steps_taken, cum_reward, local_done, first_state_poo, last_state_poo] = _skills[option]->rollout(goal);
 
         auto [g_reward, g_done] = _env->computeReward(_global_goal);
@@ -650,7 +660,7 @@ AbstractedState DeepSkillChaining::_sampleStartNearBoundary()
 
 /************************************** main **************************************/
 
-#define SCENE_FILE "../config/scene/umaze_scene_obs_free.xml"
+#define SCENE_FILE "../config/scene/umaze_scene.xml"
 #define OG_ACTOR "../models/best_actor.pt"
 #define OG_CRITIC1 "../models/best_critic_1.pt"
 #define OG_CRITIC2 "../models/best_critic_2.pt"
