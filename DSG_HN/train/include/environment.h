@@ -38,7 +38,14 @@ public:
 
     torch::Tensor reset() // if no arguments passed, just reset to random position. If goal fixed, use that, else sample randomly
     {
-        auto start = robot_bridge->generateRandomValidConfiguration();
+        AbstractedState start;
+        int start_attempts = 0;
+        do
+        {
+            start = robot_bridge->generateRandomValidConfiguration();
+            float obs_dist = robot_bridge->distanceToNearestObstacle(start.position, start.orientation);
+            if (obs_dist >= 1.0f) break;
+        } while (++start_attempts < 200);
         start.velocity[0] = 0;
         start.velocity[1] = 0;
         start.velocity[2] = 0;
@@ -53,7 +60,8 @@ public:
             {
                 goal = robot_bridge->generateRandomValidConfiguration();
                 float dist = _euclidean2D(start.position, goal.position);
-                if (dist >= min_goal_distance && dist <= max_goal_distance)
+                float obs_dist = robot_bridge->distanceToNearestObstacle(goal.position, goal.orientation);
+                if (dist >= min_goal_distance && dist <= max_goal_distance && obs_dist >= 0.6f)
                     break;
             } while (++attempts < 200);
 
@@ -73,6 +81,7 @@ public:
         last_action = {0.0f, 0.0f, 0.0f};
         prev_action = {0.0f, 0.0f, 0.0f};
         prev_dist_to_goal = _euclidean2D(start.position, goal.position);
+        prev_obs_dist = robot_bridge->distanceToNearestObstacle(start.position, start.orientation);
 
         return transformState(robot_bridge->getRobotState());
     }
@@ -153,6 +162,7 @@ public:
         last_action = {0.0f, 0.0f, 0.0f};
         prev_action = {0.0f, 0.0f, 0.0f};
         prev_dist_to_goal = _euclidean2D(clamped_pos, goal.position);
+        prev_obs_dist = robot_bridge->distanceToNearestObstacle(clamped_pos, quat);
         return transformState(robot_bridge->getRobotState());
     }
 
@@ -213,6 +223,14 @@ public:
         robot_bridge->getEngine()->setGoalMarker(goal.position[0], goal.position[1], 0.5f);
     }
 
+    void showObstacleMargins()
+    {
+        std::vector<MuJoCoEngine::ObstacleMarker> markers;
+        for (const auto &obs : obstacles)
+            markers.push_back({obs.position[0], obs.position[1], obs.size[0]});
+        robot_bridge->getEngine()->setObstacleMarkers(markers, 0.8f);
+    }
+
     std::pair<torch::Tensor, torch::Tensor> computeReward()
     {
         return computeReward(goal);
@@ -241,6 +259,10 @@ public:
         if (min_obs_dist < safe_margin)
         {
             reward -= 2.0f * (safe_margin - min_obs_dist);
+
+            // Turn-away reward: bonus for increasing distance from obstacle
+            float obs_dist_change = min_obs_dist - prev_obs_dist;
+            reward += 3.0f * obs_dist_change;
         }
 
         // 2. Terminal conditions
@@ -258,7 +280,7 @@ public:
         }
         else
         {
-            // 3. Distance reduction reward (dense, directional)
+            // 3. Distance reduction reward (always active)
             float dist_reduction = prev_dist_to_goal - pos_error;
             reward += 5.0f * dist_reduction;
 
@@ -280,6 +302,7 @@ public:
         }
 
         prev_dist_to_goal = pos_error;
+        prev_obs_dist = min_obs_dist;
 
         return {torch::tensor({reward}, torch::kFloat32),
                 torch::tensor({(float)terminated}, torch::kFloat32)};
@@ -366,6 +389,7 @@ private:
     std::array<float, 3> last_action = {0.0f, 0.0f, 0.0f};
     std::array<float, 3> prev_action = {0.0f, 0.0f, 0.0f};
     float prev_dist_to_goal = 0.0f;
+    float prev_obs_dist = 10.0f;
 
     float _euclidean2D(const std::array<float, 3> &a, const std::array<float, 3> &b) const
     {

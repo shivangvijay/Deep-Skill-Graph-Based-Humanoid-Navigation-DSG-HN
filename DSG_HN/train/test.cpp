@@ -65,6 +65,7 @@ int main(int argc, char **argv)
 
     torch::Tensor state = train_env->reset();
     train_env->updateGoalMarker();
+    train_env->showObstacleMargins();
     int num_success = 0;
     int num_episodes = 0;
     while (true)
