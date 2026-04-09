@@ -362,20 +362,17 @@ TD3Agent &Skill::agent()
 // if we change the initiation set, will need to change this as well
 float Skill::distanceToState(const AbstractedState &state) const
 {
-    float max_dist = 0; // gonna just do euclidian distance between vectors
+    float min_dist = std::numeric_limits<float>::max();
 
     for (const auto &start : _positive_gestation_records)
     {
         float dist = 0;
 
         dist += _euclideanDistance(state.position, start.state.position, false);
-        // dist += _euclideanDistance(state.orientation, start.state.orientation, false);
-        // dist += _euclideanDistance(state.velocity, start.state.velocity, false);
-        // dist += _euclideanDistance(state.angular_velocity, start.state.angular_velocity, false);
 
-        max_dist = std::max(dist, max_dist);
+        min_dist = std::min(dist, min_dist);
     }
-    return max_dist;
+    return min_dist;
 }
 
 /*** Private ***/
@@ -530,12 +527,11 @@ std::vector<float> Skill::_classifierVec(const AbstractedState &state) const
 {
     std::vector<float> out;
     auto scaling_factors = _env->env_scaling_factors;
-    out.reserve(3);
+    out.reserve(2);
 
-    // global pos
+    // global pos (x, y only — z is ~constant standing height and causes mismatch with AbstractedState z=0)
     out.push_back(state.position[0] / scaling_factors.position[0]);
     out.push_back(state.position[1] / scaling_factors.position[1]);
-    out.push_back(state.position[2] / scaling_factors.position[2]);
     // global vel — zeroed when kUseVelocityInClassifier is false (environment spawns with zero velocity)
     // out.push_back(kUseVelocityInClassifier ? state.velocity[0] / scaling_factors.velocity[0] : 0.0f);
     // out.push_back(kUseVelocityInClassifier ? state.velocity[1] / scaling_factors.velocity[1] : 0.0f);
@@ -567,36 +563,11 @@ std::vector<float> Skill::_classifierVec(const RobotState &state) const
 {
     std::vector<float> out;
     auto scaling_factors = _env->env_scaling_factors;
-    out.reserve(3);
+    out.reserve(2);
 
-    // global pos
+    // global pos (x, y only — z is ~constant standing height and causes mismatch with AbstractedState z=0)
     out.push_back(state.position[0] / scaling_factors.position[0]);
     out.push_back(state.position[1] / scaling_factors.position[1]);
-    out.push_back(state.position[2] / scaling_factors.position[2]);
-    // global vel — zeroed when kUseVelocityInClassifier is false (environment spawns with zero velocity)
-    // out.push_back(kUseVelocityInClassifier ? state.velocity[0] / scaling_factors.velocity[0] : 0.0f);
-    // out.push_back(kUseVelocityInClassifier ? state.velocity[1] / scaling_factors.velocity[1] : 0.0f);
-    // out.push_back(kUseVelocityInClassifier ? state.velocity[2] / scaling_factors.velocity[2] : 0.0f);
-
-    // // orientation
-    // if (state.orientation[0] < 0)
-    // {
-    //     out.push_back(-state.orientation[0] / scaling_factors.orientation[0]);
-    //     out.push_back(-state.orientation[1] / scaling_factors.orientation[1]);
-    //     out.push_back(-state.orientation[2] / scaling_factors.orientation[2]);
-    //     out.push_back(-state.orientation[3] / scaling_factors.orientation[3]);
-    // }
-    // else
-    // {
-    //     out.push_back(state.orientation[0] / scaling_factors.orientation[0]);
-    //     out.push_back(state.orientation[1] / scaling_factors.orientation[1]);
-    //     out.push_back(state.orientation[2] / scaling_factors.orientation[2]);
-    //     out.push_back(state.orientation[3] / scaling_factors.orientation[3]);
-    // }
-    // // ang vel — zeroed when kUseVelocityInClassifier is false
-    // out.push_back(kUseVelocityInClassifier ? state.angular_velocity[0] / scaling_factors.angular_velocity[0] : 0.0f);
-    // out.push_back(kUseVelocityInClassifier ? state.angular_velocity[1] / scaling_factors.angular_velocity[1] : 0.0f);
-    // out.push_back(kUseVelocityInClassifier ? state.angular_velocity[2] / scaling_factors.angular_velocity[2] : 0.0f);
     return out;
 }
 
