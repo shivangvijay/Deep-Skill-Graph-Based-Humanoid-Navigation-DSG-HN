@@ -17,6 +17,24 @@ struct RolloutState {
 
 struct ActionCmd { double vx, vy, yaw; };
 
+struct MpcConfig {
+    double w_pos      = 1.0;
+    double w_heading  = 0.5;
+    double w_terminal = 3.0;
+    double w_smooth   = 0.1;
+    double w_backward = 0.3;
+    int cem_rounds    = 3;
+    int cem_elites    = 32;
+    int candidates    = 256;
+    int horizon       = 10;
+};
+
+struct StallNode {
+    double x, y, yaw;
+    double goal_x, goal_y;
+    int steps_taken;
+};
+
 struct MpcContext;   // opaque — defined in sandbox_mpc_torch.cpp
 
 struct MpcContextDeleter { void operator()(MpcContext *p) const; };
@@ -25,7 +43,8 @@ using MpcContextPtr = std::unique_ptr<MpcContext, MpcContextDeleter>;
 MpcContextPtr mpc_create(
     const std::string &ckpt_path,
     const std::string &normaliser_path,
-    int history, int d_model, int n_heads, int n_layers);
+    int history, int d_model, int n_heads, int n_layers,
+    const MpcConfig &cfg = MpcConfig{});
 
 ActionCmd mpc_plan(MpcContext &ctx,
                    const RolloutState &state,

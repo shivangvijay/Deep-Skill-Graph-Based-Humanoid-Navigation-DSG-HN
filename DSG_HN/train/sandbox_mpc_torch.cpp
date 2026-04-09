@@ -5,11 +5,13 @@
 #include <torch/torch.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <deque>
 #include <fstream>
 #include <limits>
+#include <numeric>
 #include <random>
 #include <sstream>
 #include <unordered_map>
@@ -23,8 +25,6 @@ static constexpr int kOutputDim     = 6 + (2 * kJointDim);  // 76
 static constexpr double kVxMax  =  1.0, kVxMin  = -0.5;
 static constexpr double kVyMax  =  0.3, kVyMin  = -0.3;
 static constexpr double kYawMax =  1.0, kYawMin = -1.0;
-static constexpr int MPC_CANDIDATES = 256;
-static constexpr int MPC_HORIZON    = 10;
 
 // =====================================================================
 //  Model
@@ -186,6 +186,8 @@ struct MpcContext {
     int history;
     std::deque<torch::Tensor> history_buf;
     std::mt19937 rng;
+    MpcConfig cfg;
+    std::vector<ActionCmd> prev_best_actions;
 };
 
 void MpcContextDeleter::operator()(MpcContext *p) const { delete p; }
@@ -193,11 +195,13 @@ void MpcContextDeleter::operator()(MpcContext *p) const { delete p; }
 MpcContextPtr mpc_create(
     const std::string &ckpt_path,
     const std::string &normaliser_path,
-    int history, int d_model, int n_heads, int n_layers)
+    int history, int d_model, int n_heads, int n_layers,
+    const MpcConfig &cfg)
 {
     MpcContextPtr ctx(new MpcContext());
     ctx->device = torch::Device(torch::cuda::is_available() ? torch::kCUDA : torch::kCPU);
     ctx->history = history;
+    ctx->cfg = cfg;
     ctx->norm = Normaliser::load(normaliser_path);
     ctx->model = TransformerTransitionModel(kTokenDim, kOutputDim, history, d_model, n_heads, n_layers, 0.0);
     torch::load(ctx->model, ckpt_path);
@@ -213,34 +217,130 @@ static ActionCmd sample_action(std::mt19937 &rng) {
     return {dvx(rng), dvy(rng), dyaw(rng)};
 }
 
+static double evaluate_candidate(MpcContext &ctx,
+                                 const RolloutState &state,
+                                 const std::vector<ActionCmd> &actions,
+                                 double goal_x, double goal_y)
+{
+    const auto &cfg = ctx.cfg;
+    std::deque<torch::Tensor> hist = ctx.history_buf;
+    RolloutState cur = state;
+    double cost = 0.0;
+
+    for (int t = 0; t < (int)actions.size(); ++t) {
+        auto &a = actions[t];
+        auto sinp = rollout_to_input_vec(cur);
+        auto act = torch::tensor({(float)a.vx, (float)a.vy, (float)a.yaw}, torch::kFloat32);
+        hist.push_back(make_token(ctx.norm, sinp, act));
+        if ((int64_t)hist.size() > ctx.history) hist.pop_front();
+        auto delta = predict_delta(ctx.model, ctx.norm, hist, ctx.history, ctx.device);
+        apply_delta(cur, delta);
+
+        double dx = cur.x - goal_x, dy = cur.y - goal_y;
+        cost += cfg.w_pos * (dx * dx + dy * dy);
+
+        double angle_err = wrap_angle(std::atan2(goal_y - cur.y, goal_x - cur.x) - cur.yaw);
+        cost += cfg.w_heading * angle_err * angle_err;
+
+        if (t > 0) {
+            auto &pa = actions[t - 1];
+            double dvx = a.vx - pa.vx, dvy = a.vy - pa.vy, dyaw = a.yaw - pa.yaw;
+            cost += cfg.w_smooth * (dvx * dvx + dvy * dvy + dyaw * dyaw);
+        }
+
+        if (a.vx < 0)
+            cost += cfg.w_backward * a.vx * a.vx;
+    }
+
+    double tdx = cur.x - goal_x, tdy = cur.y - goal_y;
+    cost += cfg.w_terminal * (tdx * tdx + tdy * tdy);
+    return cost;
+}
+
 ActionCmd mpc_plan(MpcContext &ctx,
                    const RolloutState &state,
                    double goal_x, double goal_y,
                    unsigned seed_offset)
 {
     ctx.rng.seed(seed_offset);
-    double best_cost = std::numeric_limits<double>::infinity();
-    ActionCmd best_action{0,0,0};
+    const auto &cfg = ctx.cfg;
+    const int H = cfg.horizon;
+    const int N = cfg.candidates;
+    const int E = cfg.cem_elites;
 
-    for (int c = 0; c < MPC_CANDIDATES; ++c) {
-        std::vector<ActionCmd> actions(MPC_HORIZON);
-        for (auto &a : actions) a = sample_action(ctx.rng);
+    std::vector<std::array<double, 3>> mu(H), sigma(H);
 
-        std::deque<torch::Tensor> hist = ctx.history_buf;
-        RolloutState cur = state;
-        for (auto &a : actions) {
-            auto sinp = rollout_to_input_vec(cur);
-            auto act  = torch::tensor({(float)a.vx,(float)a.vy,(float)a.yaw}, torch::kFloat32);
-            hist.push_back(make_token(ctx.norm, sinp, act));
-            if ((int64_t)hist.size() > ctx.history) hist.pop_front();
-            auto delta = predict_delta(ctx.model, ctx.norm, hist, ctx.history, ctx.device);
-            apply_delta(cur, delta);
+    bool warm = (int)ctx.prev_best_actions.size() == H;
+    for (int t = 0; t < H; ++t) {
+        if (warm && t < H - 1) {
+            auto &pa = ctx.prev_best_actions[t + 1];
+            mu[t] = {pa.vx, pa.vy, pa.yaw};
+        } else {
+            mu[t] = {(kVxMax + kVxMin) * 0.5,
+                      (kVyMax + kVyMin) * 0.5,
+                      (kYawMax + kYawMin) * 0.5};
         }
-        double dx = cur.x - goal_x, dy = cur.y - goal_y;
-        double cost = dx*dx + dy*dy;
-        if (cost < best_cost) { best_cost = cost; best_action = actions[0]; }
+        sigma[t] = {(kVxMax - kVxMin) * 0.5,
+                     (kVyMax - kVyMin) * 0.5,
+                     (kYawMax - kYawMin) * 0.5};
     }
-    return best_action;
+
+    double best_cost_overall = std::numeric_limits<double>::infinity();
+    std::vector<ActionCmd> best_seq(H);
+
+    std::vector<std::vector<ActionCmd>> cands(N, std::vector<ActionCmd>(H));
+    std::vector<double> costs(N);
+
+    for (int round = 0; round < cfg.cem_rounds; ++round) {
+        for (int c = 0; c < N; ++c) {
+            for (int t = 0; t < H; ++t) {
+                std::normal_distribution<double> d0(mu[t][0], sigma[t][0]);
+                std::normal_distribution<double> d1(mu[t][1], sigma[t][1]);
+                std::normal_distribution<double> d2(mu[t][2], sigma[t][2]);
+                cands[c][t] = {std::clamp(d0(ctx.rng), kVxMin, kVxMax),
+                               std::clamp(d1(ctx.rng), kVyMin, kVyMax),
+                               std::clamp(d2(ctx.rng), kYawMin, kYawMax)};
+            }
+        }
+
+        for (int c = 0; c < N; ++c) {
+            costs[c] = evaluate_candidate(ctx, state, cands[c], goal_x, goal_y);
+            if (costs[c] < best_cost_overall) {
+                best_cost_overall = costs[c];
+                best_seq = cands[c];
+            }
+        }
+
+        if (round < cfg.cem_rounds - 1) {
+            std::vector<int> idx(N);
+            std::iota(idx.begin(), idx.end(), 0);
+            std::partial_sort(idx.begin(), idx.begin() + E, idx.end(),
+                [&](int a, int b) { return costs[a] < costs[b]; });
+
+            for (int t = 0; t < H; ++t) {
+                double s0 = 0, s1 = 0, s2 = 0;
+                for (int e = 0; e < E; ++e) {
+                    auto &a = cands[idx[e]][t];
+                    s0 += a.vx; s1 += a.vy; s2 += a.yaw;
+                }
+                mu[t] = {s0 / E, s1 / E, s2 / E};
+
+                double v0 = 0, v1 = 0, v2 = 0;
+                for (int e = 0; e < E; ++e) {
+                    auto &a = cands[idx[e]][t];
+                    v0 += (a.vx  - mu[t][0]) * (a.vx  - mu[t][0]);
+                    v1 += (a.vy  - mu[t][1]) * (a.vy  - mu[t][1]);
+                    v2 += (a.yaw - mu[t][2]) * (a.yaw - mu[t][2]);
+                }
+                sigma[t] = {std::sqrt(v0 / E) + 1e-6,
+                            std::sqrt(v1 / E) + 1e-6,
+                            std::sqrt(v2 / E) + 1e-6};
+            }
+        }
+    }
+
+    ctx.prev_best_actions = best_seq;
+    return best_seq[0];
 }
 
 void mpc_update_history(MpcContext &ctx,
