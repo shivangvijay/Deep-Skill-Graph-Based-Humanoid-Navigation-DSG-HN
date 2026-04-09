@@ -261,6 +261,9 @@ int main(int argc, char **argv)
             torch::save(agent.critic_local_1, "../models/best_critic_1.pt");
             torch::save(agent.critic_local_2, "../models/best_critic_2.pt");
         }
+        torch::save(agent.actor_local, "../models/last_actor.pt");
+        torch::save(agent.critic_local_1, "../models/last_critic_1.pt");
+        torch::save(agent.critic_local_2, "../models/last_critic_2.pt");
 
         agent.total_actor_loss = 0.0;
         agent.total_critic_loss = 0.0;

@@ -243,7 +243,7 @@ public:
         return computeReward(state, collision, goal_);
     }
 
-    std::pair<torch::Tensor, torch::Tensor> computeReward(const RobotState &state, bool collision, const AbstractedState &goal_)
+    std::pair<torch::Tensor, torch::Tensor> computeReward(const RobotState &state, bool collision, const AbstractedState &goal_, bool use_goal_radius = true)
     {
         auto goal_position = goal_.position;
 
@@ -273,7 +273,7 @@ public:
             reward -= 30;
             terminated = true;
         }
-        else if (pos_error < 0.5)
+        else if (use_goal_radius && pos_error < 0.5)
         {
             reward += 50;
             terminated = true;
@@ -378,6 +378,8 @@ public:
 
     float max_goal_distance = 3.0f;
     float min_goal_distance = 1.0f;
+
+    const std::vector<Obstacle> &getObstacles() const { return obstacles; }
 
 private:
     std::shared_ptr<RobotBridgeTrain> robot_bridge;

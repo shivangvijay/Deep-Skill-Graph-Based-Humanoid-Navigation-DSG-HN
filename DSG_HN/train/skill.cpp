@@ -1,6 +1,7 @@
 #include "skill.h"
 #include <fstream>
 #include <random>
+#include <numeric>
 
 Skill::Skill(
     int id,
@@ -39,7 +40,7 @@ AbstractedState Skill::getLocalGoal()
     }
     else
     {
-        return _parent->sampleSubgoalState(false);
+        return _parent->sampleSubgoalState();
     }
 }
 
@@ -56,7 +57,8 @@ bool Skill::atTermination(const AbstractedState &goal) const
         // TODO: collision check - but maybe that should be done when sampling a subgoal. can add it here for redundancy
         // Use pessimistic boundary for termination — tighter condition for termination
         // which calls parent.pessimistic_is_init_true()
-        return (_parent->canStartPessimistic(_env->getAbstractedState()) && !_env->getUnderlyingState().second) || (done.data_ptr<float>()[0] > 0.5f && reward.data_ptr<float>()[0] > 45);
+        return _parent->canStartPessimistic(_env->getAbstractedState()) && !_env->getUnderlyingState().second;
+        //return (_parent->canStartPessimistic(_env->getAbstractedState()) && !_env->getUnderlyingState().second) || (done.data_ptr<float>()[0] > 0.5f && reward.data_ptr<float>()[0] > 45);
     }
 }
 
@@ -93,11 +95,15 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
 
         auto [next_underlying_state, collision] = _env->getUnderlyingState();
 
-        if (!_is_global && _parent) // what abhi did, terminate if in termination condition, want to relabel the last as a success though
+        if (!_is_global && _parent)
         {
-            if (_parent->canStartPessimistic(_env->getAbstractedState()))
+            // Recompute reward without the 0.5m goal radius — termination is
+            // determined by the parent's initiation set, not proximity to subgoal.
+            std::tie(reward, done) = _env->computeReward(next_underlying_state, collision, goal, false);
+
+            if (_parent->canStartPessimistic(_env->getAbstractedState()) && !collision)
             {
-                reward = torch::tensor({20.0f}, torch::kFloat32); // make reward a bit smaller than the actual goal reward to encourage shorter options, but still positive to encourage reaching the parent initiation set
+                reward = torch::tensor({50.0f}, torch::kFloat32);
                 done = torch::tensor({1.0f}, torch::kFloat32);
             }
         }
@@ -129,7 +135,7 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
     //     _herUpdate(her_transitions);
     // }
 
-    if (!_is_global && atTermination(goal)) // can not reach goal, but still reach next option
+    if (!_is_global && atTermination(goal) && num_steps > 0) // can not reach goal, but still reach next option
     {
         _goal_hits++;
         if (train)
@@ -143,7 +149,7 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
 
     torch::Tensor end_state_poo = _env->getStateRelativeToGoal(_global_goal);
 
-    return {num_steps, total_reward, _atLocalGoal(goal), start_state_poo, end_state_poo};
+    return {num_steps, total_reward, atTermination(goal), start_state_poo, end_state_poo};
 }
 
 void Skill::validateSkill(bool success)
@@ -209,45 +215,102 @@ void Skill::initFromSkill(std::shared_ptr<Skill> other)
     _agent.hardCopy();
 }
 
-// TODO: maybe want to improve the sampling logic for greater training efficiency
-AbstractedState Skill::sampleSubgoalState(bool uniform) const
+AbstractedState Skill::sampleSubgoalState() const
 {
     if (_positive_gestation_records.empty())
-    {
-        // No positive data is available after load. Fall back to a valid random state.
         return _env->getRandomValidAbstractedState();
-    }
 
-    // Prefer states inside the pessimistic classifier (confident region) as subgoals.
-    // Falls back to any positive record if pessimistic classifier has no confirmed samples.
-    if (_pessimistic_classifier.trained() && !uniform)
+    // Build candidate indices: prefer pessimistic classifier region when available.
+    std::vector<size_t> candidate_indices;
+    if (_pessimistic_classifier.trained())
     {
-        std::vector<size_t> pessimistic_indices;
         for (size_t i = 0; i < _positive_gestation_records.size(); i++)
             if (_pessimistic_classifier.classify(_positive_gestation_records[i].classifier_vec))
-                pessimistic_indices.push_back(i);
-
-        if (!pessimistic_indices.empty())
-        {
-            std::uniform_int_distribution<size_t> dist(0, pessimistic_indices.size() - 1);
-            AbstractedState subgoal = _positive_gestation_records[pessimistic_indices[dist(_rng)]].state;
-            if (!kUseVelocityInClassifier)
-            {
-                subgoal.velocity = {0.0f, 0.0f, 0.0f};
-                subgoal.angular_velocity = {0.0f, 0.0f, 0.0f};
-            }
-            return subgoal;
-        }
+                candidate_indices.push_back(i);
     }
-    // fallback: sample uniformly from all positive records
-    std::uniform_int_distribution<size_t> dist(0, _positive_gestation_records.size() - 1);
-    AbstractedState subgoal = _positive_gestation_records[dist(_rng)].state;
+    if (candidate_indices.empty())
+    {
+        candidate_indices.resize(_positive_gestation_records.size()); 
+        std::iota(candidate_indices.begin(), candidate_indices.end(), 0); //iota can fill vector with sequentually increasing elements
+    }
+
+    // Filter to k-nearest and reject obstacle crossings.
+    if (candidate_indices.size() > 1)
+    {
+        constexpr size_t kNearest = 15;
+        AbstractedState current_state = _env->getAbstractedState();
+
+        // Sort candidates by distance to current state
+        std::sort(candidate_indices.begin(), candidate_indices.end(),
+            [&](size_t a, size_t b)
+            {
+                float da = _euclideanDistance2D(current_state.position, // if we change the goal representation, need this to be larger
+                    _positive_gestation_records[a].state.position, false);
+                float db = _euclideanDistance2D(current_state.position,
+                    _positive_gestation_records[b].state.position, false);
+                return da < db;
+            });
+
+        if (candidate_indices.size() > kNearest)
+            candidate_indices.resize(kNearest);
+
+        // Reject candidates whose line-of-sight crosses an obstacle
+        std::vector<size_t> reachable;
+        for (size_t idx : candidate_indices)
+        {
+            if (!_segmentIntersectsObstacle(current_state.position,
+                    _positive_gestation_records[idx].state.position))
+                reachable.push_back(idx);
+        }
+
+        if (!reachable.empty())
+            candidate_indices = std::move(reachable);
+    }
+
+    std::uniform_int_distribution<size_t> dist(0, candidate_indices.size() - 1);
+    AbstractedState subgoal = _positive_gestation_records[candidate_indices[dist(_rng)]].state;
     if (!kUseVelocityInClassifier)
     {
         subgoal.velocity = {0.0f, 0.0f, 0.0f};
         subgoal.angular_velocity = {0.0f, 0.0f, 0.0f};
     }
     return subgoal;
+}
+
+// 2D line-segment vs cylinder (circle) intersection test.
+// Returns true if the segment from a to b passes through any obstacle.
+bool Skill::_segmentIntersectsObstacle(const std::array<float, 3> &a, const std::array<float, 3> &b) const
+{
+    const auto &obstacles = _env->getObstacles();
+    float dx = b[0] - a[0];
+    float dy = b[1] - a[1];
+    float seg_len_sq = dx * dx + dy * dy;
+
+    for (const auto &obs : obstacles)
+    {
+        float radius = obs.size[0];
+        // Vector from a to obstacle center
+        float fx = a[0] - obs.position[0];
+        float fy = a[1] - obs.position[1];
+
+        // Quadratic: t^2*(d.d) + 2t*(f.d) + (f.f - r^2) = 0
+        float a_coeff = seg_len_sq;
+        float b_coeff = 2.0f * (fx * dx + fy * dy);
+        float c_coeff = fx * fx + fy * fy - radius * radius;
+        float discriminant = b_coeff * b_coeff - 4.0f * a_coeff * c_coeff;
+
+        if (discriminant < 0)
+            continue;
+
+        float sqrt_disc = std::sqrt(discriminant);
+        float t1 = (-b_coeff - sqrt_disc) / (2.0f * a_coeff);
+        float t2 = (-b_coeff + sqrt_disc) / (2.0f * a_coeff);
+
+        // Intersection if either root is in [0, 1] or the segment is fully inside
+        if (t1 <= 1.0f && t2 >= 0.0f)
+            return true;
+    }
+    return false;
 }
 
 void Skill::save(const std::string &actor_path,
@@ -362,20 +425,17 @@ TD3Agent &Skill::agent()
 // if we change the initiation set, will need to change this as well
 float Skill::distanceToState(const AbstractedState &state) const
 {
-    float max_dist = 0; // gonna just do euclidian distance between vectors
+    float min_dist = std::numeric_limits<float>::max();
 
     for (const auto &start : _positive_gestation_records)
     {
         float dist = 0;
 
-        dist += _euclideanDistance(state.position, start.state.position, false);
-        // dist += _euclideanDistance(state.orientation, start.state.orientation, false);
-        // dist += _euclideanDistance(state.velocity, start.state.velocity, false);
-        // dist += _euclideanDistance(state.angular_velocity, start.state.angular_velocity, false);
+        dist += _euclideanDistance2D(state.position, start.state.position, false);
 
-        max_dist = std::max(dist, max_dist);
+        min_dist = std::min(dist, min_dist);
     }
-    return max_dist;
+    return min_dist;
 }
 
 /*** Private ***/
@@ -513,7 +573,10 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
 
 bool Skill::_atLocalGoal(const AbstractedState &goal) const
 {
-    auto [reward, done] = _env->computeReward(goal);
+    auto [underlying_state, collision] = _env->getUnderlyingState();
+
+    bool use_goal_radius = (_parent == nullptr || _is_global); // only use goal radius for global option, not subgoal options
+    auto [reward, done] = _env->computeReward(underlying_state, collision, goal, use_goal_radius);
     bool env_done = done.data_ptr<float>()[0] > 0.5f;
     float r = reward.data_ptr<float>()[0];
 
@@ -523,6 +586,7 @@ bool Skill::_atLocalGoal(const AbstractedState &goal) const
     }
 
     bool reached_term = _parent->canStartPessimistic(_env->getAbstractedState()) || env_done; //(env_done && (r < 45));
+    //bool reached_goal = env_done && (r > 45);
     return reached_term;
 }
 
@@ -530,12 +594,11 @@ std::vector<float> Skill::_classifierVec(const AbstractedState &state) const
 {
     std::vector<float> out;
     auto scaling_factors = _env->env_scaling_factors;
-    out.reserve(3);
+    out.reserve(2);
 
-    // global pos
+    // global pos (x, y only — z is ~constant standing height and causes mismatch with AbstractedState z=0)
     out.push_back(state.position[0] / scaling_factors.position[0]);
     out.push_back(state.position[1] / scaling_factors.position[1]);
-    out.push_back(state.position[2] / scaling_factors.position[2]);
     // global vel — zeroed when kUseVelocityInClassifier is false (environment spawns with zero velocity)
     // out.push_back(kUseVelocityInClassifier ? state.velocity[0] / scaling_factors.velocity[0] : 0.0f);
     // out.push_back(kUseVelocityInClassifier ? state.velocity[1] / scaling_factors.velocity[1] : 0.0f);
@@ -567,37 +630,24 @@ std::vector<float> Skill::_classifierVec(const RobotState &state) const
 {
     std::vector<float> out;
     auto scaling_factors = _env->env_scaling_factors;
-    out.reserve(3);
+    out.reserve(2);
 
-    // global pos
+    // global pos (x, y only — z is ~constant standing height and causes mismatch with AbstractedState z=0)
     out.push_back(state.position[0] / scaling_factors.position[0]);
     out.push_back(state.position[1] / scaling_factors.position[1]);
-    out.push_back(state.position[2] / scaling_factors.position[2]);
-    // global vel — zeroed when kUseVelocityInClassifier is false (environment spawns with zero velocity)
-    // out.push_back(kUseVelocityInClassifier ? state.velocity[0] / scaling_factors.velocity[0] : 0.0f);
-    // out.push_back(kUseVelocityInClassifier ? state.velocity[1] / scaling_factors.velocity[1] : 0.0f);
-    // out.push_back(kUseVelocityInClassifier ? state.velocity[2] / scaling_factors.velocity[2] : 0.0f);
-
-    // // orientation
-    // if (state.orientation[0] < 0)
-    // {
-    //     out.push_back(-state.orientation[0] / scaling_factors.orientation[0]);
-    //     out.push_back(-state.orientation[1] / scaling_factors.orientation[1]);
-    //     out.push_back(-state.orientation[2] / scaling_factors.orientation[2]);
-    //     out.push_back(-state.orientation[3] / scaling_factors.orientation[3]);
-    // }
-    // else
-    // {
-    //     out.push_back(state.orientation[0] / scaling_factors.orientation[0]);
-    //     out.push_back(state.orientation[1] / scaling_factors.orientation[1]);
-    //     out.push_back(state.orientation[2] / scaling_factors.orientation[2]);
-    //     out.push_back(state.orientation[3] / scaling_factors.orientation[3]);
-    // }
-    // // ang vel — zeroed when kUseVelocityInClassifier is false
-    // out.push_back(kUseVelocityInClassifier ? state.angular_velocity[0] / scaling_factors.angular_velocity[0] : 0.0f);
-    // out.push_back(kUseVelocityInClassifier ? state.angular_velocity[1] / scaling_factors.angular_velocity[1] : 0.0f);
-    // out.push_back(kUseVelocityInClassifier ? state.angular_velocity[2] / scaling_factors.angular_velocity[2] : 0.0f);
     return out;
+}
+
+float Skill::_euclideanDistance2D(const std::array<float, 3> &a, const std::array<float, 3> &b, bool sqrt) const
+{
+    float dx = a[0] - b[0];
+    float dy = a[1] - b[1];
+    float dist = dx * dx + dy * dy;
+    if (sqrt)
+    {
+        return std::sqrt(dist);
+    }
+    return dist;
 }
 
 float Skill::_euclideanDistance(const std::array<float, 3> &a, const std::array<float, 3> &b, bool sqrt) const
