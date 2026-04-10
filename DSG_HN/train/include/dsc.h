@@ -42,6 +42,7 @@ public:
         int max_option_steps = 20;        // how long an option can execute for
         int max_skills = 6;
         float start_noise_radius = 2.0f;
+        float val_accuracy_threshold = 0.8f;
 
         std::vector<int> actor_layers = {256, 256, 256};
         std::vector<int> critic_layers = {256, 256, 256};

@@ -95,18 +95,18 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
 
         auto [next_underlying_state, collision] = _env->getUnderlyingState();
 
-        if (!_is_global && _parent)
-        {
-            // Recompute reward without the 0.5m goal radius — termination is
-            // determined by the parent's initiation set, not proximity to subgoal.
-            std::tie(reward, done) = _env->computeReward(next_underlying_state, collision, goal, false);
+        // if (!_is_global && _parent)
+        // {
+        //     // Recompute reward without the 0.5m goal radius — termination is
+        //     // determined by the parent's initiation set, not proximity to subgoal.
+        //     std::tie(reward, done) = _env->computeReward(next_underlying_state, collision, goal, false);
 
-            if (_parent->canStartPessimistic(_env->getAbstractedState()) && !collision)
-            {
-                reward = torch::tensor({50.0f}, torch::kFloat32);
-                done = torch::tensor({1.0f}, torch::kFloat32);
-            }
-        }
+        //     if (_parent->canStartPessimistic(_env->getAbstractedState()) && !collision)
+        //     {
+        //         reward = torch::tensor({50.0f}, torch::kFloat32);
+        //         done = torch::tensor({1.0f}, torch::kFloat32);
+        //     }
+        // }
         if (train) // if training instability, perhaps look at putting this outside the while loop like they have it elsewhere
         {
             her_transitions.push_back({underlying_state, action, next_underlying_state, collision});
@@ -130,10 +130,10 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
         current_gamma *= _gamma;
     }
 
-    if (train)
-    {
-        _herUpdate(her_transitions);
-    }
+    // if (train)
+    // {
+    //     _herUpdate(her_transitions);
+    // }
 
     if (!_is_global && atTermination(goal) && num_steps > 0) // can not reach goal, but still reach next option
     {
@@ -575,7 +575,7 @@ bool Skill::_atLocalGoal(const AbstractedState &goal) const
 {
     auto [underlying_state, collision] = _env->getUnderlyingState();
 
-    bool use_goal_radius = (_parent == nullptr || _is_global); // only use goal radius for global option, not subgoal options
+    bool use_goal_radius = true; //(_parent == nullptr || _is_global); // only use goal radius for global option, not subgoal options
     auto [reward, done] = _env->computeReward(underlying_state, collision, goal, use_goal_radius);
     bool env_done = done.data_ptr<float>()[0] > 0.5f;
     float r = reward.data_ptr<float>()[0];
@@ -585,9 +585,9 @@ bool Skill::_atLocalGoal(const AbstractedState &goal) const
         return env_done;
     }
 
-    bool reached_term = _parent->canStartPessimistic(_env->getAbstractedState()) || env_done; //(env_done && (r < 45));
-    //bool reached_goal = env_done && (r > 45);
-    return reached_term;
+    bool at_goal = env_done && (r > 45);
+    bool bad_termination = env_done && (r < 45); // collision, OOB, timeout
+    return (_parent->canStartPessimistic(_env->getAbstractedState()) && at_goal) || bad_termination;
 }
 
 std::vector<float> Skill::_classifierVec(const AbstractedState &state) const

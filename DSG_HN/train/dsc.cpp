@@ -71,7 +71,7 @@ int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout wh
         //     auto start = _sampleStartInterpolated();
         //     _env->resetTo(start);
         // }
-        else if (p >= 0.2 && p < 0.8)
+        else if (p >= 0.2 && p < 0.7)
         {
             auto start = _sampleStartNearBoundary();
             _env->resetTo(start);
@@ -277,7 +277,7 @@ void DeepSkillChaining::_validateOption()
             num_successes++;
     }
 
-    if ((float)num_successes / (float)_cfg.gestation_n > 0.8)
+    if ((float)num_successes / (float)_cfg.gestation_n > _cfg.val_accuracy_threshold)
     {
         std::cout << "Option " << validate_idx << " validated. Success Rate: " << (float)num_successes / (float)_cfg.gestation_n << std::endl;
         _skills[validate_idx]->validateSkill(true);
@@ -661,9 +661,9 @@ AbstractedState DeepSkillChaining::_sampleStartNearBoundary()
 /************************************** main **************************************/
 
 #define SCENE_FILE "../config/scene/umaze_scene.xml"
-#define OG_ACTOR "../models/best_actor.pt"
-#define OG_CRITIC1 "../models/best_critic_1.pt"
-#define OG_CRITIC2 "../models/best_critic_2.pt"
+#define OG_ACTOR "../models/actor.pt"
+#define OG_CRITIC1 "../models/critic_1.pt"
+#define OG_CRITIC2 "../models/critic_2.pt"
 #define DSC_SAVE_PATH "../dsc_models"
 #define TEST false // if set to true, will not train, will just load and run testing
 
@@ -694,7 +694,7 @@ int main(int argc, char **argv)
         SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, /*render=*/false);
 
     DeepSkillChaining::Config cfg;
-    cfg.gestation_n = 30; // number of total successes that should be collected during gestation phase. Perhaps use a percentage for the option being currently learnt?
+    cfg.gestation_n = 50; // number of total successes that should be collected during gestation phase. Perhaps use a percentage for the option being currently learnt?
     cfg.last_k = 20;
     cfg.max_option_steps = 50; // each option should be meaningful enough. 5Hz and 20 steps means each option can run for up to 4 seconds
     cfg.nu = 0.1;
@@ -703,7 +703,8 @@ int main(int argc, char **argv)
     cfg.verbose = true;         // set to true for per-rollout console output
     cfg.log_interval = 50;     // print skill status table every N episodes
     cfg.visualize_initiation_sets = true;
-    cfg.max_skills = 20;
+    cfg.max_skills = 50;
+    cfg.val_accuracy_threshold = 0.8f;
 
     AbstractedState global_goal = {{-4.5, 4.1, 0.}, {0, 0, 0, -1}, {0, 0, 0}, {0, 0, 0}};
     AbstractedState global_start = {{-5.3, -4.5, 0.}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
@@ -731,7 +732,7 @@ int main(int argc, char **argv)
     // std::cout << "\n=== Evaluation (20 episodes) ===" << std::endl;
     float total = 0.0f;
     robot_bridge->startRender();
-    for (int i = 0; i < 40; ++i)
+    for (int i = 0; i < 20; ++i)
     {
         float r = dsc.execute();
         total += r;

@@ -381,6 +381,17 @@ public:
 
     const std::vector<Obstacle> &getObstacles() const { return obstacles; }
 
+    float distanceToNearestObstacle() const
+    {
+        RobotState s = robot_bridge->getRobotState();
+        return robot_bridge->distanceToNearestObstacle(s.position, s.orientation);
+    }
+
+    float distanceToNearestObstacle(const std::array<float, 3> &pos, const std::array<float, 4> &orient) const
+    {
+        return robot_bridge->distanceToNearestObstacle(pos, orient);
+    }
+
 private:
     std::shared_ptr<RobotBridgeTrain> robot_bridge;
     AbstractedState goal = {{0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
