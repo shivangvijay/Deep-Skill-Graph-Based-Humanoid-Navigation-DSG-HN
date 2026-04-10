@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <random>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -502,13 +503,17 @@ static double train_epoch(TransformerTransitionModel &model,
 
             for (int k = 0; k < data.future_steps; ++k)
             {
-                // Construct the predicted state-input for the next step by
-                // adding the (normalised) predicted delta to the last token's
-                // state portion.  This is approximate but avoids needing
-                // the full unnormalise -> re-normalise pipeline at train time.
+                // Map predicted delta (76-d) back to input space (77-d).
+                // Input:  [qw qx qy qz | vx vy oz | joint_pos(35) joint_vel(35)]
+                // Delta:  [dx dy dyaw   | dvx dvy doz | djoint_pos(35) djoint_vel(35)]
+                // Quaternion is kept unchanged; velocity/joint deltas are added.
                 auto last_inp = seq.select(1, seq.size(1) - 1)
-                                    .narrow(1, 0, kInputStateDim); // [B, inp]
-                auto new_inp = last_inp + pred_delta_norm.narrow(1, 0, kInputStateDim);
+                                    .narrow(1, 0, kInputStateDim); // [B, 77]
+                auto new_inp = last_inp.clone();
+                // dvx->vx, dvy->vy, doz->oz  (delta[3..5] -> input[4..6])
+                new_inp.narrow(1, 4, 3) += pred_delta_norm.narrow(1, 3, 3);
+                // djoint_pos + djoint_vel  (delta[6..75] -> input[7..76])
+                new_inp.narrow(1, 7, 2 * kJointDim) += pred_delta_norm.narrow(1, 6, 2 * kJointDim);
 
                 auto act_k = bfa.select(1, k);  // [B, act] — already normalised
                 auto new_tok = build_token_batch(new_inp, act_k).unsqueeze(1);
@@ -612,36 +617,87 @@ int main(int argc, char **argv)
     std::srand(seed);
 
     const torch::Device device(torch::cuda::is_available() ? torch::kCUDA : torch::kCPU);
-    std::cout << "Device: " << device << '\n';
+    std::cout << "Device: " << device << std::endl;
 
     // ── Load CSV ────────────────────────────────────────────────────
+    std::cout << "Loading CSV..." << std::flush;
     LoadedCsv data = load_csv(csv_path);
     const int64_t total_rows = data.states.size(0);
-    std::cout << "Loaded " << total_rows << " transitions from " << csv_path << '\n';
+    std::cout << " " << total_rows << " transitions from " << csv_path << std::endl;
 
     // ── Compute per-row features, actions, deltas ────────────────
     auto all_inputs  = state_to_input(data.states);
     auto all_actions = data.actions;
     auto all_targets = compute_deltas(data.states, data.next_states);
 
-    // ── 70/20/10 sequential split (before windowing) ──────────────
-    const int64_t train_end = static_cast<int64_t>(total_rows * 0.70);
-    const int64_t val_end   = static_cast<int64_t>(total_rows * 0.90);
+    // ── Episode-level shuffle split (70/20/10) ────────────────────
+    // Detect episode boundaries from timestamp gaps, then randomly
+    // assign whole episodes to train/val/test so every split sees a
+    // representative mix of the data.
+    std::cout << "Splitting by episode..." << std::flush;
+    auto ts_acc = data.timestamps.accessor<double, 2>();
 
-    auto train_inp = all_inputs.narrow(0, 0, train_end).clone();
-    auto train_act = all_actions.narrow(0, 0, train_end).clone();
-    auto train_tgt = all_targets.narrow(0, 0, train_end).clone();
-    auto train_ts  = data.timestamps.narrow(0, 0, train_end).clone();
+    struct Episode { int64_t start; int64_t len; };
+    std::vector<Episode> episodes;
+    int64_t ep_start = 0;
+    for (int64_t i = 1; i < total_rows; ++i)
+    {
+        double dt = ts_acc[i][0] - ts_acc[i-1][0];
+        if (dt < 0 || dt > max_gap)
+        {
+            episodes.push_back({ep_start, i - ep_start});
+            ep_start = i;
+        }
+    }
+    episodes.push_back({ep_start, total_rows - ep_start});
 
-    auto val_inp = all_inputs.narrow(0, train_end, val_end - train_end).clone();
-    auto val_act = all_actions.narrow(0, train_end, val_end - train_end).clone();
-    auto val_tgt = all_targets.narrow(0, train_end, val_end - train_end).clone();
-    auto val_ts  = data.timestamps.narrow(0, train_end, val_end - train_end).clone();
+    // Shuffle episodes
+    std::minstd_rand split_rng(seed);
+    std::shuffle(episodes.begin(), episodes.end(), split_rng);
 
-    auto test_inp = all_inputs.narrow(0, val_end, total_rows - val_end).clone();
-    auto test_act = all_actions.narrow(0, val_end, total_rows - val_end).clone();
-    auto test_tgt = all_targets.narrow(0, val_end, total_rows - val_end).clone();
-    auto test_ts  = data.timestamps.narrow(0, val_end, total_rows - val_end).clone();
+    // Assign episodes to splits by cumulative row count
+    int64_t target_train = static_cast<int64_t>(total_rows * 0.70);
+    int64_t target_val   = static_cast<int64_t>(total_rows * 0.20);
+
+    std::vector<int64_t> train_idx, val_idx, test_idx;
+    int64_t train_count = 0, val_count = 0;
+    for (auto &ep : episodes)
+    {
+        std::vector<int64_t> *dest;
+        if (train_count < target_train) { dest = &train_idx; train_count += ep.len; }
+        else if (val_count < target_val) { dest = &val_idx; val_count += ep.len; }
+        else { dest = &test_idx; }
+        for (int64_t r = ep.start; r < ep.start + ep.len; ++r)
+            dest->push_back(r);
+    }
+
+    // Sort indices within each split to preserve temporal order for windowing
+    std::sort(train_idx.begin(), train_idx.end());
+    std::sort(val_idx.begin(), val_idx.end());
+    std::sort(test_idx.begin(), test_idx.end());
+
+    auto gather = [](const torch::Tensor &src, const std::vector<int64_t> &idx) {
+        auto t = torch::from_blob((void*)idx.data(), {(int64_t)idx.size()}, torch::kLong).clone();
+        return src.index_select(0, t);
+    };
+
+    auto train_inp = gather(all_inputs, train_idx);
+    auto train_act = gather(all_actions, train_idx);
+    auto train_tgt = gather(all_targets, train_idx);
+    auto train_ts  = gather(data.timestamps, train_idx);
+
+    auto val_inp = gather(all_inputs, val_idx);
+    auto val_act = gather(all_actions, val_idx);
+    auto val_tgt = gather(all_targets, val_idx);
+    auto val_ts  = gather(data.timestamps, val_idx);
+
+    auto test_inp = gather(all_inputs, test_idx);
+    auto test_act = gather(all_actions, test_idx);
+    auto test_tgt = gather(all_targets, test_idx);
+    auto test_ts  = gather(data.timestamps, test_idx);
+
+    std::cout << " " << episodes.size() << " episodes -> train=" << train_idx.size()
+              << " val=" << val_idx.size() << " test=" << test_idx.size() << std::endl;
 
     // ── Normaliser (fit on train split) ──────────────────────────
     Normaliser norm;
@@ -653,15 +709,19 @@ int main(int argc, char **argv)
     auto norm_tgt  = [&](const torch::Tensor &t) { return norm.norm_target(t); };
 
     // ── Window into sequences ────────────────────────────────────
-    std::cout << "Creating windows (history=" << history << ")...\n";
+    std::cout << "Creating windows (history=" << history << ")..." << std::endl;
 
+    std::cout << "  windowing train split..." << std::flush;
     auto train_win = create_windows(norm_inp(train_inp), norm_act(train_act), norm_tgt(train_tgt), train_ts, history, future_steps, max_gap);
-    auto val_win   = create_windows(norm_inp(val_inp),   norm_act(val_act),   norm_tgt(val_tgt),   val_ts,   history, 0, max_gap);
-    auto test_win  = create_windows(norm_inp(test_inp),  norm_act(test_act),  norm_tgt(test_tgt),  test_ts,  history, 0, max_gap);
+    std::cout << " " << train_win.sequences.size(0) << " windows" << std::endl;
 
-    std::cout << "Windows: train=" << train_win.sequences.size(0)
-              << " val=" << val_win.sequences.size(0)
-              << " test=" << test_win.sequences.size(0) << '\n';
+    std::cout << "  windowing val split..." << std::flush;
+    auto val_win   = create_windows(norm_inp(val_inp),   norm_act(val_act),   norm_tgt(val_tgt),   val_ts,   history, 0, max_gap);
+    std::cout << " " << val_win.sequences.size(0) << " windows" << std::endl;
+
+    std::cout << "  windowing test split..." << std::flush;
+    auto test_win  = create_windows(norm_inp(test_inp),  norm_act(test_act),  norm_tgt(test_tgt),  test_ts,  history, 0, max_gap);
+    std::cout << " " << test_win.sequences.size(0) << " windows" << std::endl;
 
     // ── Build model ──────────────────────────────────────────────
     TransformerTransitionModel model(kTokenDim, kOutputDim, history, d_model, n_heads, n_layers, dropout);
@@ -671,7 +731,7 @@ int main(int argc, char **argv)
     for (auto &p : model->parameters()) param_count += p.numel();
     std::cout << "Model: Transformer delta  (token=" << kTokenDim << " d_model=" << d_model
               << " heads=" << n_heads << " layers=" << n_layers
-              << " seq=" << history << " params=" << param_count << ")\n";
+              << " seq=" << history << " params=" << param_count << ")" << std::endl;
 
     auto weights = make_output_weights(device);
     torch::optim::AdamW opt(model->parameters(), torch::optim::AdamWOptions(lr).weight_decay(wd));
@@ -683,14 +743,15 @@ int main(int argc, char **argv)
     double best_val = std::numeric_limits<double>::infinity();
     int no_improve = 0;
 
+    std::cout << "Starting training..." << std::endl;
     for (int ep = 1; ep <= epochs; ++ep)
     {
-        // Cosine LR schedule with warmup
+        auto ep_start = std::chrono::steady_clock::now();
+
         double cur_lr = cosine_lr(ep, epochs, lr);
         for (auto &pg : opt.param_groups())
             static_cast<torch::optim::AdamWOptions &>(pg.options()).lr(cur_lr);
 
-        // Anneal multi-step loss weight: ramp from 0 to ms_weight_max over first 30% of epochs
         double ms_frac = std::min(1.0, (double)ep / (0.3 * epochs));
         double ms_weight = ms_weight_max * ms_frac;
 
@@ -698,12 +759,15 @@ int main(int argc, char **argv)
                                 batch_size, device, opt);
         double vl = eval_loss(model, val_win, weights, mse_weight, batch_size, device);
 
-        if (ep % 10 == 1 || ep == epochs)
+        auto ep_secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - ep_start).count();
+
+        if (ep % 5 == 1 || ep <= 3 || ep == epochs)
             std::cout << "Epoch " << std::setw(4) << ep << '/' << epochs
                       << "  train=" << std::fixed << std::setprecision(6) << tl
                       << "  val=" << vl
                       << "  lr=" << std::scientific << std::setprecision(2) << cur_lr
-                      << "  ms_w=" << std::fixed << std::setprecision(3) << ms_weight << '\n';
+                      << "  ms_w=" << std::fixed << std::setprecision(3) << ms_weight
+                      << "  (" << std::fixed << std::setprecision(1) << ep_secs << "s)" << std::endl;
 
         torch::save(model, latest_path.string());
         if (vl < best_val)
