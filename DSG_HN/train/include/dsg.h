@@ -250,8 +250,9 @@ protected:
     std::pair<int, AbstractedState> _pickOption(bool eval) override;
 
     // --- graph edge management ---
-    void             _updateEdges();
-    std::vector<int> _dijkstraPath(int from_node) const;
+    void _updateEdges();
+    // Returns {total_cost, path} from from_node to to_node. Path is empty if unreachable.
+    std::pair<float, std::vector<int>> _dijkstraPath(int from_node, int to_node) const;
 
 private:
     // --- unified node dispatch ---
@@ -270,7 +271,7 @@ private:
 
     // --- navigation and training primitives ---
     void            _navigateTo(int node_idx, int max_steps);
-    AbstractedState _runMPCProxy(const AbstractedState &target);
+    AbstractedState _runMPCProxy(const AbstractedState &target); // TODO: integrate MPC implementation
     void            _trainDSCBridge(int v_a_skill_idx);
 
     // --- phase methods ---

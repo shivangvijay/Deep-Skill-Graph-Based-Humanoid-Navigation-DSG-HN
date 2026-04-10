@@ -38,11 +38,11 @@ std::pair<int, AbstractedState> DeepSkillGraph::_pickOption(bool eval)
 {
     if (eval)
     {
-        auto path = _dijkstraPath(_currentNodeIdx());
+        auto [cost, path] = _dijkstraPath(_currentNodeIdx(), _global_option_idx + 1);
         if (!path.empty())
         {
             int next = path[0];
-            if (next < (int)_skills.size()) // skill node — execute it
+            if (next < (int)_skills.size())
             {
                 auto global_state = _env->getAbstractedState();
                 if (_skills[next]->canStart(global_state) && !_skills[next]->atTermination(_global_goal))
@@ -281,9 +281,8 @@ void DeepSkillGraph::_updateEdges()
     }
 }
 
-std::vector<int> DeepSkillGraph::_dijkstraPath(int from_node) const
+std::pair<float, std::vector<int>> DeepSkillGraph::_dijkstraPath(int from_node, int to_node) const
 {
-    int goal_node = _global_option_idx + 1;
     int N = _totalNodes();
 
     std::vector<float> dist(N, std::numeric_limits<float>::infinity());
@@ -314,11 +313,14 @@ std::vector<int> DeepSkillGraph::_dijkstraPath(int from_node) const
             if (dist[u] + w < dist[v]) { dist[v] = dist[u] + w; prev[v] = u; pq.push({dist[v], v}); }
     }
 
+    if (dist[to_node] == std::numeric_limits<float>::infinity())
+        return {std::numeric_limits<float>::infinity(), {}}; // unreachable
+
     std::vector<int> path;
-    for (int v = goal_node; v != -1 && v != from_node; v = prev[v])
+    for (int v = to_node; v != -1 && v != from_node; v = prev[v])
         path.push_back(v);
     std::reverse(path.begin(), path.end());
-    return path;
+    return {dist[to_node], path};
 }
 
 // =============================================================================
@@ -474,15 +476,47 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
     int step = 0;
     while (step < max_steps)
     {
-        if (_nodeCanStart(node_idx, _env->getAbstractedState()))
-            return; // arrived
+        auto global_state = _env->getAbstractedState();
+        if (_nodeCanStart(node_idx, global_state))
+            return;
 
-        auto [option, goal] = _pickOption(false);
-        auto [steps_taken, cum_reward, done, first_poo, last_poo] = _skills[option]->rollout(goal);
+        // O(s_t): options whose initiation set contains current state (Eq 1)
+        std::vector<int> O_s;
+        for (int o = _global_option_idx + 1; o < (int)_skills.size(); o++)
+            if (_skills[o]->canStart(global_state))
+                O_s.push_back(o);
+
+        // Case (a): path exists from some o in O(s_t) to node_idx in G.
+        // Run Dijkstra from each o, select least-cost plan, execute its first option (o itself).
+        int best_option = -1;
+        AbstractedState best_goal;
+        float best_cost = std::numeric_limits<float>::infinity();
+
+        for (int o : O_s)
+        {
+            auto [cost, path] = _dijkstraPath(o, node_idx);
+            if (!path.empty() && cost < best_cost)
+            {
+                best_cost   = cost;
+                best_option = o;
+                best_goal   = _skills[o]->getLocalGoal();
+            }
+        }
+
+        // Case (b): no path found in G — fall back to DSC's option selection 
+        if (best_option == -1)
+        {
+            auto [o, g] = DeepSkillChaining::_pickOption(false); // TODO: use Policy Over Options 
+            best_option = o;
+            best_goal   = g;
+        }
+
+        auto [steps_taken, cum_reward, done, first_poo, last_poo] =
+            _skills[best_option]->rollout(best_goal);
 
         if (steps_taken == 0) { step++; continue; }
 
-        _poo.addExperience(first_poo, option, cum_reward, last_poo, false, steps_taken);
+        _poo.addExperience(first_poo, best_option, cum_reward, last_poo, false, steps_taken);
         _poo.learn();
         step += steps_taken;
     }
