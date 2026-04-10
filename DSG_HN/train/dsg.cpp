@@ -705,12 +705,13 @@ int main(int argc, char **argv)
     AbstractedState global_goal  = {{-4.5, 4.1, 0}, {0, 0, 0, -1}, {0, 0, 0}, {0, 0, 0}};
     AbstractedState global_start = {{-5.3, -4.5, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 
+    // This initializes policy over options and global option because DSG inherits from DSC
     DeepSkillGraph dsg(robot_bridge, device, global_goal, global_start,
                        OG_ACTOR, OG_CRITIC1, OG_CRITIC2, SCENE_FILE, cfg);
 
     // TODO: Initialize transition model
 
-    // TODO: Initialize Policy Over Options 
+    
 
     if (!TEST)
     {

@@ -31,7 +31,7 @@
 // 6. Add s_mpc to set B 
 // 7. This can be parallelized!
 
-// Consolidation
+// Consolidation Phase
 // 1. Identify Goal: enumerate vertices to which there is no path from s_t. Greedily select nearest unseen vertex v_goal.
 // 2. Identify subcomponents: D(s_t) = {D(v | v in V(s_t)} and A(v_goal). In subcomponents, identify pair of vertices v_d, v_a that are closest to each other
 // 3. Navigate to V_d, DSC to v_a and then navigate to v_goal. 
@@ -193,8 +193,8 @@ between options and goal regions in the graph.
 //   train, save, load
 //   _makeSkill, _shouldCreateNewOption, _validateOption, _pickOption
 
-class DeepSkillGraph : public DeepSkillChaining
-{
+// inherits DSC's skill learning and execution machinery, but overrides option selection to implement graph-based planning and expansion, and adds graph management methods to maintain the structure of the skill graph and its edges
+class DeepSkillGraph : public DeepSkillChaining 
 public:
     using Config = DeepSkillChaining::Config;
 
