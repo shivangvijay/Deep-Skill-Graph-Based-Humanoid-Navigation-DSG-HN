@@ -19,7 +19,7 @@
 #include <string>
 #include <thread>
 
-#define SCENE_FILE          "../config/scene/test_scene.xml"
+#define SCENE_FILE          "../config/scene/umaze_scene.xml"
 #define USE_WALL_CLOCK_TIME true
 #define CONTROL_HZ          10
 #define GOAL_REACHED_DIST   0.15

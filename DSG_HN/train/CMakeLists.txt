@@ -60,8 +60,6 @@ add_library(sandbox_mpc_bridge OBJECT
 add_library(sandbox_mpc_torch_obj OBJECT sandbox_mpc_torch.cpp)
 target_include_directories(sandbox_mpc_torch_obj PRIVATE ${TORCH_INCLUDE_DIRS})
 
-link_directories($ENV{CONDA_PREFIX}/lib)
-
 link_libraries(
   unitree_sdk2 ddsc ddscxx rt pthread # dds
   libboost_program_options.a libyaml-cpp.a fmt spdlog
@@ -94,6 +92,8 @@ add_executable(test
 if(DEFINED ENV{CONDA_PREFIX})
   target_include_directories(train PRIVATE $ENV{CONDA_PREFIX}/include)
   target_include_directories(test PRIVATE $ENV{CONDA_PREFIX}/include)
+  target_link_directories(train PRIVATE $ENV{CONDA_PREFIX}/lib)
+  target_link_directories(test PRIVATE $ENV{CONDA_PREFIX}/lib)
   set(_LIBSVM_SO "$ENV{CONDA_PREFIX}/lib/libsvm.so")
   if(EXISTS "${_LIBSVM_SO}")
     target_link_libraries(train PRIVATE "${_LIBSVM_SO}")
