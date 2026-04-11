@@ -250,6 +250,7 @@ void DeepSkillChaining::load(const std::string &dir, const std::string &scene_fi
 /*** Private ***/
 void DeepSkillChaining::_validateOption()
 {
+
     int validate_idx = -1;
     for (int o = _global_option_idx + 1; o < _skills.size(); o++)
     {
@@ -263,6 +264,8 @@ void DeepSkillChaining::_validateOption()
     if (validate_idx == -1)
         return;
 
+    _skills[validate_idx]->validateSkill(true); // temporarily mark as validated to allow for sampling states from it
+    return;
     int num_successes = 0;
     for (int i = 0; i < _cfg.gestation_n; i++)
     {
@@ -612,7 +615,7 @@ AbstractedState DeepSkillChaining::_sampleStartInterpolated()
 
 AbstractedState DeepSkillChaining::_sampleStartNearBoundary()
 {
-    float std_pos = 2.0f;
+    float std_pos = 1.0f;
     float std_rot = 0.2f;
     float std_vel = 0.1;
     float std_ang_vel = 0.1;
@@ -640,7 +643,7 @@ AbstractedState DeepSkillChaining::_sampleStartNearBoundary()
         bool any_predecessor_can_start = false;
         for (int o = _global_option_idx + 1; o < _unfinished_option_idx; o++)
         {
-            if (_skills[o]->canStart(state))
+            if (_skills[o]->canStart(state) || _skills[o]->canStartPessimistic(state))
             {
                 any_predecessor_can_start = true;
                 break;
@@ -664,8 +667,8 @@ AbstractedState DeepSkillChaining::_sampleStartNearBoundary()
 #define OG_ACTOR "../models/actor.pt"
 #define OG_CRITIC1 "../models/critic_1.pt"
 #define OG_CRITIC2 "../models/critic_2.pt"
-#define DSC_SAVE_PATH "../dsc_models"
-#define TEST false // if set to true, will not train, will just load and run testing
+#define DSC_SAVE_PATH "../dsc_models_with_obs2"
+#define TEST true // if set to true, will not train, will just load and run testing
 
 #define X_MIN -7.0f
 #define X_MAX 7.0f
@@ -694,17 +697,17 @@ int main(int argc, char **argv)
         SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, /*render=*/false);
 
     DeepSkillChaining::Config cfg;
-    cfg.gestation_n = 50; // number of total successes that should be collected during gestation phase. Perhaps use a percentage for the option being currently learnt?
-    cfg.last_k = 20;
-    cfg.max_option_steps = 50; // each option should be meaningful enough. 5Hz and 20 steps means each option can run for up to 4 seconds
-    cfg.nu = 0.1;
+    cfg.gestation_n = 60; // number of total successes that should be collected during gestation phase. Perhaps use a percentage for the option being currently learnt?
+    cfg.last_k = 15;
+    cfg.max_option_steps = 30; // each option should be meaningful enough. 5Hz and 20 steps means each option can run for up to 4 seconds
+    cfg.nu = 0.01;
     cfg.actor_warmup_steps = 0; // gonna keep at zero for testing purposes as well
     cfg.warmup_episodes = 0;    // keep at zero since I am assuming we have done pretraining
     cfg.verbose = true;         // set to true for per-rollout console output
-    cfg.log_interval = 50;     // print skill status table every N episodes
+    cfg.log_interval = 300;     // print skill status table every N episodes
     cfg.visualize_initiation_sets = true;
     cfg.max_skills = 50;
-    cfg.val_accuracy_threshold = 0.8f;
+    cfg.val_accuracy_threshold = 0.7f;
 
     AbstractedState global_goal = {{-4.5, 4.1, 0.}, {0, 0, 0, -1}, {0, 0, 0}, {0, 0, 0}};
     AbstractedState global_start = {{-5.3, -4.5, 0.}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};

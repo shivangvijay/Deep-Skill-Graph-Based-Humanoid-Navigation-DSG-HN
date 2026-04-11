@@ -88,6 +88,7 @@ public:
 
     int goalHits() const { return _goal_hits; }
     int gestationPeriod() const { return _gestation_period; }
+    double getDecisionValue(const AbstractedState &state) const;
     const std::vector<GestationRecord>& getPositiveGestationRecords() const { return _positive_gestation_records; }
 
 private:
