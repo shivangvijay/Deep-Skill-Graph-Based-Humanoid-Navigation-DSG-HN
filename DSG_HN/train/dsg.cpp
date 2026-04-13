@@ -22,7 +22,7 @@ bool DeepSkillGraph::_shouldCreateNewOption()
     if (_containsGlobalStartState()) return false;
 
     // DSG: respect max_children_per_node on the frontier parent
-    if ((int)_skills[_unfinished_option_idx]->children.size() >= _cfg.max_children_per_node)
+    if ((int)_skills[_unfinished_option_idx]->children.size() >= _dsg_cfg.max_children_per_node)
         return false;
 
     return true;
@@ -59,7 +59,7 @@ std::pair<int, AbstractedState> DeepSkillGraph::_pickOption(bool eval)
 
 int DeepSkillGraph::train(int max_episodes)
 {
-    if (_cfg.render_training)
+    if (_dsg_cfg.render_training)
         _robot_bridge->startRender();
 
     for (int episode = 0; episode < max_episodes; episode++)
@@ -67,20 +67,20 @@ int DeepSkillGraph::train(int max_episodes)
         _env->resetTo(_global_start);
         
         // Determine phase
-        if (episode < _cfg.warmup_episodes)
+        if (episode < _dsg_cfg.warmup_episodes)
         {
             _warmupRollout();
         }
         else
         {
-            if (episode % _cfg.expansion_freq == 0)
+            if (episode % _dsg_cfg.expansion_freq == 0)
             {
                 bool expanded = false;
-                for (int attempt = 0; attempt < _cfg.max_expansion_tries && !expanded; attempt++)
+                for (int attempt = 0; attempt < _dsg_cfg.max_expansion_tries && !expanded; attempt++)
                     expanded = _graphExpansionPhase();
                 if (!expanded)
                 {
-                    std::cout << "[DSG] Expansion exhausted " << _cfg.max_expansion_tries
+                    std::cout << "[DSG] Expansion exhausted " << _dsg_cfg.max_expansion_tries
                               << " attempts, falling back to consolidation.\n";
                     _graphConsolidationPhase();
                 }
@@ -90,13 +90,15 @@ int DeepSkillGraph::train(int max_episodes)
 
             // TODO: update transition model
 
-            // _validateOption(); // run validation phase
+            // _validateOption(); // run validation phase for newly matured options
 
-            // connect new options to graph and update edges
-            _updateEdges();
         }
 
-        if (_cfg.log_interval > 0 && (episode + 1) % _cfg.log_interval == 0)
+        if (_dsg_cfg.graph_update_freq > 0 && episode % _dsg_cfg.graph_update_freq == 0)
+            // connect new options to graph and update edges
+            _updateEdges();
+
+        if (_dsg_cfg.log_interval > 0 && (episode + 1) % _dsg_cfg.log_interval == 0)
         {
             std::cout << "\n[Episode " << (episode + 1) << "]\n";
             std::cout << "=== Skill Status ===\n";
@@ -117,7 +119,7 @@ int DeepSkillGraph::train(int max_episodes)
             }
             std::cout << "  GoalRegions: " << _goal_regions.size()
                       << "  Edges: " << _edges.size() << "\n";
-            if (_cfg.visualize_initiation_sets)
+            if (_dsg_cfg.visualize_initiation_sets)
                 visualizeInitiationSets();
         }
 
@@ -245,6 +247,7 @@ void DeepSkillGraph::_updateEdges()
     };
 
     // skill → skill edges: effect_set(i) ⊆ initiation_set(j)
+    // O(n^2) connecting skills based on effect set containment in initiation set
     for (int i = _global_option_idx + 1; i < n_skills; i++)
     {
         if (_skills[i]->getTrainingPhase() != "mature") continue;
@@ -256,7 +259,7 @@ void DeepSkillGraph::_updateEdges()
             if (i == j || edge_exists(i, j)) continue;
             bool all_covered = true;
             for (const auto &rec : records)
-                if (!_skills[j]->canStart(rec.state)) { all_covered = false; break; }
+                if (!_skills[j]->canStartPessimistic(rec.state)) { all_covered = false; break; }
             if (all_covered)
             {
                 _edges.push_back({i, j, 0.0f});
@@ -527,7 +530,7 @@ AbstractedState DeepSkillGraph::_runMPCProxy(const AbstractedState &target)
     // Proxy: run global option toward target for mpc_steps steps.
     // mpc_steps approximates K planning steps from the pseudocode.
     // Real model-based MPC can replace this once the transition model is integrated.
-    int steps_remaining = _cfg.mpc_steps;
+    int steps_remaining = _dsg_cfg.mpc_steps;
     while (steps_remaining > 0)
     {
         auto [steps_taken, _, __, ___, ____] = _skills[_global_option_idx]->rollout(target);
@@ -555,7 +558,7 @@ void DeepSkillGraph::_trainDSCBridge(int v_a_skill_idx)
     // Run rollouts until the bridge skill matures or the step budget is exhausted.
     int step = 0;
     while (_skills[bridge_idx]->getTrainingPhase() != "mature" &&
-           step < _cfg.steps_per_episode)
+           step < _dsg_cfg.steps_per_episode)
     {
         AbstractedState goal = _skills[bridge_idx]->getLocalGoal();
         auto [steps_taken, cum_reward, done, first_poo, last_poo] =
@@ -582,7 +585,7 @@ bool DeepSkillGraph::_graphExpansionPhase()
     int v_nn = _nearestNodeToState(s_rand);
 
     // 3. Navigate to v_nn using current graph plan / POO fallback
-    _navigateTo(v_nn, _cfg.steps_per_episode / 2);
+    _navigateTo(v_nn, _dsg_cfg.steps_per_episode / 2);
 
     // 4. Extend graph: run global option as MPC proxy toward s_rand for mpc_steps
     // TODO: replace with real MPC using learnt transition model
@@ -604,7 +607,7 @@ bool DeepSkillGraph::_graphExpansionPhase()
         }
 
     // 6. Accept: add s_mpc as a new goal region node
-    _goal_regions.push_back({s_mpc, _cfg.goal_region_epsilon});
+    _goal_regions.push_back({s_mpc, _dsg_cfg.goal_region_epsilon});
     std::cout << "[DSG Expansion] GoalRegion " << (_goal_regions.size() - 1)
               << " at (" << s_mpc.position[0] << ", " << s_mpc.position[1] << ")\n";
     return true;
@@ -637,13 +640,13 @@ void DeepSkillGraph::_graphConsolidationPhase()
               << " to reach node " << v_g << "\n";
 
     // 4. Navigate to v_d
-    _navigateTo(v_d, _cfg.steps_per_episode / 3);
+    _navigateTo(v_d, _dsg_cfg.steps_per_episode / 3);
 
     // 5. Train a DSC bridge from current position toward v_a
     _trainDSCBridge(v_a);
 
     // 6. Navigate to v_g
-    _navigateTo(v_g, _cfg.steps_per_episode / 3);
+    _navigateTo(v_g, _dsg_cfg.steps_per_episode / 3);
 }
 
 // =============================================================================
@@ -710,8 +713,6 @@ int main(int argc, char **argv)
                        OG_ACTOR, OG_CRITIC1, OG_CRITIC2, SCENE_FILE, cfg);
 
     // TODO: Initialize transition model
-
-    
 
     if (!TEST)
     {

@@ -63,21 +63,6 @@ public:
         bool verbose = false;                   // per-rollout logging inside each episode
         bool visualize_initiation_sets = false; // if true, periodically render initiation set visualization
         int log_interval = 50;                  // print episode summary + skill status table every N episodes
-
-        // DSG only: maximum sibling skills allowed under one parent node (ignored by DSC)
-        int max_children_per_node = 3;
-
-        // DSG only: run expansion phase every N episodes; consolidation otherwise
-        int expansion_freq = 5;
-
-        // DSG only: steps the global option runs as an MPC proxy toward s_rand
-        int mpc_steps = 20;
-
-        // DSG only: epsilon-ball radius (metres) defining a goal region node
-        float goal_region_epsilon = 1.0f;
-
-        // DSG only: max expansion attempts before falling back to consolidation (paper: 10)
-        int max_expansion_tries = 10;
     };
 
     // TODO: depending on DSG setup may need other constructors that allow you to pass in the global agent

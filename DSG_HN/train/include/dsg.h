@@ -196,7 +196,46 @@ between options and goal regions in the graph.
 // inherits DSC's skill learning and execution machinery, but overrides option selection to implement graph-based planning and expansion, and adds graph management methods to maintain the structure of the skill graph and its edges
 class DeepSkillGraph : public DeepSkillChaining 
 public:
-    using Config = DeepSkillChaining::Config;
+    struct Config : public DeepSkillChaining::Config
+    {
+        // ---- inherited DSC params (listed here for visibility; override as needed) ----
+        // int    warmup_episodes       = 5;
+        // int    steps_per_episode     = 1000;
+        // int    gestation_train_steps = 5000;
+        // int    gestation_n           = 10;
+        // int    last_k                = 10;
+        // int    refinement_eps        = 20;
+        // double nu                    = 0.1;
+        // int    max_option_steps      = 20;
+        // int    max_skills            = 6;
+        // float  start_noise_radius    = 2.0f;
+        // std::vector<int> actor_layers  = {256, 256, 256};
+        // std::vector<int> critic_layers = {256, 256, 256};
+        // std::vector<int> poo_layers    = {256, 256, 256};
+        // float  lr_actor              = 1e-4f;
+        // float  lr_critic             = 3e-4f;
+        // float  lr_actor_global       = 1e-5f;
+        // float  lr_critic_global      = 3e-5f;
+        // int    max_obstacles         = 8;
+        // int    actor_warmup_steps    = 0;
+        // float  lr_poo                = 1e-4f;
+        // float  tau                   = 0.005f;
+        // float  gamma                 = 0.99f;
+        // int    batch_size            = 256;
+        // int    actor_update_freq     = 2;
+        // bool   render_training       = false;
+        // bool   verbose               = false;
+        // bool   visualize_initiation_sets = false;
+        // int    log_interval          = 50;
+
+        // ---- DSG-specific params ----
+        int   graph_update_freq    = 10;   // update edges every N episodes
+        int   max_children_per_node = 3;   // max sibling skills under one parent node
+        int   expansion_freq       = 5;    // run expansion phase every N episodes; consolidation otherwise
+        int   mpc_steps            = 20;   // steps global option runs as MPC proxy toward s_rand
+        float goal_region_epsilon  = 1.0f; // epsilon-ball radius (metres) defining a goal region node
+        int   max_expansion_tries  = 10;   // max attempts per expansion phase before falling back to consolidation
+    };
 
     DeepSkillGraph(std::shared_ptr<RobotBridgeTrain> robot_bridge,
                    torch::Device device,
@@ -209,7 +248,7 @@ public:
                    Config cfg)
         : DeepSkillChaining(robot_bridge, device, global_goal, global_start,
                             pretrain_actor_path, pretrain_critic1_path, pretrain_critic2_path,
-                            scene_file, cfg) {}
+                            scene_file, cfg), _dsg_cfg(cfg) {}
 
     DeepSkillGraph(std::shared_ptr<RobotBridgeTrain> robot_bridge,
                    torch::Device device,
@@ -217,7 +256,8 @@ public:
                    AbstractedState global_start,
                    const std::string &scene_file,
                    Config cfg)
-        : DeepSkillChaining(robot_bridge, device, global_goal, global_start, scene_file, cfg) {}
+        : DeepSkillChaining(robot_bridge, device, global_goal, global_start, scene_file, cfg),
+          _dsg_cfg(cfg) {}
 
     int  train(int max_episodes) override;
     void save(const std::string &dir) const override;
@@ -277,4 +317,6 @@ private:
     // --- phase methods ---
     bool _graphExpansionPhase(); // returns true if a goal region was accepted (not rejected)
     void _graphConsolidationPhase();
+
+    Config _dsg_cfg; // full DSG config (superset of _cfg, which is sliced to DSC fields)
 };
