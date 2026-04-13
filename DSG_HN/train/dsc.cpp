@@ -677,7 +677,7 @@ AbstractedState DeepSkillChaining::_sampleStartNearBoundary()
 #define OG_ACTOR "../models/actor.pt"
 #define OG_CRITIC1 "../models/critic_1.pt"
 #define OG_CRITIC2 "../models/critic_2.pt"
-#define DSC_SAVE_PATH "../dsc_models_with_obs3"
+#define DSC_SAVE_PATH "../dsc_models_with_obs4"
 #define TEST false // if set to true, will not train, will just load and run testing
 
 #define X_MIN -7.0f
@@ -717,7 +717,7 @@ int main(int argc, char **argv)
     cfg.log_interval = 300;     // print skill status table every N episodes
     cfg.visualize_initiation_sets = false;
     cfg.max_skills = 50;
-    cfg.val_accuracy_threshold = 0.0f;
+    cfg.val_accuracy_threshold = 0.7f;
 
     AbstractedState global_goal = {{-4.5, 4.1, 0.}, {0, 0, 0, -1}, {0, 0, 0}, {0, 0, 0}};
     AbstractedState global_start = {{-5.3, -4.5, 0.}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
