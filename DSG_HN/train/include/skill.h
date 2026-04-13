@@ -48,7 +48,7 @@ public:
           float tau, float gamma, int actor_warmup_steps,
           int batch_size, int actor_update_freq, int k, int max_steps, double nu,
           std::shared_ptr<Skill> parent, int gestation_period, bool is_global, AbstractedState global_goal,
-          std::shared_ptr<Skill> global_option);
+          std::shared_ptr<Skill> global_option, bool eval = false);
 
     AbstractedState getLocalGoal();
 
@@ -88,7 +88,9 @@ public:
 
     int goalHits() const { return _goal_hits; }
     int gestationPeriod() const { return _gestation_period; }
+    double getDecisionValue(const AbstractedState &state) const;
     const std::vector<GestationRecord>& getPositiveGestationRecords() const { return _positive_gestation_records; }
+    void setEvalMode(bool eval) { _eval = eval; }
 
 private:
     std::shared_ptr<TrainEnvironment> _env;
@@ -104,6 +106,7 @@ private:
     std::vector<int> _gestation_labels;
     bool _has_negative_gestation = false;
     bool _validated = false;
+    bool _eval;
 
     AbstractedState _global_goal;
     mutable std::mt19937 _rng;
@@ -114,6 +117,8 @@ private:
     int _k = 0;
     double _nu;
     float _gamma;
+    float _lr_critic;
+    float _lr_actor;
 
     int _id;
 

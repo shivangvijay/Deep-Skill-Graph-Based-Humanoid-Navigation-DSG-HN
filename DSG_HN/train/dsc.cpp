@@ -12,8 +12,8 @@ DeepSkillChaining::DeepSkillChaining(
     const std::string &pretrain_critic1_path,
     const std::string &pretrain_critic2_path,
     const std::string &scene_file,
-    Config cfg)
-    : _robot_bridge(robot_bridge), _device(device), _global_goal(global_goal), _global_start(global_start), _scene_file_path(scene_file), _cfg(std::move(cfg)),
+    Config cfg, bool eval)
+    : _robot_bridge(robot_bridge), _device(device), _global_goal(global_goal), _global_start(global_start), _scene_file_path(scene_file), _cfg(std::move(cfg)), _eval(eval),
       _env(std::make_shared<TrainEnvironment>(_robot_bridge, cfg.steps_per_episode)),
       _poo(_env, _cfg.poo_layers, device, _cfg.lr_poo, _cfg.tau, _cfg.gamma, _cfg.batch_size), _rng(std::random_device{}())
 {
@@ -29,8 +29,8 @@ DeepSkillChaining::DeepSkillChaining(
     AbstractedState global_goal,
     AbstractedState global_start,
     const std::string &scene_file,
-    Config cfg)
-    : _robot_bridge(robot_bridge), _device(device), _global_goal(global_goal), _global_start(global_start), _scene_file_path(scene_file), _cfg(std::move(cfg)),
+    Config cfg, bool eval)
+    : _robot_bridge(robot_bridge), _device(device), _global_goal(global_goal), _global_start(global_start), _scene_file_path(scene_file), _cfg(std::move(cfg)), _eval(eval),
       _env(std::make_shared<TrainEnvironment>(_robot_bridge, cfg.steps_per_episode)),
       _poo(_env, _cfg.poo_layers, device, _cfg.lr_poo, _cfg.tau, _cfg.gamma, _cfg.batch_size), _rng(std::random_device{}())
 {
@@ -57,7 +57,7 @@ int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout wh
         // area of the previously learned skill so that it has a bit of an easier time learning
         std::uniform_real_distribution<float> dis(0.0f, 1.0f);
         float p = dis(_rng);
-        if (p < 0.2) // bit of goal biased sampling, may want to do even more intelligent sampling going forward
+        if (p < 0.1) // bit of goal biased sampling, may want to do even more intelligent sampling going forward
         {
             _env->resetTo(_global_start);
         }
@@ -71,7 +71,7 @@ int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout wh
         //     auto start = _sampleStartInterpolated();
         //     _env->resetTo(start);
         // }
-        else if (p >= 0.2 && p < 0.8)
+        else if (p >= 0.1 && p < 0.7)
         {
             auto start = _sampleStartNearBoundary();
             _env->resetTo(start);
@@ -88,7 +88,7 @@ int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout wh
         }
         else
         {
-            ep_reward = _dscRollout(false);
+            ep_reward = _dscRollout();
             _validateOption(); // if necessary, will validate the options
         }
 
@@ -138,7 +138,7 @@ int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout wh
 float DeepSkillChaining::execute()
 {
     _env->resetTo(_global_start);
-    return _dscRollout(true);
+    return _dscRollout();
 }
 
 void DeepSkillChaining::visualizeInitiationSets()
@@ -247,9 +247,19 @@ void DeepSkillChaining::load(const std::string &dir, const std::string &scene_fi
     std::cout << "Loaded " << num_skills << " skills and policy-over-options from " << dir << std::endl;
 }
 
+void DeepSkillChaining::setEvalMode(bool eval)
+{
+    _eval = eval;
+    for (auto &skill : _skills)
+    {
+        skill->setEvalMode(eval);
+    }
+}
+
 /*** Private ***/
 void DeepSkillChaining::_validateOption()
 {
+
     int validate_idx = -1;
     for (int o = _global_option_idx + 1; o < _skills.size(); o++)
     {
@@ -277,7 +287,7 @@ void DeepSkillChaining::_validateOption()
             num_successes++;
     }
 
-    if ((float)num_successes / (float)_cfg.gestation_n > 0.8)
+    if ((float)num_successes / (float)_cfg.gestation_n > _cfg.val_accuracy_threshold)
     {
         std::cout << "Option " << validate_idx << " validated. Success Rate: " << (float)num_successes / (float)_cfg.gestation_n << std::endl;
         _skills[validate_idx]->validateSkill(true);
@@ -308,7 +318,7 @@ void DeepSkillChaining::_warmupRollout()
 }
 
 // gonna do this the way they do in bagaria et al. code: pick earliest option
-std::pair<int, AbstractedState> DeepSkillChaining::_pickOption(bool eval)
+std::pair<int, AbstractedState> DeepSkillChaining::_pickOption()
 {
     auto poo_state = _env->getStateRelativeToGoal(_global_goal);
     auto global_state = _env->getAbstractedState();
@@ -335,7 +345,7 @@ std::pair<int, AbstractedState> DeepSkillChaining::_pickOption(bool eval)
     // Pick best from pessimistic, fallback to optimistic
     const auto& candidates = pessimistic_options.empty() ? optimistic_options : pessimistic_options;
 
-    if (!eval) {
+    if (!_eval || true) {
         best_option = candidates.empty() ? _global_option_idx : candidates[0];
     } else {
         for (int o : candidates) {
@@ -376,7 +386,7 @@ std::pair<int, AbstractedState> DeepSkillChaining::_pickOption(bool eval)
 
 }
 
-float DeepSkillChaining::_dscRollout(bool eval)
+float DeepSkillChaining::_dscRollout()
 {
     int step = 0;
     bool env_done = false;
@@ -390,7 +400,7 @@ float DeepSkillChaining::_dscRollout(bool eval)
 
     while (step < _cfg.steps_per_episode && !env_done)
     {
-        auto [option, goal] = _pickOption(eval);
+        auto [option, goal] = _pickOption();
 
         eng->setGoalMarker(goal.position[0], goal.position[1], 0.5f);
 
@@ -407,8 +417,11 @@ float DeepSkillChaining::_dscRollout(bool eval)
         total_reward += cum_reward;
 
         //float clipped_reward = std::clamp(cum_reward, -100.0f, 100.0f); // clipping reward since sometimes not terminating makes the reward spike and want to limit that effect.
-        _poo.addExperience(first_state_poo, option, cum_reward, last_state_poo, env_done, steps_taken);
-        _poo.learn();
+        if (!_eval) // only train poo during training, not evaluation
+        {
+            _poo.addExperience(first_state_poo, option, cum_reward, last_state_poo, env_done, steps_taken);
+            _poo.learn();
+        }
 
         if (_cfg.verbose)
             std::cout << "  [Rollout] option=" << option
@@ -419,7 +432,7 @@ float DeepSkillChaining::_dscRollout(bool eval)
                       << " global_done=" << env_done << "\n";
 
         // make a new skill if we have finished training the current option, but still have not reached the end goal
-        if (_shouldCreateNewOption() && !eval)
+        if (_shouldCreateNewOption() && !_eval)
         {
 
             float total_dist = 0;
@@ -474,7 +487,7 @@ void DeepSkillChaining::_makeSkill(bool is_global, std::shared_ptr<Skill> parent
                                                                _cfg.actor_layers, _cfg.critic_layers, _device,
                                                                lr_actor, lr_critic, _cfg.tau, _cfg.gamma, _cfg.actor_warmup_steps,
                                                                _cfg.batch_size, _cfg.actor_update_freq, _cfg.last_k,
-                                                               _cfg.max_option_steps, _cfg.nu, parent, _cfg.gestation_n, is_global, _global_goal, global_option);
+                                                               _cfg.max_option_steps, _cfg.nu, parent, _cfg.gestation_n, is_global, _global_goal, global_option, _eval);
     if (!is_global)
         new_skill->initFromSkill(_skills[_global_option_idx]);
 
@@ -612,7 +625,7 @@ AbstractedState DeepSkillChaining::_sampleStartInterpolated()
 
 AbstractedState DeepSkillChaining::_sampleStartNearBoundary()
 {
-    float std_pos = 2.0f;
+    float std_pos = 1.5f;
     float std_rot = 0.2f;
     float std_vel = 0.1;
     float std_ang_vel = 0.1;
@@ -640,7 +653,7 @@ AbstractedState DeepSkillChaining::_sampleStartNearBoundary()
         bool any_predecessor_can_start = false;
         for (int o = _global_option_idx + 1; o < _unfinished_option_idx; o++)
         {
-            if (_skills[o]->canStart(state))
+            if (_skills[o]->canStart(state) || _skills[o]->canStartPessimistic(state))
             {
                 any_predecessor_can_start = true;
                 break;
@@ -661,10 +674,10 @@ AbstractedState DeepSkillChaining::_sampleStartNearBoundary()
 /************************************** main **************************************/
 
 #define SCENE_FILE "../config/scene/umaze_scene.xml"
-#define OG_ACTOR "../models/best_actor.pt"
-#define OG_CRITIC1 "../models/best_critic_1.pt"
-#define OG_CRITIC2 "../models/best_critic_2.pt"
-#define DSC_SAVE_PATH "../dsc_models"
+#define OG_ACTOR "../models/actor.pt"
+#define OG_CRITIC1 "../models/critic_1.pt"
+#define OG_CRITIC2 "../models/critic_2.pt"
+#define DSC_SAVE_PATH "../dsc_models_with_obs4"
 #define TEST false // if set to true, will not train, will just load and run testing
 
 #define X_MIN -7.0f
@@ -694,16 +707,17 @@ int main(int argc, char **argv)
         SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, /*render=*/false);
 
     DeepSkillChaining::Config cfg;
-    cfg.gestation_n = 30; // number of total successes that should be collected during gestation phase. Perhaps use a percentage for the option being currently learnt?
-    cfg.last_k = 20;
-    cfg.max_option_steps = 50; // each option should be meaningful enough. 5Hz and 20 steps means each option can run for up to 4 seconds
-    cfg.nu = 0.1;
+    cfg.gestation_n = 60; // number of total successes that should be collected during gestation phase. Perhaps use a percentage for the option being currently learnt?
+    cfg.last_k = 15;
+    cfg.max_option_steps = 30; // each option should be meaningful enough. 5Hz and 20 steps means each option can run for up to 4 seconds
+    cfg.nu = 0.01;
     cfg.actor_warmup_steps = 0; // gonna keep at zero for testing purposes as well
     cfg.warmup_episodes = 0;    // keep at zero since I am assuming we have done pretraining
     cfg.verbose = true;         // set to true for per-rollout console output
-    cfg.log_interval = 50;     // print skill status table every N episodes
-    cfg.visualize_initiation_sets = true;
-    cfg.max_skills = 20;
+    cfg.log_interval = 300;     // print skill status table every N episodes
+    cfg.visualize_initiation_sets = false;
+    cfg.max_skills = 50;
+    cfg.val_accuracy_threshold = 0.7f;
 
     AbstractedState global_goal = {{-4.5, 4.1, 0.}, {0, 0, 0, -1}, {0, 0, 0}, {0, 0, 0}};
     AbstractedState global_start = {{-5.3, -4.5, 0.}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
@@ -722,16 +736,18 @@ int main(int argc, char **argv)
         int n = dsc.train(20000);
         std::cout << "\nTraining complete: " << n << " skill(s) in chain." << std::endl;
         dsc.save(DSC_SAVE_PATH);
+        dsc.visualizeInitiationSets();
     }
     else
     {
         dsc.load(DSC_SAVE_PATH, SCENE_FILE);
     }
 
+    dsc.setEvalMode(true);
     // std::cout << "\n=== Evaluation (20 episodes) ===" << std::endl;
     float total = 0.0f;
     robot_bridge->startRender();
-    for (int i = 0; i < 40; ++i)
+    for (int i = 0; i < 20; ++i)
     {
         float r = dsc.execute();
         total += r;

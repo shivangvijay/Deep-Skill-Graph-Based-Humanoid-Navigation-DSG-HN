@@ -83,6 +83,7 @@ public:
         prev_dist_to_goal = _euclidean2D(start.position, goal.position);
         prev_obs_dist = robot_bridge->distanceToNearestObstacle(start.position, start.orientation);
 
+        _collision = false;
         return transformState(robot_bridge->getRobotState());
     }
 
@@ -163,6 +164,7 @@ public:
         prev_action = {0.0f, 0.0f, 0.0f};
         prev_dist_to_goal = _euclidean2D(clamped_pos, goal.position);
         prev_obs_dist = robot_bridge->distanceToNearestObstacle(clamped_pos, quat);
+        _collision = false;
         return transformState(robot_bridge->getRobotState());
     }
 
@@ -255,7 +257,7 @@ public:
 
         // 1. Obstacle proximity penalty (dense)
         float min_obs_dist = robot_bridge->distanceToNearestObstacle(state.position, state.orientation);
-        constexpr float safe_margin = 0.8f;
+        constexpr float safe_margin = 1.2f;
         if (min_obs_dist < safe_margin)
         {
             reward -= 2.0f * (safe_margin - min_obs_dist);
@@ -266,11 +268,12 @@ public:
         }
 
         // 2. Terminal conditions
-        if (collision ||
+        if (collision || _collision ||
             state.position[0] > robot_bridge->x_max || state.position[0] < robot_bridge->x_min ||
             state.position[1] > robot_bridge->y_max || state.position[1] < robot_bridge->y_min)
         {
-            reward -= 30;
+            reward -= 80;
+            _collision = true;
             terminated = true;
         }
         else if (use_goal_radius && pos_error < 0.5)
@@ -381,6 +384,17 @@ public:
 
     const std::vector<Obstacle> &getObstacles() const { return obstacles; }
 
+    float distanceToNearestObstacle() const
+    {
+        RobotState s = robot_bridge->getRobotState();
+        return robot_bridge->distanceToNearestObstacle(s.position, s.orientation);
+    }
+
+    float distanceToNearestObstacle(const std::array<float, 3> &pos, const std::array<float, 4> &orient) const
+    {
+        return robot_bridge->distanceToNearestObstacle(pos, orient);
+    }
+
 private:
     std::shared_ptr<RobotBridgeTrain> robot_bridge;
     AbstractedState goal = {{0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
@@ -392,6 +406,7 @@ private:
     std::array<float, 3> prev_action = {0.0f, 0.0f, 0.0f};
     float prev_dist_to_goal = 0.0f;
     float prev_obs_dist = 10.0f;
+    bool _collision = false;
 
     float _euclidean2D(const std::array<float, 3> &a, const std::array<float, 3> &b) const
     {
