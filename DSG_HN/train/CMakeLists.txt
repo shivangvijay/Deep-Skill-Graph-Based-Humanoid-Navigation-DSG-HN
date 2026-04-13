@@ -8,6 +8,8 @@ project(dsg_train)
 
 set(CMAKE_CXX_STANDARD 17)
 
+add_definitions(-DSPDLOG_FMT_EXTERNAL)
+
 find_package(Boost REQUIRED COMPONENTS program_options)
 find_package(yaml-cpp REQUIRED)
 
@@ -43,6 +45,7 @@ include_directories(
 file(COPY ${SCENE_XML_DIR}/ DESTINATION ${PROJECT_SOURCE_DIR}/config/scene)
 file(COPY ${POLICY_CONFIG_DIR}/ DESTINATION ${PROJECT_SOURCE_DIR}/config)
 
+link_directories($ENV{CONDA_PREFIX}/lib)
 add_executable(transition_train_gaussian
   transition_train_gaussian.cpp
 )
@@ -105,7 +108,7 @@ target_link_libraries(transition_mpc_eval PRIVATE
 
 link_libraries(
   unitree_sdk2 ddsc ddscxx rt pthread # dds
-  libboost_program_options.a libyaml-cpp.a fmt
+  libboost_program_options.a libyaml-cpp.a fmt spdlog
   ${PROJECT_SOURCE_DIR}/../deploy/thirdparty/onnxruntime-linux-x64-1.22.0/lib/libonnxruntime.so.1.22.0
   ${MUJOCO_DIR}/lib/libmujoco.so
   glfw

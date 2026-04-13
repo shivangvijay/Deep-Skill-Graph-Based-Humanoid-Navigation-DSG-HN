@@ -19,7 +19,6 @@ public:
         float gamma,
         int batch_size,
         int actor_update_freq,
-        int max_obstacles,
         int actor_warmup_steps);
 
     std::pair<torch::Tensor, torch::Tensor> getAction(torch::Tensor state, bool eval = false);
@@ -32,6 +31,20 @@ public:
     double total_actor_loss = 0.0;
     double total_critic_loss = 0.0;
     int learn_step = 0;
+    float exploration_noise = 0.3f;
+
+    void setExplorationNoise(float noise) { exploration_noise = noise; }
+    void setLearningRates(float lr_actor, float lr_critic) {
+        for (auto& param_group : actor_optimizer.param_groups()) {
+            static_cast<torch::optim::AdamOptions&>(param_group.options()).lr(lr_actor);
+        }
+        for (auto& param_group : critic_optimizer_1.param_groups()) {
+            static_cast<torch::optim::AdamOptions&>(param_group.options()).lr(lr_critic);
+        }
+        for (auto& param_group : critic_optimizer_2.param_groups()) {
+            static_cast<torch::optim::AdamOptions&>(param_group.options()).lr(lr_critic);
+        }
+    }
 
     Actor actor_local;
     Critic critic_local_1;
@@ -57,7 +70,6 @@ private:
     int batch_size;
     float lr_critic;
     float lr_actor;
-    int total_state_dim;
     int actor_warmup_steps;
 
     void softUpdate();

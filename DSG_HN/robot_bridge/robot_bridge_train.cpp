@@ -92,7 +92,7 @@ AbstractedState RobotBridgeTrain::generateRandomValidConfiguration()
             throw std::runtime_error("Could Not Generate Valid Random Configuration");
         std::tie(pos, quat, vel, ang_vel) = generateRandomPoseWithVel();
         eng->reset(pos, quat, vel, ang_vel);
-    } while (eng->inCollision());
+    } while (eng->inCollision() && distanceToNearestObstacle(pos, quat) < min_spawn_distance_from_obstacles); // TODO: maybe want to tune this distance
 
     eng->m = m_orig;
     eng->d = d_orig;
@@ -113,7 +113,7 @@ bool RobotBridgeTrain::isConfigurationValid(const std::array<float, 3> &pos, con
     bool valid = !eng->inCollision() && pos[0] >= x_min && pos[0] <= x_max && pos[1] >= y_min && pos[1] <= y_max;
     eng->m = m_orig;
     eng->d = d_orig;
-    return valid;
+    return valid && distanceToNearestObstacle(pos, quat) >= min_spawn_distance_from_obstacles;
 }
 
 RobotState RobotBridgeTrain::getRobotState()
@@ -180,6 +180,12 @@ void RobotBridgeTrain::resetRobot(const std::array<float, 3> &pos, const std::ar
     eng->reset(pos, quat);
     env->reset();
     current_cmd = {0.0, 0.0, 0.0};
+    
+    // Settle the robot by stepping with zero velocity commands
+    for (int i = 0; i < 2; i++)
+    {
+        update();
+    }
 }
 
 void RobotBridgeTrain::resetRobot(const std::array<float, 3> &pos, const std::array<float, 4> &quat, const std::array<float, 3> &vel, const std::array<float, 3> &ang_vel)
@@ -187,6 +193,14 @@ void RobotBridgeTrain::resetRobot(const std::array<float, 3> &pos, const std::ar
     eng->reset(pos, quat, vel, ang_vel);
     env->reset();
     current_cmd = {0.0, 0.0, 0.0};
+    
+    // Settle the robot by stepping with zero velocity commands
+    // Kinda assuming spawning with 0 velocity right now, but in the future may want to change this
+    // if required to spawn with non-zero velocity
+    for (int i = 0; i < 2; i++)
+    {
+        update();
+    }
 }
 
 void RobotBridgeTrain::initSensorAddresses()

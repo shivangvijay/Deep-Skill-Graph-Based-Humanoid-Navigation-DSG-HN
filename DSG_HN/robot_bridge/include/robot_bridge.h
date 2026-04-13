@@ -79,5 +79,6 @@ protected:
     std::vector<Obstacle> obstacles;
     std::vector<float> current_cmd = {0.0, 0.0, 0.0};
     std::array<float, 3> vel_limits = {0.5, 0.3, 0.2};
+    float min_spawn_distance_from_obstacles = 0.3;
     float velocity_policy_dt = VELOCITY_POLICY_DT;
 };

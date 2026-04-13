@@ -9,4 +9,4 @@ unitree_mujoco/simulate/mujoco
 **/thirdparty/
 **/.DS_Store
 *.png
-dsc_models/
+dsc_models*/
