@@ -223,6 +223,8 @@ cd DSG_HN/train/build
 ./dsc
 ```
 
+The resulting models will be saved in the path specified in line 685 of dsc.cpp. Optionally, you can reload the trained model (See link above for .zip file) by setting the path on line 685 to point to the directory in which the saved DSC run is stored, and setting the "test" flag on line 686 to true.
+
 ### Deployment
 
 #### 1. (If using a Xbox Joystick) Connect the Xbox joystick

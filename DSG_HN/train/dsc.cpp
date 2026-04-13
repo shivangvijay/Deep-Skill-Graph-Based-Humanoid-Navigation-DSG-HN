@@ -144,11 +144,16 @@ float DeepSkillChaining::execute()
 void DeepSkillChaining::visualizeInitiationSets()
 {
     std::vector<std::vector<std::array<float, 3>>> points_per_skill;
+    int max_points = 1000;
     for (const auto &skill : _skills)
     {
         std::vector<std::array<float, 3>> points;
+        int point = 0;
         for (const auto &record : skill->getPositiveGestationRecords())
         {
+            if (point >= max_points)
+                break;
+            point++;
             points.push_back(record.state.position);
         }
         points_per_skill.push_back(points);
@@ -677,7 +682,7 @@ AbstractedState DeepSkillChaining::_sampleStartNearBoundary()
 #define OG_ACTOR "../models/actor.pt"
 #define OG_CRITIC1 "../models/critic_1.pt"
 #define OG_CRITIC2 "../models/critic_2.pt"
-#define DSC_SAVE_PATH "../dsc_models_with_obs4"
+#define DSC_SAVE_PATH "../dsc_models"
 #define TEST false // if set to true, will not train, will just load and run testing
 
 #define X_MIN -7.0f
@@ -741,6 +746,7 @@ int main(int argc, char **argv)
     else
     {
         dsc.load(DSC_SAVE_PATH, SCENE_FILE);
+        // dsc.visualizeInitiationSets();
     }
 
     dsc.setEvalMode(true);
