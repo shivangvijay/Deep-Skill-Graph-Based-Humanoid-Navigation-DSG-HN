@@ -70,7 +70,7 @@ public:
         // DSG only: run expansion phase every N episodes; consolidation otherwise
         int expansion_freq = 5;
 
-        // DSG only: steps the global option runs as an MPC proxy toward s_rand
+        // DSG only: number of real environment steps taken toward s_rand during graph expansion
         int mpc_steps = 20;
 
         // DSG only: epsilon-ball radius (metres) defining a goal region node
@@ -78,6 +78,33 @@ public:
 
         // DSG only: max expansion attempts before falling back to consolidation (paper: 10)
         int max_expansion_tries = 10;
+
+        // DSG only: MPC look-ahead horizon (K in paper Appendix G, Table 5)
+        int mpc_horizon = 7;
+
+        // DSG only: number of random action sequences to evaluate per MPC solve (M in paper)
+        int mpc_candidates = 1000;
+
+        // DSG only: robot base footprint radius for MPC collision checking (metres)
+        double mpc_base_radius = 0.35;
+
+        // DSG only: extra safety clearance around obstacles during MPC (metres)
+        double mpc_clearance = 0.05;
+
+        // DSG only: cost penalty applied to colliding imagined rollouts
+        double mpc_collision_penalty = 1000.0;
+
+        // DSG only: quadratic penalty on action magnitude in MPC cost
+        double mpc_action_penalty = 0.01;
+
+        // DSG only: quadratic penalty on action change (smoothness) in MPC cost
+        double mpc_smoothness_penalty = 0.02;
+
+        // DSG only: weight on squared distance-to-goal in MPC cost
+        double mpc_goal_weight = 1.0;
+
+        // DSG only: [vx, vy, yaw] action magnitude limits used for random shooting
+        std::array<double, 3> mpc_action_limits = {0.5, 0.3, 0.2};
     };
 
     // TODO: depending on DSG setup may need other constructors that allow you to pass in the global agent

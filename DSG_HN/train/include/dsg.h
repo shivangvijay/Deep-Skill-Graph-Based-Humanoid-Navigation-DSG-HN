@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dsc.h"
+#include "transition_model.hpp"
 
 // DeepSkillGraph — extends DeepSkillChaining to a directed graph of options and goal regions.
 
@@ -223,6 +224,12 @@ public:
     void save(const std::string &dir) const override;
     void load(const std::string &dir, const std::string &scene_file) override;
 
+    // Load a pre-trained Gaussian delta transition model for MPC-based graph expansion.
+    // model_path    : path to the .pt checkpoint produced by transition_train_gaussian_delta
+    // normaliser_path : path to the matching normaliser.txt
+    // Once loaded, _runMPC() will use real model-based planning instead of the global-option proxy.
+    void loadTransitionModel(const std::string &model_path, const std::string &normaliser_path);
+
 protected:
     // Lightweight graph node representing a reached state in unexplored space.
     // Has no policy or classifier — membership is a pure Euclidean epsilon-ball check.
@@ -269,9 +276,17 @@ private:
     std::pair<int,int> _closestPair(const std::vector<int> &D,
                                     const std::vector<int> &A) const;
 
+    // --- transition model (loaded once via loadTransitionModel()) ---
+    GaussianMLP          _transition_model{nullptr};
+    TransitionNormaliser _normaliser;
+    bool                 _has_transition_model = false;
+
     // --- navigation and training primitives ---
     void            _navigateTo(int node_idx, int max_steps);
-    AbstractedState _runMPCProxy(const AbstractedState &target); // TODO: integrate MPC implementation
+    // Run receding-horizon MPC from the current environment state toward `target` for
+    // cfg.mpc_steps real environment steps.  Returns the state reached.
+    // Falls back to running the global option as a proxy if no transition model is loaded.
+    AbstractedState _runMPC(const AbstractedState &target);
     void            _trainDSCBridge(int v_a_skill_idx);
 
     // --- phase methods ---
