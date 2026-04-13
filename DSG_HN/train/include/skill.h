@@ -45,10 +45,10 @@ public:
           const std::vector<int> &critic_layer_sizes,
           torch::Device device,
           float lr_actor, float lr_critic,
-          float tau, float gamma, int max_obstacles, int actor_warmup_steps,
+          float tau, float gamma, int actor_warmup_steps,
           int batch_size, int actor_update_freq, int k, int max_steps, double nu,
           std::shared_ptr<Skill> parent, int gestation_period, bool is_global, AbstractedState global_goal,
-          std::shared_ptr<Skill> global_option);
+          std::shared_ptr<Skill> global_option, bool eval = false);
 
     AbstractedState getLocalGoal();
 
@@ -69,7 +69,8 @@ public:
     void initFromSkill(std::shared_ptr<Skill> other);
 
     // Sample a random gestation record as a subgoal for the preceding skill.
-    AbstractedState sampleSubgoalState(bool uniform) const;
+    // When not uniform, prefers nearby reachable (no obstacle crossing) samples.
+    AbstractedState sampleSubgoalState() const;
     std::string getTrainingPhase() const;
     bool atTermination(const AbstractedState &goal) const;
 
@@ -87,7 +88,9 @@ public:
 
     int goalHits() const { return _goal_hits; }
     int gestationPeriod() const { return _gestation_period; }
+    double getDecisionValue(const AbstractedState &state) const;
     const std::vector<GestationRecord>& getPositiveGestationRecords() const { return _positive_gestation_records; }
+    void setEvalMode(bool eval) { _eval = eval; }
 
     // Child skills that target this skill's initiation set as their termination condition.
     // Populated by DeepSkillGraph when creating sibling options under the same parent.
@@ -111,6 +114,7 @@ private:
     std::vector<int> _gestation_labels;
     bool _has_negative_gestation = false;
     bool _validated = false;
+    bool _eval;
 
     AbstractedState _global_goal;
     mutable std::mt19937 _rng;
@@ -121,6 +125,8 @@ private:
     int _k = 0;
     double _nu;
     float _gamma;
+    float _lr_critic;
+    float _lr_actor;
 
     int _id;
 
@@ -134,6 +140,11 @@ private:
     void _fitClassifier(const std::vector<GestationRecord> &states, bool term_success);
 
     float _euclideanDistance(const std::array<float, 3> &a, const std::array<float, 3> &b, bool sqrt) const;
+    float _euclideanDistance2D(const std::array<float, 3> &a, const std::array<float, 3> &b, bool sqrt) const;
     float _euclideanDistance(const std::array<float, 4> &a, const std::array<float, 4> &b, bool sqrt) const;
+    
     void _herUpdate(const std::vector<Transition>& trajectory);
+
+    // Returns true if the 2D line segment from a to b intersects any cylindrical obstacle.
+    bool _segmentIntersectsObstacle(const std::array<float, 3> &a, const std::array<float, 3> &b) const;
 };

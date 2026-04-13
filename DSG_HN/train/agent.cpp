@@ -12,14 +12,13 @@ TD3Agent::TD3Agent(
     float gamma,
     int batch_size,
     int actor_update_freq,
-    int max_obstacles_,
-    int actor_warmup_steps_) : device(device_), total_state_dim(max_obstacles_ * 4 + env->state_dim), actor_warmup_steps(actor_warmup_steps_),
-                               actor_local(env->state_dim + max_obstacles_ * 4, env->action_dim, actor_layer_sizes, device_),
-                               actor_target(env->state_dim + max_obstacles_ * 4, env->action_dim, actor_layer_sizes, device_),
-                               critic_local_1(env->state_dim + max_obstacles_ * 4, env->action_dim, critic_layer_sizes, device_),
-                               critic_target_1(env->state_dim + max_obstacles_ * 4, env->action_dim, critic_layer_sizes, device_),
-                               critic_local_2(env->state_dim + max_obstacles_ * 4, env->action_dim, critic_layer_sizes, device_),
-                               critic_target_2(env->state_dim + max_obstacles_ * 4, env->action_dim, critic_layer_sizes, device_),
+    int actor_warmup_steps_) : device(device_), actor_warmup_steps(actor_warmup_steps_),
+                               actor_local(env->state_dim, env->obstacle_feature_dim, env->action_dim, actor_layer_sizes, device_),
+                               actor_target(env->state_dim, env->obstacle_feature_dim, env->action_dim, actor_layer_sizes, device_),
+                               critic_local_1(env->state_dim, env->obstacle_feature_dim, env->action_dim, critic_layer_sizes, device_),
+                               critic_target_1(env->state_dim, env->obstacle_feature_dim, env->action_dim, critic_layer_sizes, device_),
+                               critic_local_2(env->state_dim, env->obstacle_feature_dim, env->action_dim, critic_layer_sizes, device_),
+                               critic_target_2(env->state_dim, env->obstacle_feature_dim, env->action_dim, critic_layer_sizes, device_),
                                actor_optimizer(actor_local->parameters(), torch::optim::AdamOptions(lr_actor)),
                                critic_optimizer_1(critic_local_1->parameters(), torch::optim::AdamOptions(lr_critic)),
                                critic_optimizer_2(critic_local_2->parameters(), torch::optim::AdamOptions(lr_critic)),
@@ -27,22 +26,12 @@ TD3Agent::TD3Agent(
 {
     action_scaling_factors = torch::tensor(env->action_scaling_factors);
     action_shift_factors = torch::tensor(env->action_shift_factors);
+    toDevice(device);
     hardCopy();
 }
 
 std::pair<torch::Tensor, torch::Tensor> TD3Agent::getAction(torch::Tensor state, bool eval)
 {
-    int64_t pad_size = total_state_dim - state.size(-1);
-    torch::Tensor augmented_state;
-    if (pad_size > 0)
-    {
-        augmented_state = torch::constant_pad_nd(state, {0, pad_size}, 0);
-    }
-    else
-    {
-        augmented_state = state.narrow(-1, 0, total_state_dim);
-    }
-
     if (!eval && learn_step < actor_warmup_steps)
     {
         // Generates values between -1.0 and 1.0
@@ -52,10 +41,11 @@ std::pair<torch::Tensor, torch::Tensor> TD3Agent::getAction(torch::Tensor state,
 
     actor_local->eval();
     torch::NoGradGuard no_grad;
-    auto action = actor_local->forward(augmented_state.to(device)).to(torch::kCPU);
+    auto action = actor_local->forward(state.to(device)).to(torch::kCPU);
     if (!eval)
     {
-        auto noise = (torch::randn_like(action) * 0.1).clamp(-0.2, 0.2); // Add some noise for exploration. Need to respect action limits
+        float clip = exploration_noise * 2.0f;
+        auto noise = (torch::randn_like(action) * exploration_noise).clamp(-clip, clip);
         action = torch::clamp(action + noise, -1.0, 1.0);
     }
     torch::Tensor scaled_action = action * action_scaling_factors + action_shift_factors; // Scale action to environment limits
@@ -66,29 +56,7 @@ std::pair<torch::Tensor, torch::Tensor> TD3Agent::getAction(torch::Tensor state,
 
 void TD3Agent::addExperience(torch::Tensor state, torch::Tensor action, torch::Tensor reward, torch::Tensor next_state, torch::Tensor done)
 {
-    int64_t pad_size = total_state_dim - state.size(-1);
-    torch::Tensor augmented_state;
-    if (pad_size > 0)
-    {
-        augmented_state = torch::constant_pad_nd(state, {0, pad_size}, 0);
-    }
-    else
-    {
-        augmented_state = state.narrow(-1, 0, total_state_dim);
-    }
-
-    pad_size = total_state_dim - next_state.size(-1);
-    torch::Tensor augmented_next_state;
-    if (pad_size > 0)
-    {
-        augmented_next_state = torch::constant_pad_nd(next_state, {0, pad_size}, 0);
-    }
-    else
-    {
-        augmented_next_state = next_state.narrow(-1, 0, total_state_dim);
-    }
-
-    replay_buffer.addExperienceState(augmented_state, action, reward, augmented_next_state, done);
+    replay_buffer.addExperienceState(state, action, reward, next_state, done);
 }
 
 void TD3Agent::learn()
@@ -189,8 +157,8 @@ PolicyOverOptionsAgent::PolicyOverOptionsAgent(
     float gamma_,
     int batch_size_) : device(device_),
                        lr(lr_), tau(tau_), gamma(gamma_), batch_size(batch_size_),
-                       q(env->state_dim + env->obstacle_dim, layer_sizes, device_),
-                       target_q(env->state_dim + env->obstacle_dim, layer_sizes, device_)
+                       q(env->state_dim, env->obstacle_feature_dim, layer_sizes, device_),
+                       target_q(env->state_dim, env->obstacle_feature_dim, layer_sizes, device_)
 {
     optimizer = std::make_unique<torch::optim::Adam>(q->parameters(), torch::optim::AdamOptions(lr));
     hardCopy();
@@ -206,7 +174,11 @@ void PolicyOverOptionsAgent::addOption(float initial_bias)
 
 torch::Tensor PolicyOverOptionsAgent::getOptions(torch::Tensor state)
 {
-    return q->forward(state).to(torch::kCPU).squeeze();
+    q->eval();  // Set to evaluation mode (disables dropout, uses batch norm running stats)
+    torch::NoGradGuard no_grad;  // Disable gradient computation for inference
+    auto q_values = q->forward(state).to(torch::kCPU).squeeze();
+    q->train();  // Reset to training mode
+    return q_values;
 }
 
 void PolicyOverOptionsAgent::addExperience(torch::Tensor state, int option, float cumulative_reward, torch::Tensor next_state, bool done, int num_steps)
@@ -233,14 +205,18 @@ void PolicyOverOptionsAgent::learn()
     auto num_steps = std::get<4>(experiences).to(q->device).narrow(-1, 1, 1).to(torch::kInt64);
     auto q_values = q->forward(states);
 
-    auto target_q_values = std::get<0>(torch::max(target_q->forward(next_states), -1, true));
+    // Compute target Q values using target_q in eval mode (for consistency)
+    target_q->eval();
+    auto target_q_values = std::get<0>(torch::max(target_q->forward(next_states), -1, true)).detach();
+    target_q->train();  // Reset to training mode
+    
     auto discount_factor = torch::pow(gamma, num_steps);
     auto y = cumulative_rewards + (discount_factor * target_q_values * (1 - dones));
 
     if (options.dim() == 1)
         options = options.unsqueeze(-1);
     auto q_values_selected = q_values.gather(-1, options);
-    auto loss = torch::nn::functional::mse_loss(q_values_selected, y.detach());
+    auto loss = torch::nn::functional::mse_loss(q_values_selected, y);
 
     optimizer->zero_grad();
     loss.backward();

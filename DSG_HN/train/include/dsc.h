@@ -42,6 +42,7 @@ public:
         int max_option_steps = 20;        // how long an option can execute for
         int max_skills = 6;
         float start_noise_radius = 2.0f;
+        float val_accuracy_threshold = 0.8f;
 
         std::vector<int> actor_layers = {256, 256, 256};
         std::vector<int> critic_layers = {256, 256, 256};
@@ -51,7 +52,6 @@ public:
         float lr_critic = 3e-4f;
         float lr_actor_global = 1e-5;
         float lr_critic_global = 3e-5;
-        int max_obstacles = 8;
         int actor_warmup_steps = 0;
         float lr_poo = 1e-4f;
         float tau = 0.005f;
@@ -75,14 +75,14 @@ public:
                       const std::string &pretrain_critic1_path,
                       const std::string &pretrain_critic2_path,
                       const std::string &scene_file,
-                      Config cfg);
+                      Config cfg, bool eval=false);
 
     DeepSkillChaining(std::shared_ptr<RobotBridgeTrain> robot_bridge,
                       torch::Device device,
                       AbstractedState global_goal,
                       AbstractedState global_start,
                       const std::string &scene_file,
-                      Config cfg);
+                      Config cfg, bool eval=false);
 
     // Train the chain backward from the global goal. Returns total skill count excluding the global option
     virtual int train(int max_episodes);
@@ -96,6 +96,7 @@ public:
     virtual void load(const std::string &dir, const std::string &scene_file);
 
     int numSkills() const;
+    void setEvalMode(bool eval);
 
 protected:
     std::shared_ptr<RobotBridgeTrain> _robot_bridge;
@@ -104,6 +105,7 @@ protected:
     AbstractedState _global_goal;
     AbstractedState _global_start;
     std::string _scene_file_path;
+    bool _eval;
 
     Config _cfg;
     std::vector<std::shared_ptr<Skill>> _skills;
@@ -115,8 +117,8 @@ protected:
     int _unfinished_option_idx = 0;
 
     void _warmupRollout();
-    float _dscRollout(bool eval);
-    virtual std::pair<int, AbstractedState> _pickOption(bool eval);
+    float _dscRollout();
+    std::pair<int, AbstractedState> _pickOption();
     bool _containsGlobalStartState();
     virtual void _makeSkill(bool is_global, std::shared_ptr<Skill> parent);
     void _loadGlobalOption(const std::string &actor_path, const std::string &critic1_path, const std::string &critic2_path);

@@ -3,6 +3,7 @@
 #include "robot_bridge_train.h"
 #include <vector>
 #include <math.h>
+#include <algorithm>
 
 /*
 
@@ -18,14 +19,14 @@ public:
         RobotState state = robot_bridge->getRobotState();
         obstacles = robot_bridge->getObstacles();
 
-        int proprio_dim = state.q.size() + state.dq.size(); // 2 * DOF
         int gravity_dim = 3;                                // local_up
-        int self_dyn_dim = 3 + 3 + 3;                       // local_vel, local_ang_vel, local_accel
-        int goal_dim = 3 + 4 + 3 + 3;                       // relative_pos, releative_orientation, relative_vel, relative angular vel
+        int self_dyn_dim = 3 + 3;                            // local_vel, local_ang_vel
+        int goal_dim = 3;                                    // relative_pos (body frame)
         int boundary_dim = 4;
-        obstacle_dim = (int)obstacles.size() * 4;
+        int last_action_dim = 3;                             // previous velocity command
+        obstacle_dim = (int)obstacles.size() * obstacle_feature_dim;
 
-        state_dim = proprio_dim + gravity_dim + self_dyn_dim + goal_dim + boundary_dim;
+        state_dim = gravity_dim + self_dyn_dim + goal_dim + boundary_dim + last_action_dim;
 
         std::array<float, 3> pos_scales = {(robot_bridge->x_max - robot_bridge->x_min) / 2, (robot_bridge->y_max - robot_bridge->y_min) / 2, 0.5}; // some of these may need to be tuned later
         std::array<float, 4> orientation_scales = {1, 1, 1, 1};
@@ -37,10 +38,33 @@ public:
 
     torch::Tensor reset() // if no arguments passed, just reset to random position. If goal fixed, use that, else sample randomly
     {
-        // pick random valid goal position
+        AbstractedState start;
+        int start_attempts = 0;
+        do
+        {
+            start = robot_bridge->generateRandomValidConfiguration();
+            float obs_dist = robot_bridge->distanceToNearestObstacle(start.position, start.orientation);
+            if (obs_dist >= 1.0f) break;
+        } while (++start_attempts < 200);
+        start.velocity[0] = 0;
+        start.velocity[1] = 0;
+        start.velocity[2] = 0;
+        start.angular_velocity[0] = 0;
+        start.angular_velocity[1] = 0;
+        start.angular_velocity[2] = 0;
+
         if (!_goal_fixed)
         {
-            goal = robot_bridge->generateRandomValidConfiguration();
+            int attempts = 0;
+            do
+            {
+                goal = robot_bridge->generateRandomValidConfiguration();
+                float dist = _euclidean2D(start.position, goal.position);
+                float obs_dist = robot_bridge->distanceToNearestObstacle(goal.position, goal.orientation);
+                if (dist >= min_goal_distance && dist <= max_goal_distance && obs_dist >= 0.6f)
+                    break;
+            } while (++attempts < 200);
+
             goal.velocity[0] = 0;
             goal.velocity[1] = 0;
             goal.velocity[2] = 0;
@@ -49,19 +73,17 @@ public:
             goal.angular_velocity[2] = 0;
         }
 
-        auto start = robot_bridge->generateRandomValidConfiguration();
-        start.velocity[0] = 0;
-        start.velocity[1] = 0;
-        start.velocity[2] = 0;
-        start.angular_velocity[0] = 0;
-        start.angular_velocity[1] = 0;
-        start.angular_velocity[2] = 0;
         robot_bridge->resetRobot(start.position, start.orientation, start.velocity, start.angular_velocity);
 
         obstacles = robot_bridge->getObstacles();
 
         current_step = 0;
+        last_action = {0.0f, 0.0f, 0.0f};
+        prev_action = {0.0f, 0.0f, 0.0f};
+        prev_dist_to_goal = _euclidean2D(start.position, goal.position);
+        prev_obs_dist = robot_bridge->distanceToNearestObstacle(start.position, start.orientation);
 
+        _collision = false;
         return transformState(robot_bridge->getRobotState());
     }
 
@@ -105,6 +127,8 @@ public:
         robot_bridge->publishVelCommand(cmd);
         robot_bridge->update();
         current_step++;
+        prev_action = last_action;
+        last_action = {cmd[0], cmd[1], cmd[2]};
         auto [reward, terminated] = computeReward(goal);
 
         return {
@@ -136,6 +160,11 @@ public:
         obstacles = robot_bridge->getObstacles();
 
         current_step = 0;
+        last_action = {0.0f, 0.0f, 0.0f};
+        prev_action = {0.0f, 0.0f, 0.0f};
+        prev_dist_to_goal = _euclidean2D(clamped_pos, goal.position);
+        prev_obs_dist = robot_bridge->distanceToNearestObstacle(clamped_pos, quat);
+        _collision = false;
         return transformState(robot_bridge->getRobotState());
     }
 
@@ -179,6 +208,31 @@ public:
         _goal_fixed = false;
     }
 
+    void increaseGoalDistance(float delta)
+    {
+        max_goal_distance = std::min(max_goal_distance + delta, 11.0f);
+    }
+
+    void decreaseGoalDistance(float delta)
+    {
+        max_goal_distance = std::max(max_goal_distance - delta, min_goal_distance + 0.5f);
+    }
+
+    float getMaxGoalDistance() const { return max_goal_distance; }
+
+    void updateGoalMarker()
+    {
+        robot_bridge->getEngine()->setGoalMarker(goal.position[0], goal.position[1], 0.5f);
+    }
+
+    void showObstacleMargins()
+    {
+        std::vector<MuJoCoEngine::ObstacleMarker> markers;
+        for (const auto &obs : obstacles)
+            markers.push_back({obs.position[0], obs.position[1], obs.size[0]});
+        robot_bridge->getEngine()->setObstacleMarkers(markers, 0.8f);
+    }
+
     std::pair<torch::Tensor, torch::Tensor> computeReward()
     {
         return computeReward(goal);
@@ -190,47 +244,71 @@ public:
         bool collision = robot_bridge->inCollision();
         return computeReward(state, collision, goal_);
     }
-    // If we do not have the ability to turn, then velocity cannot be part of goal condition
-    std::pair<torch::Tensor, torch::Tensor> computeReward(const RobotState &state, bool collision, const AbstractedState &goal_)
+
+    std::pair<torch::Tensor, torch::Tensor> computeReward(const RobotState &state, bool collision, const AbstractedState &goal_, bool use_goal_radius = true)
     {
         auto goal_position = goal_.position;
-        auto goal_orientation = goal_.orientation;
-        auto goal_velocity = goal_.velocity;
-        auto goal_angular_velocity = goal_.angular_velocity;
-        // auto &[goal_position, goal_orientation, goal_velocity, goal_angular_velocity] = goal_;
 
         float pos_error = std::sqrt((state.position[0] - goal_position[0]) * (state.position[0] - goal_position[0]) +
                                     (state.position[1] - goal_position[1]) * (state.position[1] - goal_position[1]));
 
-        float vel_error = std::sqrt((state.velocity[0] - goal_velocity[0]) * (state.velocity[0] - goal_velocity[0]) +
-                                    (state.velocity[1] - goal_velocity[1]) * (state.velocity[1] - goal_velocity[1]));
-
-        // std::cout << " " << vel_error << std::endl;
-
         float reward = 0;
         bool terminated = false;
-        if (collision ||
+
+        // 1. Obstacle proximity penalty (dense)
+        float min_obs_dist = robot_bridge->distanceToNearestObstacle(state.position, state.orientation);
+        constexpr float safe_margin = 1.2f;
+        if (min_obs_dist < safe_margin)
+        {
+            reward -= 2.0f * (safe_margin - min_obs_dist);
+
+            // Turn-away reward: bonus for increasing distance from obstacle
+            float obs_dist_change = min_obs_dist - prev_obs_dist;
+            reward += 3.0f * obs_dist_change;
+        }
+
+        // 2. Terminal conditions
+        if (collision || _collision ||
             state.position[0] > robot_bridge->x_max || state.position[0] < robot_bridge->x_min ||
             state.position[1] > robot_bridge->y_max || state.position[1] < robot_bridge->y_min)
         {
-            reward -= 30;
+            reward -= 80;
+            _collision = true;
             terminated = true;
         }
-        else if (pos_error < 0.5) // && vel_error < 0.25) // commenting out vel for now cause of aformentioned issues. Also ignoring ang vel and orientation for the same reasons
+        else if (use_goal_radius && pos_error < 0.5)
         {
             reward += 50;
             terminated = true;
         }
         else
         {
-            reward -= (pos_error / 50.0); // + (vel_error / 10.0);
+            // 3. Distance reduction reward (always active)
+            float dist_reduction = prev_dist_to_goal - pos_error;
+            reward += 5.0f * dist_reduction;
+
+            // 4. Time penalty (dense, direction-agnostic)
+            reward -= 0.1f;
+
+            // 5. Smoothness penalty (dense, direction-agnostic)
+            float action_jerk = std::abs(last_action[0] - prev_action[0]) +
+                                std::abs(last_action[1] - prev_action[1]) +
+                                std::abs(last_action[2] - prev_action[2]);
+            reward -= 0.5f * action_jerk;
         }
+
+        // 6. Timeout penalty
         if (current_step >= max_steps)
         {
+            reward -= 10;
             terminated = true;
         }
+
+        prev_dist_to_goal = pos_error;
+        prev_obs_dist = min_obs_dist;
+
         return {torch::tensor({reward}, torch::kFloat32),
-                torch::tensor({(float)terminated}, torch::kFloat32)}; // Usually better to store 'done' as a float (0.0 or 1.0) for RL math};
+                torch::tensor({(float)terminated}, torch::kFloat32)};
     }
 
     torch::Tensor transformState(const RobotState &state, const AbstractedState &goal_)
@@ -249,57 +327,20 @@ public:
             offset += src.size();
         };
 
-        // note: pos, vel, and orientation are given in global frame
-        // accel, angular vel given in local frame
-
-        copy_to_ptr(state.q);
-
-        std::array<float, DOF> dq_scaled;
-
-        for (int j = 0; j < DOF; j++)
-        {
-            dq_scaled[j] = state.dq[j] / 20; // dq scaling factor
-        }
-        copy_to_ptr(state.dq);
-
         // local dynamics
-        copy_to_ptr(rotateVectorByQuat({0, 0, 1}, state.orientation, true));      // local_up
-        copy_to_ptr(rotateVectorByQuat(state.velocity, state.orientation, true)); // local_vel
-        copy_to_ptr(state.angular_velocity);                                      // Already local
-        copy_to_ptr(state.accel);                                                 // Already local
+        copy_to_ptr(rotateVectorByQuat({0, 0, 1}, state.orientation, true));      // local_up (3)
+        copy_to_ptr(rotateVectorByQuat(state.velocity, state.orientation, true)); // local_vel (3)
+        copy_to_ptr(state.angular_velocity);                                      // Already local (3)
 
-        // relative values
+        // goal-relative position in body frame
         auto &g_pos = goal_.position;
-        auto &g_quat = goal_.orientation;
-        auto &g_vel = goal_.velocity;
-        auto &g_ang_vel = goal_.angular_velocity;
 
         std::array<float, 3> r_pos = {g_pos[0] - state.position[0], g_pos[1] - state.position[1], g_pos[2] - state.position[2]};
         r_pos[0] /= env_scaling_factors.position[0];
         r_pos[1] /= env_scaling_factors.position[1];
         r_pos[2] /= env_scaling_factors.position[2];
 
-        copy_to_ptr(rotateVectorByQuat(r_pos, state.orientation, true));
-
-        copy_to_ptr(quaternionDelta(g_quat, state.orientation));
-
-        std::array<float, 3> v_err = {g_vel[0] - state.velocity[0], g_vel[1] - state.velocity[1], g_vel[2] - state.velocity[2]};
-        v_err[0] /= env_scaling_factors.velocity[0];
-        v_err[1] /= env_scaling_factors.velocity[1];
-        v_err[2] /= env_scaling_factors.velocity[2];
-        copy_to_ptr(rotateVectorByQuat(v_err, state.orientation, true));
-
-        std::array<float, 3> local_goal_ang_vel = rotateVectorByQuat(g_ang_vel, state.orientation, true);
-
-        std::array<float, 3> ang_vel_err = {
-            local_goal_ang_vel[0] - state.angular_velocity[0],
-            local_goal_ang_vel[1] - state.angular_velocity[1],
-            local_goal_ang_vel[2] - state.angular_velocity[2]};
-        ang_vel_err[0] /= env_scaling_factors.angular_velocity[0];
-        ang_vel_err[1] /= env_scaling_factors.angular_velocity[1];
-        ang_vel_err[2] /= env_scaling_factors.angular_velocity[2];
-
-        copy_to_ptr(ang_vel_err);
+        copy_to_ptr(rotateVectorByQuat(r_pos, state.orientation, true));          // relative_pos (3)
 
         // relative distance to boundary
         float dist_left = state.position[0] - robot_bridge->x_min;
@@ -312,17 +353,9 @@ public:
         data_ptr[offset++] = dist_back / env_scaling_factors.position[1];
         data_ptr[offset++] = dist_front / env_scaling_factors.position[1];
 
-        // local obstacles
-        std::vector<Obstacle> sorted_obs = obstacles;
-        std::sort(sorted_obs.begin(), sorted_obs.end(), [&](const Obstacle &a, const Obstacle &b)
-                  {
-        float distA = std::pow(a.position[0]-state.position[0], 2) + std::pow(a.position[1]-state.position[1], 2);
-        float distB = std::pow(b.position[0]-state.position[0], 2) + std::pow(b.position[1]-state.position[1], 2);
-        return distA < distB; });
-
-        for (int i = 0; i < sorted_obs.size(); i++)
+        for (int i = 0; i < obstacles.size(); i++)
         {
-            const auto &obs = sorted_obs[i];
+            const auto &obs = obstacles[i];
             std::array<float, 3> r_obs = {obs.position[0] - state.position[0],
                                           obs.position[1] - state.position[1],
                                           obs.position[2] - state.position[2]};
@@ -333,15 +366,34 @@ public:
             data_ptr[offset++] = obs.size[0];
         }
 
+        copy_to_ptr(last_action);                                                // last_action (3)
+
         return tensor_state;
     }
 
     int state_dim;
     int obstacle_dim;
+    int obstacle_feature_dim = 4;
     int action_dim = 3;
     std::vector<float> action_scaling_factors = {0.75, 0.3, 1.0};
     std::vector<float> action_shift_factors = {0.25, 0.0, 0.0};
     AbstractedState env_scaling_factors;
+
+    float max_goal_distance = 3.0f;
+    float min_goal_distance = 1.0f;
+
+    const std::vector<Obstacle> &getObstacles() const { return obstacles; }
+
+    float distanceToNearestObstacle() const
+    {
+        RobotState s = robot_bridge->getRobotState();
+        return robot_bridge->distanceToNearestObstacle(s.position, s.orientation);
+    }
+
+    float distanceToNearestObstacle(const std::array<float, 3> &pos, const std::array<float, 4> &orient) const
+    {
+        return robot_bridge->distanceToNearestObstacle(pos, orient);
+    }
 
 private:
     std::shared_ptr<RobotBridgeTrain> robot_bridge;
@@ -350,6 +402,18 @@ private:
     int max_steps;
     int current_step = 0;
     std::vector<Obstacle> obstacles;
+    std::array<float, 3> last_action = {0.0f, 0.0f, 0.0f};
+    std::array<float, 3> prev_action = {0.0f, 0.0f, 0.0f};
+    float prev_dist_to_goal = 0.0f;
+    float prev_obs_dist = 10.0f;
+    bool _collision = false;
+
+    float _euclidean2D(const std::array<float, 3> &a, const std::array<float, 3> &b) const
+    {
+        float dx = a[0] - b[0];
+        float dy = a[1] - b[1];
+        return std::sqrt(dx * dx + dy * dy);
+    }
 
     std::array<float, 4> quaternionDelta(const std::array<float, 4> &a, const std::array<float, 4> &b) // returns a - b
     {

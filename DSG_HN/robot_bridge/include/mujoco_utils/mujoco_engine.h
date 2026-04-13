@@ -68,4 +68,26 @@ public:
     mjvPerturb pert; // mouse perturbation
 
     void initViz();
+
+    void setGoalMarker(float x, float y, float z)
+    {
+        goal_marker_pos[0] = x;
+        goal_marker_pos[1] = y;
+        goal_marker_pos[2] = z;
+        goal_marker_active = true;
+    }
+
+    void clearGoalMarker() { goal_marker_active = false; }
+
+    struct ObstacleMarker { float x, y, radius; };
+    void setObstacleMarkers(const std::vector<ObstacleMarker> &markers, float margin)
+    {
+        obstacle_markers = markers;
+        obstacle_margin = margin;
+    }
+
+    float goal_marker_pos[3] = {0, 0, 0};
+    bool goal_marker_active = false;
+    std::vector<ObstacleMarker> obstacle_markers;
+    float obstacle_margin = 0.8f;
 };
