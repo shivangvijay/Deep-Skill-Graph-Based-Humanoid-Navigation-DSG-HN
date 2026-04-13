@@ -16,7 +16,8 @@ find_package(yaml-cpp REQUIRED)
 set(MUJOCO_DIR "${PROJECT_SOURCE_DIR}/../../unitree_mujoco/simulate/mujoco")
 set(POLICY_CONFIG_DIR "${PROJECT_SOURCE_DIR}/../deploy/robots/g1_29dof/config")
 set(SCENE_XML_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../unitree_mujoco/unitree_robots/g1")
-set(LIBTORCH_PATH "${PROJECT_SOURCE_DIR}/../../../_/DSG_HN/libtorch")
+set(LIBTORCH_PATH "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/libtorch")
+# set(LIBTORCH_PATH "${PROJECT_SOURCE_DIR}/../../../_/DSG_HN/libtorch") Keeping old definition for consistency, may need to change this path depending on libtorch location
 
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES STREQUAL "")
   set(CMAKE_CUDA_ARCHITECTURES "70;75;80;86")
