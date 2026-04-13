@@ -144,11 +144,16 @@ float DeepSkillChaining::execute()
 void DeepSkillChaining::visualizeInitiationSets()
 {
     std::vector<std::vector<std::array<float, 3>>> points_per_skill;
+    int max_points = 1000;
     for (const auto &skill : _skills)
     {
         std::vector<std::array<float, 3>> points;
+        int point = 0;
         for (const auto &record : skill->getPositiveGestationRecords())
         {
+            if (point >= max_points)
+                break;
+            point++;
             points.push_back(record.state.position);
         }
         points_per_skill.push_back(points);
@@ -741,6 +746,7 @@ int main(int argc, char **argv)
     else
     {
         dsc.load(DSC_SAVE_PATH, SCENE_FILE);
+        // dsc.visualizeInitiationSets();
     }
 
     dsc.setEvalMode(true);
