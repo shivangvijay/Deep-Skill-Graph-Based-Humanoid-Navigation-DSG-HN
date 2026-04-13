@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dsc.h"
+#include "transition_model.hpp"
 
 // DeepSkillGraph — extends DeepSkillChaining to a directed graph of options and goal regions.
 
@@ -235,6 +236,33 @@ public:
         int   mpc_steps            = 20;   // steps global option runs as MPC proxy toward s_rand
         float goal_region_epsilon  = 1.0f; // epsilon-ball radius (metres) defining a goal region node
         int   max_expansion_tries  = 10;   // max attempts per expansion phase before falling back to consolidation
+
+        // DSG only: MPC look-ahead horizon (K in paper Appendix G, Table 5)
+        int mpc_horizon = 7;
+
+        // DSG only: number of random action sequences to evaluate per MPC solve (M in paper)
+        int mpc_candidates = 1000;
+
+        // DSG only: robot base footprint radius for MPC collision checking (metres)
+        double mpc_base_radius = 0.35;
+
+        // DSG only: extra safety clearance around obstacles during MPC (metres)
+        double mpc_clearance = 0.05;
+
+        // DSG only: cost penalty applied to colliding imagined rollouts
+        double mpc_collision_penalty = 1000.0;
+
+        // DSG only: quadratic penalty on action magnitude in MPC cost
+        double mpc_action_penalty = 0.01;
+
+        // DSG only: quadratic penalty on action change (smoothness) in MPC cost
+        double mpc_smoothness_penalty = 0.02;
+
+        // DSG only: weight on squared distance-to-goal in MPC cost
+        double mpc_goal_weight = 1.0;
+
+        // DSG only: [vx, vy, yaw] action magnitude limits used for random shooting
+        std::array<double, 3> mpc_action_limits = {0.5, 0.3, 0.2};
     };
 
     DeepSkillGraph(std::shared_ptr<RobotBridgeTrain> robot_bridge,
@@ -262,6 +290,12 @@ public:
     int  train(int max_episodes) override;
     void save(const std::string &dir) const override;
     void load(const std::string &dir, const std::string &scene_file) override;
+
+    // Load a pre-trained Gaussian delta transition model for MPC-based graph expansion.
+    // model_path    : path to the .pt checkpoint produced by transition_train_gaussian_delta
+    // normaliser_path : path to the matching normaliser.txt
+    // Once loaded, _runMPC() will use real model-based planning instead of the global-option proxy.
+    void loadTransitionModel(const std::string &model_path, const std::string &normaliser_path);
 
 protected:
     // Lightweight graph node representing a reached state in unexplored space.
@@ -309,9 +343,17 @@ private:
     std::pair<int,int> _closestPair(const std::vector<int> &D,
                                     const std::vector<int> &A) const;
 
+    // --- transition model (loaded once via loadTransitionModel()) ---
+    GaussianMLP          _transition_model{nullptr};
+    TransitionNormaliser _normaliser;
+    bool                 _has_transition_model = false;
+
     // --- navigation and training primitives ---
     void            _navigateTo(int node_idx, int max_steps);
-    AbstractedState _runMPCProxy(const AbstractedState &target); // TODO: integrate MPC implementation
+    // Run receding-horizon MPC from the current environment state toward `target` for
+    // cfg.mpc_steps real environment steps.  Returns the state reached.
+    // Falls back to running the global option as a proxy if no transition model is loaded.
+    AbstractedState _runMPC(const AbstractedState &target);
     void            _trainDSCBridge(int v_a_skill_idx);
 
     // --- phase methods ---

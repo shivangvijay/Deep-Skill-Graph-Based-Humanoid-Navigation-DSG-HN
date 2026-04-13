@@ -1,7 +1,71 @@
 #include "dsg.h"
+#include <filesystem>
 #include <fstream>
 #include <queue>
 #include <unordered_set>
+
+// =============================================================================
+// State conversion helpers
+// =============================================================================
+
+// Convert the full robot state (including joints) to the compact representation
+// expected by the transition model's feature extractor.
+static RolloutState robotStateToRolloutState(const RobotState &rs)
+{
+    RolloutState out;
+    out.x = rs.position[0];
+    out.y = rs.position[1];
+    out.z = rs.position[2];
+
+    // Extract yaw from quaternion [qw, qx, qy, qz]
+    const double qw = rs.orientation[0], qx = rs.orientation[1];
+    const double qy = rs.orientation[2], qz = rs.orientation[3];
+    out.yaw = std::atan2(2.0 * (qw * qz + qx * qy),
+                         1.0 - 2.0 * (qy * qy + qz * qz));
+
+    out.vx = rs.velocity[0];
+    out.vy = rs.velocity[1];
+    out.oz = rs.angular_velocity[2];
+
+    out.joint_pos.assign(rs.q.begin(),  rs.q.end());
+    out.joint_vel.assign(rs.dq.begin(), rs.dq.end());
+    return out;
+}
+
+// Project a RolloutState back to the navigation-level AbstractedState used by DSG.
+// Orientation is recovered as a yaw-only quaternion (pitch = roll = 0).
+static AbstractedState rolloutStateToAbstractedState(const RolloutState &rs)
+{
+    AbstractedState as;
+    as.position    = { static_cast<float>(rs.x),
+                       static_cast<float>(rs.y),
+                       static_cast<float>(rs.z) };
+    const float qw = static_cast<float>(std::cos(rs.yaw * 0.5));
+    const float qz = static_cast<float>(std::sin(rs.yaw * 0.5));
+    as.orientation = { qw, 0.0f, 0.0f, qz };
+    as.velocity    = { static_cast<float>(rs.vx),
+                       static_cast<float>(rs.vy), 0.0f };
+    as.angular_velocity = { 0.0f, 0.0f, static_cast<float>(rs.oz) };
+    return as;
+}
+
+// =============================================================================
+// Transition model loading
+// =============================================================================
+
+void DeepSkillGraph::loadTransitionModel(const std::string &model_path,
+                                          const std::string &normaliser_path)
+{
+    _transition_model = GaussianMLP(kTM_InputDim, kTM_OutputDim, /*dropout=*/0.2);
+    torch::load(_transition_model, model_path, _device);
+    _transition_model->to(_device);
+    _transition_model->eval();
+
+    _normaliser = TransitionNormaliser::load(normaliser_path);
+
+    _has_transition_model = true;
+    std::cout << "[DSG] Transition model loaded from " << model_path << "\n";
+}
 
 // =============================================================================
 // DSC overrides
@@ -525,17 +589,65 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
     }
 }
 
-AbstractedState DeepSkillGraph::_runMPCProxy(const AbstractedState &target)
+AbstractedState DeepSkillGraph::_runMPC(const AbstractedState &target)
 {
-    // Proxy: run global option toward target for mpc_steps steps.
-    // mpc_steps approximates K planning steps from the pseudocode.
-    // Real model-based MPC can replace this once the transition model is integrated.
-    int steps_remaining = _dsg_cfg.mpc_steps;
-    while (steps_remaining > 0)
+    // ── Fallback: no transition model loaded ─────────────────────────────────
+    if (!_has_transition_model)
     {
-        auto [steps_taken, _, __, ___, ____] = _skills[_global_option_idx]->rollout(target);
-        steps_remaining -= std::max(1, steps_taken);
+        int steps_remaining = _dsg_cfg.mpc_steps;
+        while (steps_remaining > 0)
+        {
+            auto [steps_taken, _r, _d, _fp, _lp] =
+                _skills[_global_option_idx]->rollout(target);
+            steps_remaining -= std::max(1, steps_taken);
+        }
+        return _env->getAbstractedState();
     }
+
+    // ── Real receding-horizon MPC ─────────────────────────────────────────────
+    // At each of mpc_steps real environment steps:
+    //   1. Observe current full robot state.
+    //   2. Run random-shooting MPC (imagined rollouts via transition model) to
+    //      find the best action sequence toward `target`.
+    //   3. Execute only the first action in the real environment.
+    //   4. Stop early on collision / episode termination.
+    const double goal_x = target.position[0];
+    const double goal_y = target.position[1];
+    const auto obstacles = _robot_bridge->getObstacles();
+
+    for (int step = 0; step < _dsg_cfg.mpc_steps; ++step)
+    {
+        auto [robot_state, in_collision] = _env->getUnderlyingState();
+        if (in_collision)
+            break;
+
+        RolloutState rs = robotStateToRolloutState(robot_state);
+
+        auto plan = randomShootMPC(
+            _transition_model, _normaliser, rs, obstacles, _device,
+            goal_x, goal_y,
+            _dsg_cfg.mpc_horizon, _dsg_cfg.mpc_candidates, _dsg_cfg.mpc_action_limits,
+            _dsg_cfg.mpc_base_radius, _dsg_cfg.mpc_clearance,
+            _dsg_cfg.mpc_collision_penalty, _dsg_cfg.mpc_action_penalty,
+            _dsg_cfg.mpc_smoothness_penalty, _dsg_cfg.mpc_goal_weight,
+            _rng()   // seed derived from DSG's own RNG for reproducibility
+        );
+
+        if (plan.actions.empty())
+            break;
+
+        // Execute the first action of the best plan in the real environment
+        const auto &a = plan.actions.front();
+        auto action_tensor = torch::tensor(
+            { static_cast<float>(a.vx),
+              static_cast<float>(a.vy),
+              static_cast<float>(a.yaw) }, torch::kFloat32);
+
+        auto [_ns, _r, done_t] = _env->step(action_tensor);
+        if (done_t.item<float>() > 0.5f)
+            break;
+    }
+
     return _env->getAbstractedState();
 }
 
@@ -587,9 +699,9 @@ bool DeepSkillGraph::_graphExpansionPhase()
     // 3. Navigate to v_nn using current graph plan / POO fallback
     _navigateTo(v_nn, _dsg_cfg.steps_per_episode / 2);
 
-    // 4. Extend graph: run global option as MPC proxy toward s_rand for mpc_steps
-    // TODO: replace with real MPC using learnt transition model
-    AbstractedState s_mpc = _runMPCProxy(s_rand);
+    // 4. Extend graph: run receding-horizon MPC toward s_rand for mpc_steps real steps.
+    //    Uses the learned transition model if loaded; falls back to the global option otherwise.
+    AbstractedState s_mpc = _runMPC(s_rand);
 
     // 5. Rejection sampling: reject if s_mpc is already inside any node in the graph
     // (paper B.1: reject if βo(st)=1 or Io(st)=1 for any o in V)
@@ -657,11 +769,13 @@ void DeepSkillGraph::_graphConsolidationPhase()
 #error "dsg.cpp must be compiled with -DDSG_BUILD to suppress DSC main"
 #endif
 
-#define SCENE_FILE "../config/scene/umaze_scene_obs_free.xml"
-#define OG_ACTOR   "../models/best_actor.pt"
-#define OG_CRITIC1 "../models/best_critic_1.pt"
-#define OG_CRITIC2 "../models/best_critic_2.pt"
-#define DSG_SAVE_PATH "../dsg_models"
+#define SCENE_FILE       "../config/scene/umaze_scene_obs_free.xml"
+#define OG_ACTOR         "../models/best_actor.pt"
+#define OG_CRITIC1       "../models/best_critic_1.pt"
+#define OG_CRITIC2       "../models/best_critic_2.pt"
+#define DSG_SAVE_PATH    "../dsg_models"
+#define TM_CHECKPOINT    "../transition_model/transition_gaussian_model_best.pt"
+#define TM_NORMALISER    "../transition_model/normaliser.txt"
 #define TEST false
 
 #define X_MIN -7.0f
@@ -712,7 +826,12 @@ int main(int argc, char **argv)
     DeepSkillGraph dsg(robot_bridge, device, global_goal, global_start,
                        OG_ACTOR, OG_CRITIC1, OG_CRITIC2, SCENE_FILE, cfg);
 
-    // TODO: Initialize transition model
+    // Load transition model if checkpoints exist (graceful skip if not yet trained)
+    if (std::filesystem::exists(TM_CHECKPOINT) && std::filesystem::exists(TM_NORMALISER))
+        dsg.loadTransitionModel(TM_CHECKPOINT, TM_NORMALISER);
+    else
+        std::cout << "[DSG] No transition model found at " << TM_CHECKPOINT
+                  << " — using global-option proxy for graph expansion.\n";
 
     if (!TEST)
     {
