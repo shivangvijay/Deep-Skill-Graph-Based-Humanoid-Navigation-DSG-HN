@@ -682,7 +682,7 @@ AbstractedState DeepSkillChaining::_sampleStartNearBoundary()
 #define OG_ACTOR "../models/actor.pt"
 #define OG_CRITIC1 "../models/critic_1.pt"
 #define OG_CRITIC2 "../models/critic_2.pt"
-#define DSC_SAVE_PATH "../dsc_models_with_obs4"
+#define DSC_SAVE_PATH "../dsc_models"
 #define TEST false // if set to true, will not train, will just load and run testing
 
 #define X_MIN -7.0f
