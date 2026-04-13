@@ -195,7 +195,8 @@ between options and goal regions in the graph.
 //   _makeSkill, _shouldCreateNewOption, _validateOption, _pickOption
 
 // inherits DSC's skill learning and execution machinery, but overrides option selection to implement graph-based planning and expansion, and adds graph management methods to maintain the structure of the skill graph and its edges
-class DeepSkillGraph : public DeepSkillChaining 
+class DeepSkillGraph : public DeepSkillChaining
+{
 public:
     struct Config : public DeepSkillChaining::Config
     {
@@ -321,7 +322,7 @@ protected:
     void _makeSkill(bool is_global, std::shared_ptr<Skill> parent) override;
     bool _shouldCreateNewOption() override;
     void _validateOption() override;
-    std::pair<int, AbstractedState> _pickOption(bool eval) override;
+    std::pair<int, AbstractedState> _pickOption();
 
     // --- graph edge management ---
     void _updateEdges();

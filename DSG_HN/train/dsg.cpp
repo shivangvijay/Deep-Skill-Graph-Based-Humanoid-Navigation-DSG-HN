@@ -98,23 +98,21 @@ void DeepSkillGraph::_validateOption()
     _updateEdges();
 }
 
-std::pair<int, AbstractedState> DeepSkillGraph::_pickOption(bool eval)
+std::pair<int, AbstractedState> DeepSkillGraph::_pickOption()
 {
-    if (eval)
+    // Always attempt Dijkstra planning over the graph first; fall back to DSC's POO if no path
+    auto [cost, path] = _dijkstraPath(_currentNodeIdx(), _global_option_idx + 1);
+    if (!path.empty())
     {
-        auto [cost, path] = _dijkstraPath(_currentNodeIdx(), _global_option_idx + 1);
-        if (!path.empty())
+        int next = path[0];
+        if (next < (int)_skills.size())
         {
-            int next = path[0];
-            if (next < (int)_skills.size())
-            {
-                auto global_state = _env->getAbstractedState();
-                if (_skills[next]->canStart(global_state) && !_skills[next]->atTermination(_global_goal))
-                    return {next, _skills[next]->getLocalGoal()};
-            }
+            auto global_state = _env->getAbstractedState();
+            if (_skills[next]->canStart(global_state) && !_skills[next]->atTermination(_global_goal))
+                return {next, _skills[next]->getLocalGoal()};
         }
     }
-    return DeepSkillChaining::_pickOption(eval);
+    return DeepSkillChaining::_pickOption();
 }
 
 // =============================================================================
@@ -521,7 +519,7 @@ std::pair<int,int> DeepSkillGraph::_closestPair(const std::vector<int> &D,
         // representative state for vd: sample from inside its region
         AbstractedState s_vd;
         if (vd < (int)_skills.size())
-            s_vd = _skills[vd]->sampleSubgoalState(false);
+            s_vd = _skills[vd]->sampleSubgoalState();
         else
             s_vd = _goal_regions[vd - (int)_skills.size()].center;
 
@@ -573,7 +571,7 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
         // Case (b): no path found in G — fall back to DSC's option selection 
         if (best_option == -1)
         {
-            auto [o, g] = DeepSkillChaining::_pickOption(false); // TODO: use Policy Over Options 
+            auto [o, g] = DeepSkillChaining::_pickOption(); // fallback: DSC's POO (no graph path) 
             best_option = o;
             best_goal   = g;
         }

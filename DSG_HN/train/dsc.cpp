@@ -678,6 +678,7 @@ AbstractedState DeepSkillChaining::_sampleStartNearBoundary()
 
 /************************************** main **************************************/
 
+#ifndef DSG_BUILD
 #define SCENE_FILE "../config/scene/umaze_scene.xml"
 #define OG_ACTOR "../models/actor.pt"
 #define OG_CRITIC1 "../models/critic_1.pt"
@@ -763,3 +764,4 @@ int main(int argc, char **argv)
 
     return 0;
 }
+#endif // DSG_BUILD
