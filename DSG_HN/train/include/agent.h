@@ -34,6 +34,17 @@ public:
     float exploration_noise = 0.3f;
 
     void setExplorationNoise(float noise) { exploration_noise = noise; }
+    void setLearningRates(float lr_actor, float lr_critic) {
+        for (auto& param_group : actor_optimizer.param_groups()) {
+            static_cast<torch::optim::AdamOptions&>(param_group.options()).lr(lr_actor);
+        }
+        for (auto& param_group : critic_optimizer_1.param_groups()) {
+            static_cast<torch::optim::AdamOptions&>(param_group.options()).lr(lr_critic);
+        }
+        for (auto& param_group : critic_optimizer_2.param_groups()) {
+            static_cast<torch::optim::AdamOptions&>(param_group.options()).lr(lr_critic);
+        }
+    }
 
     Actor actor_local;
     Critic critic_local_1;

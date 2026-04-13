@@ -12,10 +12,10 @@ Skill::Skill(
     float lr_actor, float lr_critic,
     float tau, float gamma, int actor_warmup_steps,
     int batch_size, int actor_update_freq, int k, int max_steps, double nu,
-    std::shared_ptr<Skill> parent, int gestation_period, bool is_global, AbstractedState global_goal, std::shared_ptr<Skill> global_option)
+    std::shared_ptr<Skill> parent, int gestation_period, bool is_global, AbstractedState global_goal, std::shared_ptr<Skill> global_option, bool eval)
     : _id(id), _env(env), _parent(parent), _is_global(is_global), _gestation_period(gestation_period), _k(k), _max_steps(max_steps), _agent(env, actor_layer_sizes, critic_layer_sizes, device,
                                                                                                                                             lr_actor, lr_critic, tau, gamma, batch_size, actor_update_freq, actor_warmup_steps),
-      _rng(std::random_device{}()), _global_goal(global_goal), _nu(nu), _global_option(global_option), _gamma(gamma)
+      _rng(std::random_device{}()), _global_goal(global_goal), _nu(nu), _global_option(global_option), _gamma(gamma), _eval(eval), _lr_actor(lr_actor), _lr_critic(lr_critic)
 {
 }
 
@@ -102,7 +102,7 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
     float current_gamma = 1.0f;
     bool should_terminate = false;
 
-    bool train = false; // (getTrainingPhase() != "validation") || _is_global; //getTrainingPhase() == "gestation" || _is_global;
+    bool train = !_eval && !(getTrainingPhase() == "validation" && !_is_global); // (getTrainingPhase() != "validation") || _is_global; //getTrainingPhase() == "gestation" || _is_global;
     if (_is_global || (getTrainingPhase() != "gestation"))
     {
         _agent.setExplorationNoise(0.1f);
@@ -140,13 +140,13 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
         //         done = torch::tensor({1.0f}, torch::kFloat32);
         //     }
         // }
-        // if (train) // if training instability, perhaps look at putting this outside the while loop like they have it elsewhere
-        // {
-        //her_transitions.push_back({underlying_state, action, next_underlying_state, collision});
-        _agent.addExperience(state, action, reward, next_state, done);
-        _agent.learn();
-        // }
-        if (!_is_global) // replicating global agent logic
+        if (train) // if training instability, perhaps look at putting this outside the while loop like they have it elsewhere
+        {
+            // her_transitions.push_back({underlying_state, action, next_underlying_state, collision});
+            _agent.addExperience(state, action, reward, next_state, done);
+            _agent.learn();
+        }
+        if (!_is_global && train) // replicating global agent logic
         {
             auto &global_agent = _global_option->agent();
             global_agent.addExperience(state, action, reward, next_state, done);
@@ -154,7 +154,7 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
         }
 
         state = next_state;
-        if (!_is_global)
+        if (!_is_global && train)
         {
             visited.push_back({_classifierVec(_env->getAbstractedState()), _env->getAbstractedState()});
         }
@@ -175,7 +175,7 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
             std::cout << "Option: " << _id << " | Success: " << _goal_hits << "/" << _gestation_period << std::endl;
     }
 
-    if (!_is_global) // && train)
+    if (!_is_global && train) // && train)
     {
         _fitClassifier(visited, atTermination(goal));
     }
@@ -192,6 +192,7 @@ void Skill::validateSkill(bool success)
 
     if (success)
     {
+        // _agent.setLearningRates(_lr_actor / 5, _lr_critic / 5);
         _validated = true;
     }
     else
@@ -380,7 +381,7 @@ AbstractedState Skill::sampleSubgoalState() const {
                _euclideanDistance2D(current_state.position, _positive_gestation_records[b].state.position, false);
     });
 
-    if (k_nearest.size() > 10) k_nearest.resize(10);
+    if (k_nearest.size() > 10) k_nearest.resize(10); // changed from 10
 
     std::uniform_int_distribution<size_t> dist(0, k_nearest.size() - 1);
     return _positive_gestation_records[k_nearest[dist(_rng)]].state;

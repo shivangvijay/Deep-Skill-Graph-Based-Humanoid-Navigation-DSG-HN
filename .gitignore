@@ -9,9 +9,4 @@ unitree_mujoco/simulate/mujoco
 **/thirdparty/
 **/.DS_Store
 *.png
-dsc_models/
-dsc_models_obs_free/
-dsc_models_with_obs/
-dsc_models_with_obs1/
-dsc_models_with_obs2/
-dsc_models_with_obs_working/
+dsc_models*/
