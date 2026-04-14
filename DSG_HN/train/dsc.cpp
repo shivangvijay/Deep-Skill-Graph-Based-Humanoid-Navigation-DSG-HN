@@ -15,7 +15,7 @@ DeepSkillChaining::DeepSkillChaining(
     Config cfg, bool eval)
     : _robot_bridge(robot_bridge), _device(device), _global_goal(global_goal), _global_start(global_start), _scene_file_path(scene_file), _cfg(std::move(cfg)), _eval(eval),
       _env(std::make_shared<TrainEnvironment>(_robot_bridge, cfg.steps_per_episode)),
-      _poo(_env, _cfg.poo_layers, device, _cfg.lr_poo, _cfg.tau, _cfg.gamma, _cfg.batch_size), _rng(std::random_device{}())
+      _poo(_env, _cfg.poo_layers, device, _cfg.lr_poo, _cfg.tau, _cfg.gamma, _cfg.poo_batch_size), _rng(std::random_device{}())
 {
     _loadGlobalOption(pretrain_actor_path, pretrain_critic1_path, pretrain_critic2_path);
     _unfinished_option_idx = _global_option_idx; // assigning global option index to unfinished option index, as this is the index of the next option we will train, and we have only trained the global option at this point
@@ -337,29 +337,48 @@ std::pair<int, AbstractedState> DeepSkillChaining::_pickOption()
     std::vector<int> pessimistic_options;
     std::vector<int> optimistic_options;
 
-    for (int o = _global_option_idx + 1; o < _skills.size(); o++) {
-        if (_skills[o]->canStart(global_state) && !_skills[o]->atTermination(_global_goal)) {
-            if (_skills[o]->canStartPessimistic(global_state)) {
+    for (int o = _global_option_idx + 1; o < _skills.size(); o++)
+    {
+        if (_skills[o]->canStart(global_state) && !_skills[o]->atTermination(_global_goal))
+        {
+            if (_skills[o]->canStartPessimistic(global_state))
+            {
                 pessimistic_options.push_back(o);
-            } else {
+            }
+            else
+            {
                 optimistic_options.push_back(o);
             }
         }
     }
 
     // Pick best from pessimistic, fallback to optimistic
-    const auto& candidates = pessimistic_options.empty() ? optimistic_options : pessimistic_options;
+    const auto &candidates = pessimistic_options.empty() ? optimistic_options : pessimistic_options;
 
-    if (!_eval || true) {
-        best_option = candidates.empty() ? _global_option_idx : candidates[0];
-    } else {
-        for (int o : candidates) {
-            if (q_vals[o].item<float>() > best_q_val) {
-                best_q_val = q_vals[o].item<float>();
-                best_option = o;
-            }
-        }
-    }
+    // empirically found that just picking the earliest valid option is more consistent
+    // than picking based on Q values
+    best_option = candidates.empty() ? _global_option_idx : candidates[0];
+
+    // float epsilon = 0.1f;
+
+    // std::uniform_real_distribution<float> roll(0.0f, 1.0f);
+    // if (!_eval && roll(_rng) < epsilon && !candidates.empty())
+    // {
+    //     std::uniform_int_distribution<int> dist(0, candidates.size() - 1);
+    //     best_option = candidates[dist(_rng)];
+    // }
+    // else if (!candidates.empty())
+    // {
+    //     float best_q = std::numeric_limits<float>::lowest();
+    //     for (int o : candidates)
+    //     {
+    //         if (q_vals[o].item<float>() > best_q)
+    //         {
+    //             best_q = q_vals[o].item<float>();
+    //             best_option = o;
+    //         }
+    //     }
+    // }
 
     if (best_option == _global_option_idx)
     {
@@ -388,7 +407,6 @@ std::pair<int, AbstractedState> DeepSkillChaining::_pickOption()
     {
         return {best_option, _skills[best_option]->getLocalGoal()};
     }
-
 }
 
 float DeepSkillChaining::_dscRollout()
@@ -416,12 +434,11 @@ float DeepSkillChaining::_dscRollout()
 
         if (steps_taken == 0) // this condition occurs when we just finished training a new skill, but then find ourselves in the initiation set of that skill while trying to train the new skill
             break;
-        
 
         step += steps_taken;
         total_reward += cum_reward;
 
-        //float clipped_reward = std::clamp(cum_reward, -100.0f, 100.0f); // clipping reward since sometimes not terminating makes the reward spike and want to limit that effect.
+        // float clipped_reward = std::clamp(cum_reward, -100.0f, 100.0f); // clipping reward since sometimes not terminating makes the reward spike and want to limit that effect.
         if (!_eval) // only train poo during training, not evaluation
         {
             _poo.addExperience(first_state_poo, option, cum_reward, last_state_poo, env_done, steps_taken);
@@ -504,7 +521,7 @@ void DeepSkillChaining::_makeSkill(bool is_global, std::shared_ptr<Skill> parent
     else
         std::cout << "\nMaking New Skill With ID: " << id << "\n";
     _skills.push_back(new_skill);
-    _poo.addOption(-5.0f); // Start new options with pessimistic bias to discourage premature selection
+    _poo.addOption(0.0f); // Start with optimistic value so it is used
     _poo.hardCopy();
 }
 

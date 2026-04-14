@@ -57,6 +57,7 @@ public:
         float tau = 0.005f;
         float gamma = 0.99f;
         int batch_size = 256;
+        int poo_batch_size = 16;
         int actor_update_freq = 2;
 
         bool render_training = false;           // if true, startRender() is called before the training loop (slows training)
