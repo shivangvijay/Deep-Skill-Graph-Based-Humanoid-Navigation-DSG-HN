@@ -100,7 +100,9 @@ void DeepSkillGraph::_validateOption()
 
 std::pair<int, AbstractedState> DeepSkillGraph::_pickOption()
 {
-    // Always attempt Dijkstra planning over the graph first; fall back to DSC's POO if no path
+    // TODO: replace with policy over options
+    // Current implementation runs Dijkstra from _currentNodeIdx() (single node, approximate).
+    // This is the case (b) fallback used by _navigateTo() when no graph path exists.
     auto [cost, path] = _dijkstraPath(_currentNodeIdx(), _global_option_idx + 1);
     if (!path.empty())
     {
@@ -126,7 +128,7 @@ int DeepSkillGraph::train(int max_episodes)
 
     for (int episode = 0; episode < max_episodes; episode++)
     {
-        _env->resetTo(_global_start);
+        _env->resetTo(_global_start); // this can either be a fixed position or come from a small set of states. 
         
         // Determine phase
         if (episode < _dsg_cfg.warmup_episodes)
@@ -437,6 +439,20 @@ int DeepSkillGraph::_currentNodeIdx() const
 // Graph queries
 // =============================================================================
 
+std::vector<int> DeepSkillGraph::_getV(const AbstractedState &s) const
+{
+    std::vector<int> V;
+    // O(s): skill nodes (excluding global) whose initiation set contains s
+    for (int o = _global_option_idx + 1; o < (int)_skills.size(); o++)
+        if (_skills[o]->canStart(s))
+            V.push_back(o);
+    // B(s): goal region nodes containing s
+    for (int r = 0; r < (int)_goal_regions.size(); r++)
+        if (_nodeCanStart((int)_skills.size() + r, s))
+            V.push_back((int)_skills.size() + r);
+    return V;
+}
+
 std::vector<int> DeepSkillGraph::_getReachableDescendants(int node_idx) const
 {
     std::unordered_set<int> visited;
@@ -541,37 +557,35 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
     int step = 0;
     while (step < max_steps)
     {
-        auto global_state = _env->getAbstractedState();
-        if (_nodeCanStart(node_idx, global_state))
+        auto current_state = _env->getAbstractedState();
+        if (_nodeCanStart(node_idx, current_state))
             return;
 
-        // O(s_t): options whose initiation set contains current state (Eq 1)
-        std::vector<int> O_s;
-        for (int o = _global_option_idx + 1; o < (int)_skills.size(); o++)
-            if (_skills[o]->canStart(global_state))
-                O_s.push_back(o);
+        // V(s_t) = O(s_t) ∪ B(s_t): all graph nodes whose region contains current state
+        auto V_s = _getV(current_state);
 
-        // Case (a): path exists from some o in O(s_t) to node_idx in G.
-        // Run Dijkstra from each o, select least-cost plan, execute its first option (o itself).
+        // Case (a): find least-cost skill in O(s_t) with a path to node_idx
         int best_option = -1;
         AbstractedState best_goal;
         float best_cost = std::numeric_limits<float>::infinity();
 
-        for (int o : O_s)
+        for (int v : V_s)
         {
-            auto [cost, path] = _dijkstraPath(o, node_idx);
+            if (v >= (int)_skills.size()) continue; // only skill nodes can be executed, i.e., skip goal regions in V(s_t)
+            auto [cost, path] = _dijkstraPath(v, node_idx);
             if (!path.empty() && cost < best_cost)
             {
                 best_cost   = cost;
-                best_option = o;
-                best_goal   = _skills[o]->getLocalGoal();
+                best_option = v;
+                best_goal   = _skills[v]->getLocalGoal();
             }
         }
 
-        // Case (b): no path found in G — fall back to DSC's option selection 
+        // Case (b): no path in G, or V(s_t) contains only goal region nodes
+        // — use DSG's own _pickOption()
         if (best_option == -1)
         {
-            auto [o, g] = DeepSkillChaining::_pickOption(); // fallback: DSC's POO (no graph path) 
+            auto [o, g] = _pickOption();
             best_option = o;
             best_goal   = g;
         }
