@@ -70,8 +70,10 @@ AbstractedState Skill::getLocalGoal()
 //     }
 // }
 
-bool Skill::atTermination(const AbstractedState &goal) const {
-    if (!_parent) {
+bool Skill::atTermination(const AbstractedState &goal) const
+{
+    if (!_parent)
+    {
         auto [reward, done] = _env->computeReward(goal);
         return (done.data_ptr<float>()[0] > 0.5f && reward.data_ptr<float>()[0] > 45);
     }
@@ -320,31 +322,36 @@ double Skill::getDecisionValue(const AbstractedState &state) const
 //     return subgoal;
 // }
 
-AbstractedState Skill::sampleSubgoalState() const {
+AbstractedState Skill::sampleSubgoalState() const
+{
     if (_positive_gestation_records.empty())
         return _env->getRandomValidAbstractedState();
 
     // 1. Identify candidate indices based on the parent's pessimistic region
     std::vector<size_t> candidate_indices;
-    for (size_t i = 0; i < _positive_gestation_records.size(); ++i) {
-        if (_parent && _parent->canStartPessimistic(_positive_gestation_records[i].state)) {
+    for (size_t i = 0; i < _positive_gestation_records.size(); ++i)
+    {
+        if (_parent && _parent->canStartPessimistic(_positive_gestation_records[i].state))
+        {
             candidate_indices.push_back(i);
         }
     }
 
     // Fallback if the pessimistic set is too small/empty during early training
-    if (candidate_indices.empty()) {
+    if (candidate_indices.empty())
+    {
         candidate_indices.resize(_positive_gestation_records.size());
         std::iota(candidate_indices.begin(), candidate_indices.end(), 0);
     }
 
     // 2. Perform Epsilon-Tolerance Check (The "Landing Pad" logic)
     // Only accept states where a small neighborhood is also considered "Positive"
-    float tolerance = 0.15f; // Matches the Python 'tolerance' logic
+    float tolerance = 0.25f; // Matches the Python 'tolerance' logic
     std::vector<size_t> robust_indices;
 
-    for (size_t idx : candidate_indices) {
-        const auto& pos = _positive_gestation_records[idx].state.position;
+    for (size_t idx : candidate_indices)
+    {
+        const auto &pos = _positive_gestation_records[idx].state.position;
         bool neighborhood_valid = true;
 
         // Check 4 points around the candidate (Cross pattern)
@@ -352,38 +359,44 @@ AbstractedState Skill::sampleSubgoalState() const {
             {pos[0] + tolerance, pos[1], pos[2]},
             {pos[0] - tolerance, pos[1], pos[2]},
             {pos[0], pos[1] + tolerance, pos[2]},
-            {pos[0], pos[1] - tolerance, pos[2]}
-        };
+            {pos[0], pos[1] - tolerance, pos[2]}};
 
-        for (const auto& n_pos : neighbors) {
+        for (const auto &n_pos : neighbors)
+        {
             AbstractedState n_state = _positive_gestation_records[idx].state;
             n_state.position = n_pos;
             // The Python reference requires the neighborhood to be valid in the classifier
-            if (_parent && !_parent->canStartPessimistic(n_state)) {
+            if (_parent && !_parent->canStartPessimistic(n_state))
+            {
                 neighborhood_valid = false;
                 break;
             }
         }
 
-        if (neighborhood_valid) robust_indices.push_back(idx);
+        if (neighborhood_valid)
+            robust_indices.push_back(idx);
     }
 
     // 3. Final selection from robust candidates
-    if (robust_indices.empty()) {
+    if (robust_indices.empty())
+    {
         std::cout << "No robust candidates found, sampling from all positives\n";
     }
-    const auto& final_pool = robust_indices.empty() ? candidate_indices : robust_indices;
-    
+    const auto &final_pool = robust_indices.empty() ? candidate_indices : robust_indices;
+
     // Nearest-neighbor filtering to keep the chain tight
     AbstractedState current_state = _env->getAbstractedState();
     std::vector<size_t> k_nearest = final_pool;
-    
-    std::sort(k_nearest.begin(), k_nearest.end(), [&](size_t a, size_t b) {
-        return _euclideanDistance2D(current_state.position, _positive_gestation_records[a].state.position, false) <
-               _euclideanDistance2D(current_state.position, _positive_gestation_records[b].state.position, false);
-    });
 
-    if (k_nearest.size() > 10) k_nearest.resize(10); // changed from 10
+    std::sort(k_nearest.begin(), k_nearest.end(), [&](size_t a, size_t b)
+              { return _euclideanDistance2D(current_state.position, _positive_gestation_records[a].state.position, false) <
+                       _euclideanDistance2D(current_state.position, _positive_gestation_records[b].state.position, false); });
+
+    // empirically, keeping the largest 5% of the positives seems to balance exploration and convergence well
+    // before, kept at fixed size of 10, but this often led to oversampling the same few points near to obstacles
+    size_t k_value = std::max((size_t)10, final_pool.size() / 10);
+    if (k_nearest.size() > k_value)
+        k_nearest.resize(k_value);
 
     std::uniform_int_distribution<size_t> dist(0, k_nearest.size() - 1);
     return _positive_gestation_records[k_nearest[dist(_rng)]].state;
@@ -759,12 +772,12 @@ void Skill::_herUpdate(const std::vector<Transition> &trajectory)
 //     }
 // }
 
-void Skill::_fitClassifier(const std::vector<GestationRecord>& visited, bool term_success)
+void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool term_success)
 {
     if (term_success)
     {
         // 1. Capture the "Entry Point": The state where the robot began this successful rollout.
-        // This is crucial for chaining: it tells the next skill in the chain exactly where 
+        // This is crucial for chaining: it tells the next skill in the chain exactly where
         // a successful path was found. We skip this for the global/goal option.
         if (_parent != nullptr)
         {
@@ -787,7 +800,7 @@ void Skill::_fitClassifier(const std::vector<GestationRecord>& visited, bool ter
     }
     else
     {
-        // 3. Negative Examples: If the rollout failed, we mark the start state 
+        // 3. Negative Examples: If the rollout failed, we mark the start state
         // as a negative example to prevent the classifier from over-expanding here.
         _gestation_vecs.push_back(visited.front().classifier_vec);
         _gestation_labels.push_back(-1);
@@ -803,13 +816,16 @@ void Skill::_fitClassifier(const std::vector<GestationRecord>& visited, bool ter
     {
         // PHASE 1: No failures yet. Train One-Class SVMs.
         std::vector<std::vector<float>> pos_vecs;
-        for (size_t i = 0; i < _gestation_vecs.size(); i++) {
-            if (_gestation_labels[i] == 1) pos_vecs.push_back(_gestation_vecs[i]);
+        for (size_t i = 0; i < _gestation_vecs.size(); i++)
+        {
+            if (_gestation_labels[i] == 1)
+                pos_vecs.push_back(_gestation_vecs[i]);
         }
 
-        if (!pos_vecs.empty()) {
+        if (!pos_vecs.empty())
+        {
             // Nu controls tightness; Gamma (now ~1.0) controls localization.
-            _pessimistic_classifier.trainOneClass(pos_vecs, _nu); 
+            _pessimistic_classifier.trainOneClass(pos_vecs, _nu);
             _classifier.trainOneClass(pos_vecs, _nu / 10.0);
         }
     }
@@ -822,11 +838,14 @@ void Skill::_fitClassifier(const std::vector<GestationRecord>& visited, bool ter
 
         // Filter: Train the Pessimistic One-Class SVM only on states the SVC confirms as Positive.
         std::vector<std::vector<float>> svc_positive_vecs;
-        for (const auto& vec : _gestation_vecs) {
-            if (_classifier.classify(vec)) svc_positive_vecs.push_back(vec);
+        for (const auto &vec : _gestation_vecs)
+        {
+            if (_classifier.classify(vec))
+                svc_positive_vecs.push_back(vec);
         }
 
-        if (!svc_positive_vecs.empty()) {
+        if (!svc_positive_vecs.empty())
+        {
             _pessimistic_classifier.trainOneClass(svc_positive_vecs, _nu);
         }
     }
