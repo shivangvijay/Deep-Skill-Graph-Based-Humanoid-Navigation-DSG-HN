@@ -24,9 +24,16 @@ RobotBridgeTrain::RobotBridgeTrain(std::string scene_file, float x_min, float x_
         std::make_shared<unitree::MuJoCoArticulation>(eng));
     env->alg = std::make_unique<isaaclab::OrtRunner>(policy_dir / "exported" / "policy.onnx");
 
+    d_scratch = mj_makeData(eng->getModel());
     num_motors = eng->getModel()->nu;
     sim_dt = eng->getModel()->opt.timestep;
     initSensorAddresses();
+}
+
+RobotBridgeTrain::~RobotBridgeTrain()
+{
+    if (d_scratch)
+        mj_deleteData(d_scratch);
 }
 
 void RobotBridgeTrain::publishVelCommand(const std::vector<float> &cmd)
@@ -78,25 +85,26 @@ void RobotBridgeTrain::update()
 
 AbstractedState RobotBridgeTrain::generateRandomValidConfiguration()
 {
-    mjModel *m_orig = eng->getModel();
-    mjData *d_orig = eng->getData();
-
     int attempts = 0;
     std::array<float, 3> pos;
     std::array<float, 4> quat;
     std::array<float, 3> vel;
     std::array<float, 3> ang_vel;
-    do
-    {
-        if (attempts++ > 100)
-            throw std::runtime_error("Could Not Generate Valid Random Configuration");
-        std::tie(pos, quat, vel, ang_vel) = generateRandomPoseWithVel();
-        eng->reset(pos, quat, vel, ang_vel);
-    } while (eng->inCollision() && distanceToNearestObstacle(pos, quat) < min_spawn_distance_from_obstacles); // TODO: maybe want to tune this distance
 
-    eng->m = m_orig;
-    eng->d = d_orig;
-    mj_forward(m_orig, d_orig);
+    bool found = false;
+    while (attempts++ < 100)
+    {
+        std::tie(pos, quat, vel, ang_vel) = generateRandomPoseWithVel();
+        
+        if (isConfigurationValid(pos, quat, vel, ang_vel)) {
+            found = true;
+            break;
+        }
+    }
+
+    if (!found)
+        throw std::runtime_error("Could Not Generate Valid Random Configuration");
+
     return {pos, quat, vel, ang_vel};
 }
 
@@ -107,13 +115,44 @@ bool RobotBridgeTrain::isConfigurationValid(const AbstractedState &state)
 
 bool RobotBridgeTrain::isConfigurationValid(const std::array<float, 3> &pos, const std::array<float, 4> &quat, const std::array<float, 3> &vel, const std::array<float, 3> &ang_vel)
 {
-    mjModel *m_orig = eng->getModel();
-    mjData *d_orig = eng->getData();
-    eng->reset(pos, quat, vel, ang_vel);
-    bool valid = !eng->inCollision() && pos[0] >= x_min && pos[0] <= x_max && pos[1] >= y_min && pos[1] <= y_max;
-    eng->m = m_orig;
-    eng->d = d_orig;
-    return valid && distanceToNearestObstacle(pos, quat) >= min_spawn_distance_from_obstacles;
+    if (pos[0] < x_min || pos[0] > x_max || pos[1] < y_min || pos[1] > y_max)
+        return false;
+
+    if (distanceToNearestObstacle(pos, quat) < min_spawn_distance_from_obstacles)
+        return false;
+
+    mjModel *m = eng->getModel();
+
+    mj_resetData(m, d_scratch);
+    
+    d_scratch->qpos[0] = pos[0]; d_scratch->qpos[1] = pos[1]; d_scratch->qpos[2] = pos[2];
+    d_scratch->qpos[3] = quat[0]; d_scratch->qpos[4] = quat[1]; 
+    d_scratch->qpos[5] = quat[2]; d_scratch->qpos[6] = quat[3];
+    
+    d_scratch->qvel[0] = vel[0]; d_scratch->qvel[1] = vel[1]; d_scratch->qvel[2] = vel[2];
+    d_scratch->qvel[3] = ang_vel[0]; d_scratch->qvel[4] = ang_vel[1]; d_scratch->qvel[5] = ang_vel[2];
+
+    mj_forward(m, d_scratch);
+
+    for (int i = 0; i < d_scratch->ncon; i++)
+    {
+        mjContact *contact = &d_scratch->contact[i];
+
+        int geom1 = contact->geom1;
+        int geom2 = contact->geom2;
+
+        std::string name1 = mj_id2name(m, mjOBJ_GEOM, geom1) ? mj_id2name(m, mjOBJ_GEOM, geom1) : "";
+        std::string name2 = mj_id2name(m, mjOBJ_GEOM, geom2) ? mj_id2name(m, mjOBJ_GEOM, geom2) : "";
+
+        // want to only ignore collisions with the floor/ground on the
+        if (name1 != "floor" && name1 != "ground" &&
+            name2 != "floor" && name2 != "ground")
+        {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 RobotState RobotBridgeTrain::getRobotState()

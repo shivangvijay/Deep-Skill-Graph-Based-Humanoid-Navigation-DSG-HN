@@ -14,7 +14,7 @@ public:
     // Pass in your existing env and engine pointers. TODO: unify this and other RobotBridge by just passing in vm
     RobotBridgeTrain(std::string scene_file, float x_min, float x_max, float y_min, float y_max, std::filesystem::path policy_dir, bool render); // std::shared_ptr<MuJoCoEngine> eng, std::unique_ptr<isaaclab::ManagerBasedRLEnv> env, bool render);
 
-    virtual ~RobotBridgeTrain() = default;
+    ~RobotBridgeTrain() override;
 
     void publishVelCommand(const std::vector<float> &cmd) override;
     void resetRobot(const std::array<float, 3> &pos, const std::array<float, 4> &quat) override;
@@ -33,6 +33,7 @@ public:
     bool isConfigurationValid(const std::array<float, 3> &pos, const std::array<float, 4> &quat, const std::array<float, 3> &vel, const std::array<float, 3> &ang_vel);
 
 private:
+    mjData* d_scratch = nullptr;
     std::shared_ptr<MuJoCoEngine> eng;
     std::unique_ptr<isaaclab::ManagerBasedRLEnv> env;
 
