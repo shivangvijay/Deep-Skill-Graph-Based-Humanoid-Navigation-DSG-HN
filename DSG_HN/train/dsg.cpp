@@ -110,11 +110,35 @@ std::pair<int, AbstractedState> DeepSkillGraph::_pickOption()
         if (next < (int)_skills.size())
         {
             auto global_state = _env->getAbstractedState();
-            if (_skills[next]->canStart(global_state) && !_skills[next]->atTermination(_global_goal))
+            if (_skills[next]->canStart(global_state))
                 return {next, _skills[next]->getLocalGoal()};
         }
     }
     return DeepSkillChaining::_pickOption();
+}
+
+float DeepSkillGraph::execute()
+{
+    _env->resetTo(_global_start);
+
+    // Navigate toward the most recently added goal region (current frontier).
+    // Falls back to the first chained skill node if no goal regions exist yet.
+    int target_node = (_goal_regions.empty())
+        ? _global_option_idx + 1
+        : (int)_skills.size() + (int)_goal_regions.size() - 1;
+
+    _navigateTo(target_node, _dsg_cfg.steps_per_episode);
+
+    // Return negative distance to target as a proxy reward
+    auto s = _env->getAbstractedState();
+    return -_nodeDistanceToState(target_node, s);
+}
+
+void DeepSkillGraph::_warmupRollout()
+{
+    // In DSG there is no fixed global goal — roll the global option toward a random valid state.
+    AbstractedState target = _env->getRandomValidAbstractedState();
+    _skills[_global_option_idx]->rollout(target);
 }
 
 // =============================================================================
@@ -133,11 +157,11 @@ int DeepSkillGraph::train(int max_episodes)
         // Determine phase
         if (episode < _dsg_cfg.warmup_episodes)
         {
-            _warmupRollout();
+            _warmupRollout(); // this only warms up the polict over options by rolling out the global option - maybe remove?
         }
         else
         {
-            if (episode % _dsg_cfg.expansion_freq == 0)
+            if (episode % _dsg_cfg.expansion_freq == 0) // expand every _dsg_cfg.expansion_freq episodes, otherwise consolidate
             {
                 bool expanded = false;
                 for (int attempt = 0; attempt < _dsg_cfg.max_expansion_tries && !expanded; attempt++)
@@ -822,20 +846,19 @@ int main(int argc, char **argv)
     cfg.max_option_steps       = 50;
     cfg.nu                     = 0.1;
     cfg.actor_warmup_steps     = 0;
-    cfg.warmup_episodes        = 0;
+    cfg.warmup_episodes        = 0; // use to warm up policy over options with global option rollouts before starting expansion/consolidation
     cfg.verbose                = true;
     cfg.log_interval           = 5;
     cfg.visualize_initiation_sets = true;
     cfg.max_children_per_node  = 3;
-    cfg.expansion_freq         = 5;
+    cfg.expansion_freq         = 5; // frequency of expansion phase (every N episodes)
     cfg.mpc_steps              = 50;
     cfg.goal_region_epsilon    = 1.0f;
 
-    AbstractedState global_goal  = {{-4.5, 4.1, 0}, {0, 0, 0, -1}, {0, 0, 0}, {0, 0, 0}};
     AbstractedState global_start = {{-5.3, -4.5, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 
-    // This initializes policy over options and global option because DSG inherits from DSC
-    DeepSkillGraph dsg(robot_bridge, device, global_goal, global_start,
+    // DSG has no fixed global goal — the graph grows outward from global_start
+    DeepSkillGraph dsg(robot_bridge, device, global_start,
                        OG_ACTOR, OG_CRITIC1, OG_CRITIC2, SCENE_FILE, cfg);
 
     // Load transition model if checkpoints exist (graceful skip if not yet trained)

@@ -268,29 +268,28 @@ public:
 
     DeepSkillGraph(std::shared_ptr<RobotBridgeTrain> robot_bridge,
                    torch::Device device,
-                   AbstractedState global_goal,
                    AbstractedState global_start,
                    const std::string &pretrain_actor_path,
                    const std::string &pretrain_critic1_path,
                    const std::string &pretrain_critic2_path,
                    const std::string &scene_file,
                    Config cfg)
-        : DeepSkillChaining(robot_bridge, device, global_goal, global_start,
+        : DeepSkillChaining(robot_bridge, device, AbstractedState{}, global_start,
                             pretrain_actor_path, pretrain_critic1_path, pretrain_critic2_path,
                             scene_file, cfg), _dsg_cfg(cfg) {}
 
     DeepSkillGraph(std::shared_ptr<RobotBridgeTrain> robot_bridge,
                    torch::Device device,
-                   AbstractedState global_goal,
                    AbstractedState global_start,
                    const std::string &scene_file,
                    Config cfg)
-        : DeepSkillChaining(robot_bridge, device, global_goal, global_start, scene_file, cfg),
+        : DeepSkillChaining(robot_bridge, device, AbstractedState{}, global_start, scene_file, cfg),
           _dsg_cfg(cfg) {}
 
-    int  train(int max_episodes) override;
-    void save(const std::string &dir) const override;
-    void load(const std::string &dir, const std::string &scene_file) override;
+    int   train(int max_episodes) override;
+    float execute() override;         // graph-based: navigate from _global_start toward frontier
+    void  save(const std::string &dir) const override;
+    void  load(const std::string &dir, const std::string &scene_file) override;
 
     // Load a pre-trained Gaussian delta transition model for MPC-based graph expansion.
     // model_path    : path to the .pt checkpoint produced by transition_train_gaussian_delta
@@ -322,6 +321,7 @@ protected:
     void _makeSkill(bool is_global, std::shared_ptr<Skill> parent) override;
     bool _shouldCreateNewOption() override;
     void _validateOption() override;
+    void _warmupRollout(); // override: rolls out global option toward a random valid state
     std::pair<int, AbstractedState> _pickOption();
 
     // --- graph edge management ---
