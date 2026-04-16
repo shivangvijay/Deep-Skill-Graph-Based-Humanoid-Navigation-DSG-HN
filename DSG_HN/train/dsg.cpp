@@ -98,24 +98,7 @@ void DeepSkillGraph::_validateOption()
     _updateEdges();
 }
 
-std::pair<int, AbstractedState> DeepSkillGraph::_pickOption()
-{
-    // TODO: replace with policy over options
-    // Current implementation runs Dijkstra from _currentNodeIdx() (single node, approximate).
-    // This is the case (b) fallback used by _navigateTo() when no graph path exists.
-    auto [cost, path] = _dijkstraPath(_currentNodeIdx(), _global_option_idx + 1);
-    if (!path.empty())
-    {
-        int next = path[0];
-        if (next < (int)_skills.size())
-        {
-            auto global_state = _env->getAbstractedState();
-            if (_skills[next]->canStart(global_state))
-                return {next, _skills[next]->getLocalGoal()};
-        }
-    }
-    return DeepSkillChaining::_pickOption();
-}
+
 
 float DeepSkillGraph::execute()
 {
@@ -163,6 +146,7 @@ int DeepSkillGraph::train(int max_episodes)
         {
             if (episode % _dsg_cfg.expansion_freq == 0) // expand every _dsg_cfg.expansion_freq episodes, otherwise consolidate
             {
+                // first episode will be expansion
                 bool expanded = false;
                 for (int attempt = 0; attempt < _dsg_cfg.max_expansion_tries && !expanded; attempt++)
                     expanded = _graphExpansionPhase();
@@ -477,6 +461,18 @@ std::vector<int> DeepSkillGraph::_getV(const AbstractedState &s) const
     return V;
 }
 
+std::vector<int> DeepSkillGraph::_getDSt(const AbstractedState &s) const
+{
+    auto V_s = _getV(s);
+    std::unordered_set<int> D_set;
+    for (int v : V_s)
+    {
+        auto desc = _getReachableDescendants(v);
+        D_set.insert(desc.begin(), desc.end());
+    }
+    return std::vector<int>(D_set.begin(), D_set.end());
+}
+
 std::vector<int> DeepSkillGraph::_getReachableDescendants(int node_idx) const
 {
     std::unordered_set<int> visited;
@@ -533,8 +529,8 @@ int DeepSkillGraph::_nearestNodeToState(const AbstractedState &s) const
 int DeepSkillGraph::_closestDisconnectedNode() const
 {
     auto s = _env->getAbstractedState();
-    int cur = _currentNodeIdx();
-    auto reachable = _getReachableDescendants(cur);
+    // Use D(s_t): descendants of all nodes in V(s_t), not just the single current node
+    auto reachable = _getDSt(s);
     std::unordered_set<int> reachable_set(reachable.begin(), reachable.end());
 
     int   best = -1;
@@ -605,20 +601,26 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
             }
         }
 
-        // Case (b): no path in G, or V(s_t) contains only goal region nodes
-        // — use DSG's own _pickOption()
+        // Case (b): no graph path from V(s_t) to node_idx (degenerate — node_idx should be in D(s_t))
+        // Steer the global option directly toward the target node as a recovery primitive.
         if (best_option == -1)
         {
-            auto [o, g] = _pickOption();
-            best_option = o;
-            best_goal   = g;
+            best_option = _global_option_idx;
+            best_goal   = (node_idx < (int)_skills.size()) 
+                ? _skills[node_idx]->sampleSubgoalState()
+                : _goal_regions[node_idx - (int)_skills.size()].center; // steer global option directly toward the target node as a recovery primitive
         }
 
+        // The paper replans at every new state; training happens in the dedicated training phases.
+        // bool prev_eval = _eval;
+        // setEvalMode(true);
         auto [steps_taken, cum_reward, done, first_poo, last_poo] =
             _skills[best_option]->rollout(best_goal);
+        // setEvalMode(prev_eval);
 
         if (steps_taken == 0) { step++; continue; }
-
+        
+        // update poo - not needed, can remove
         _poo.addExperience(first_poo, best_option, cum_reward, last_poo, false, steps_taken);
         _poo.learn();
         step += steps_taken;
@@ -729,8 +731,20 @@ bool DeepSkillGraph::_graphExpansionPhase()
     // 1. Sample random reachable state — exploration target - TODO: implement sampling strategy
     AbstractedState s_rand = _env->getRandomValidAbstractedState();
 
-    // 2. Find nearest graph node to s_rand
-    int v_nn = _nearestNodeToState(s_rand);
+    // 2. Find nearest node to s_rand within D(s_t) — guarantees a path exists from current state
+    auto D_st = _getDSt(_env->getAbstractedState());
+    int v_nn = -1;
+    {
+        float best_dist = std::numeric_limits<float>::infinity();
+        for (int v : D_st)
+        {
+            float d = _nodeDistanceToState(v, s_rand);
+            if (d < best_dist) { best_dist = d; v_nn = v; }
+        }
+    }
+    // Fallback: graph not yet reachable from current state — use globally nearest node
+    if (v_nn == -1)
+        v_nn = _nearestNodeToState(s_rand);
 
     // 3. Navigate to v_nn using current graph plan / POO fallback
     _navigateTo(v_nn, _dsg_cfg.steps_per_episode / 2);
@@ -771,9 +785,8 @@ void DeepSkillGraph::_graphConsolidationPhase()
         return;
     }
 
-    // 2. Identify reachable descendants of current position and ancestors of v_g
-    int cur_node = _currentNodeIdx();
-    auto D_s  = _getReachableDescendants(cur_node);
+    // 2. D(s_t): descendants of all nodes in V(s_t); A(v_g): ancestors of the target node
+    auto D_s  = _getDSt(_env->getAbstractedState());
     auto A_vg = _getAncestors(v_g);
 
     // 3. Find closest bridgeable pair (v_d ∈ D_s, v_a ∈ A_vg)

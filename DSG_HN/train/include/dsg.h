@@ -337,7 +337,8 @@ private:
     int   _currentNodeIdx() const;
 
     // --- graph queries ---
-    std::vector<int>   _getV(const AbstractedState &s) const; // V(s) = O(s) ∪ B(s): all nodes whose region contains s
+    std::vector<int>   _getV(const AbstractedState &s) const;   // V(s) = O(s) ∪ B(s): all nodes whose region contains s
+    std::vector<int>   _getDSt(const AbstractedState &s) const; // D(s_t) = union of descendants of all v in V(s_t)
     std::vector<int>   _getReachableDescendants(int node_idx) const;
     std::vector<int>   _getAncestors(int node_idx) const;
     int                _nearestNodeToState(const AbstractedState &s) const;
