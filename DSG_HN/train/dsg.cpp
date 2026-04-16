@@ -351,7 +351,7 @@ void DeepSkillGraph::_updateEdges()
                 if (!_skills[j]->canStartPessimistic(rec.state)) { all_covered = false; break; }
             if (all_covered)
             {
-                _edges.push_back({i, j, 0.0f});
+                _edges.push_back({i, j, 1.0f});
                 std::cout << "[DSG] Edge " << i << " → " << j << "\n";
             }
         }
@@ -366,9 +366,22 @@ void DeepSkillGraph::_updateEdges()
                 if (!_nodeCanStart(gr_idx, rec.state)) { all_covered = false; break; }
             if (all_covered)
             {
-                _edges.push_back({i, gr_idx, 0.0f});
+                _edges.push_back({i, gr_idx, 1.0f});
                 std::cout << "[DSG] Edge " << i << " → GR" << r << "\n";
             }
+        }
+    }
+}
+
+void DeepSkillGraph::_updateEdgeWeight(int from, int to, bool success)
+{
+    const float kappa = _dsg_cfg.edge_weight_kappa;
+    for (auto &e : _edges)
+    {
+        if (e.from == from && e.to == to)
+        {
+            e.weight *= success ? kappa : (1.0f / kappa);
+            return;
         }
     }
 }
@@ -389,7 +402,7 @@ std::pair<float, std::vector<int>> DeepSkillGraph::_dijkstraPath(int from_node, 
         if (u < (int)_skills.size())
             for (int k = 0; k < (int)_skills.size(); k++)
                 for (const auto &child : _skills[u]->children)
-                    if (_skills[k] == child) { nbrs.push_back({k, 0.0f}); break; }
+                    if (_skills[k] == child) { nbrs.push_back({k, 1.0f}); break; }
         return nbrs;
     };
 
@@ -603,6 +616,7 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
 
         // Case (a): find least-cost skill in O(s_t) with a path to node_idx
         int best_option = -1;
+        int next_node   = -1; // first node on the Dijkstra path after best_option
         AbstractedState best_goal;
         float best_cost = std::numeric_limits<float>::infinity();
 
@@ -614,6 +628,7 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
             {
                 best_cost   = cost;
                 best_option = v;
+                next_node   = path.front();
                 best_goal   = _skills[v]->getLocalGoal();
             }
         }
@@ -623,7 +638,7 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
         if (best_option == -1)
         {
             best_option = _global_option_idx;
-            best_goal   = (node_idx < (int)_skills.size()) 
+            best_goal   = (node_idx < (int)_skills.size())
                 ? _skills[node_idx]->sampleSubgoalState()
                 : _goal_regions[node_idx - (int)_skills.size()].center; // steer global option directly toward the target node as a recovery primitive
         }
@@ -636,6 +651,13 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
         // setEvalMode(prev_eval);
 
         if (steps_taken == 0) { step++; continue; }
+
+        // Update edge weight based on whether the agent entered the next node (case a only).
+        if (next_node != -1)
+        {
+            bool success = _nodeCanStart(next_node, _env->getAbstractedState());
+            _updateEdgeWeight(best_option, next_node, success);
+        }
         
         // update poo - not needed, can remove
         _poo.addExperience(first_poo, best_option, cum_reward, last_poo, false, steps_taken);

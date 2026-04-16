@@ -237,6 +237,7 @@ public:
         int   mpc_steps            = 20;   // steps global option runs as MPC proxy toward s_rand
         float goal_region_epsilon  = 1.0f; // epsilon-ball radius (metres) defining a goal region node
         int   max_expansion_tries  = 10;   // max attempts per expansion phase before falling back to consolidation
+        float edge_weight_kappa    = 0.95f; // multiplicative factor for edge weight updates: w *= κ^f(s), f∈{1,-1}
 
         // DSG only: MPC look-ahead horizon (K in paper Appendix G, Table 5)
         int mpc_horizon = 7;
@@ -328,6 +329,8 @@ protected:
     void _updateEdges();
     // Returns {total_cost, path} from from_node to to_node. Path is empty if unreachable.
     std::pair<float, std::vector<int>> _dijkstraPath(int from_node, int to_node) const;
+    // Multiplicative edge weight update: w *= κ^f(s), κ=0.95, f=1 success / f=-1 failure.
+    void _updateEdgeWeight(int from, int to, bool success);
 
 private:
     // --- unified node dispatch ---
