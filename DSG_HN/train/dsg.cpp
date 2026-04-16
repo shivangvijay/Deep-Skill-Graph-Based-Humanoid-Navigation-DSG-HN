@@ -811,9 +811,10 @@ bool DeepSkillGraph::_graphExpansionPhase()
     AbstractedState s_mpc = _runMPC(s_rand);
 
     // 5. Rejection sampling: reject if s_mpc is already inside any node in the graph
-    // (paper B.1: reject if βo(st)=1 or Io(st)=1 for any o in V)
+    // Only mature skills have trained classifiers; gestating skills return canStart()=true
+    // everywhere so must be excluded from this check.
     for (int o = _global_option_idx + 1; o < (int)_skills.size(); o++)
-        if (_skills[o]->canStart(s_mpc))
+        if (_skills[o]->getTrainingPhase() == "mature" && _skills[o]->canStart(s_mpc))
         {
             std::cout << "[DSG Expansion] Rejected — s_mpc covered by skill " << o << "\n";
             return false;
