@@ -745,26 +745,41 @@ AbstractedState DeepSkillGraph::_runMPC(const AbstractedState &target)
 
 void DeepSkillGraph::_trainDSCBridge(int v_a_skill_idx)
 {
-    // Goal regions cannot serve as termination targets (no SVM initiation set).
-    if (v_a_skill_idx >= (int)_skills.size())
-    {
-        std::cout << "[DSG] _trainDSCBridge: v_a is a goal region, skipping bridge.\n";
-        return;
-    }
+    // When v_a is a goal region its ε-ball is the termination set for the bridge skill.
+    // We create a null-parent skill (atTermination uses computeReward) and temporarily
+    // set success_radius = goal_region_epsilon so termination fires at the ε-ball boundary.
+    bool v_a_is_goal_region = (v_a_skill_idx >= (int)_skills.size());
+    AbstractedState bridge_goal;
 
-    // Create a new skill whose termination condition is v_a's initiation set.
-    _makeSkill(false, _skills[v_a_skill_idx]);
+    if (v_a_is_goal_region)
+    {
+        int gr_idx = v_a_skill_idx - (int)_skills.size();
+        bridge_goal = _goal_regions[gr_idx].center;
+        _makeSkill(false, nullptr);
+    }
+    else
+    {
+        _makeSkill(false, _skills[v_a_skill_idx]);
+    }
     int bridge_idx = (int)_skills.size() - 1;
 
     std::cout << "[DSG] Training bridge skill " << bridge_idx
-              << " toward skill " << v_a_skill_idx << "\n";
+              << " toward " << (v_a_is_goal_region ? "goal region " : "skill ")
+              << v_a_skill_idx << "\n";
+
+    // Widen success radius to ε for goal-region targets so termination matches the ε-ball.
+    float prev_success_radius = _env->success_radius;
+    if (v_a_is_goal_region)
+        _env->success_radius = _dsg_cfg.goal_region_epsilon;
 
     // Run rollouts until the bridge skill matures or the step budget is exhausted.
     int step = 0;
     while (_skills[bridge_idx]->getTrainingPhase() != "mature" &&
            step < _dsg_cfg.steps_per_episode)
     {
-        AbstractedState goal = _skills[bridge_idx]->getLocalGoal();
+        AbstractedState goal = v_a_is_goal_region
+            ? bridge_goal
+            : _skills[bridge_idx]->getLocalGoal();
         auto [steps_taken, cum_reward, done, first_poo, last_poo] =
             _skills[bridge_idx]->rollout(goal);
 
@@ -774,6 +789,15 @@ void DeepSkillGraph::_trainDSCBridge(int v_a_skill_idx)
         _poo.learn();
         step += steps_taken;
     }
+
+    _env->success_radius = prev_success_radius;
+
+    bool matured = _skills[bridge_idx]->getTrainingPhase() == "mature";
+    std::cout << "[DSG] Bridge skill " << bridge_idx
+              << (matured ? " matured" : " budget exhausted")
+              << " after " << step << "/" << _dsg_cfg.steps_per_episode << " steps"
+              << " hits=" << _skills[bridge_idx]->goalHits()
+              << "/" << _skills[bridge_idx]->gestationPeriod() << "\n";
 }
 
 // =============================================================================
