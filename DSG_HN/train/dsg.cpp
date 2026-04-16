@@ -135,8 +135,25 @@ int DeepSkillGraph::train(int max_episodes)
 
     for (int episode = 0; episode < max_episodes; episode++)
     {
-        _env->resetTo(_global_start); // this can either be a fixed position or come from a small set of states. 
-        
+        _env->resetTo(_global_start); // this can either be a fixed position or come from a small set of states.
+
+        // Per-episode header: episode, phase, and current graph size
+        {
+            std::string phase_label;
+            if (episode < _dsg_cfg.warmup_episodes)
+                phase_label = "warmup";
+            else if (episode % _dsg_cfg.expansion_freq == 0)
+                phase_label = "expansion";
+            else
+                phase_label = "consolidation";
+
+            std::cout << "[Ep " << (episode + 1) << "/" << max_episodes
+                      << " | " << phase_label
+                      << " | V=" << (_skills.size() + _goal_regions.size())
+                      << " (S=" << _skills.size() << " GR=" << _goal_regions.size() << ")"
+                      << " E=" << _edges.size() << "]\n";
+        }
+
         // Determine phase
         if (episode < _dsg_cfg.warmup_episodes)
         {
@@ -629,9 +646,13 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
 
 AbstractedState DeepSkillGraph::_runMPC(const AbstractedState &target)
 {
-    // ── Fallback: no transition model loaded ─────────────────────────────────
+    // ── Fallback: no transition model loaded, use global option ─────────────────────────────────
     if (!_has_transition_model)
     {
+        std::cout << "[MPC Fallback] No model — global option proxy for "
+                  << _dsg_cfg.mpc_steps << " steps toward ("
+                  << target.position[0] << ", " << target.position[1] << ")\n";
+
         int steps_remaining = _dsg_cfg.mpc_steps;
         while (steps_remaining > 0)
         {
@@ -639,7 +660,13 @@ AbstractedState DeepSkillGraph::_runMPC(const AbstractedState &target)
                 _skills[_global_option_idx]->rollout(target);
             steps_remaining -= std::max(1, steps_taken);
         }
-        return _env->getAbstractedState();
+
+        auto s_reached = _env->getAbstractedState();
+        float dx = s_reached.position[0] - target.position[0];
+        float dy = s_reached.position[1] - target.position[1];
+        std::cout << "[MPC Fallback] Reached (" << s_reached.position[0] << ", "
+                  << s_reached.position[1] << ") dist=" << std::sqrt(dx*dx + dy*dy) << "\n";
+        return s_reached;
     }
 
     // ── Real receding-horizon MPC ─────────────────────────────────────────────
@@ -653,11 +680,19 @@ AbstractedState DeepSkillGraph::_runMPC(const AbstractedState &target)
     const double goal_y = target.position[1];
     const auto obstacles = _robot_bridge->getObstacles();
 
+    std::cout << "[MPC] target=(" << goal_x << ", " << goal_y << ")"
+              << " horizon=" << _dsg_cfg.mpc_horizon
+              << " candidates=" << _dsg_cfg.mpc_candidates
+              << " steps=" << _dsg_cfg.mpc_steps << "\n";
+
     for (int step = 0; step < _dsg_cfg.mpc_steps; ++step)
     {
         auto [robot_state, in_collision] = _env->getUnderlyingState();
         if (in_collision)
+        {
+            std::cout << "[MPC] step " << step << " — early stop (collision)\n";
             break;
+        }
 
         RolloutState rs = robotStateToRolloutState(robot_state);
 
@@ -672,10 +707,24 @@ AbstractedState DeepSkillGraph::_runMPC(const AbstractedState &target)
         );
 
         if (plan.actions.empty())
+        {
+            std::cout << "[MPC] step " << step << " — early stop (empty plan)\n";
             break;
+        }
 
         // Execute the first action of the best plan in the real environment
         const auto &a = plan.actions.front();
+
+        if (_cfg.verbose)
+        {
+            float dx = static_cast<float>(rs.x - goal_x);
+            float dy = static_cast<float>(rs.y - goal_y);
+            std::cout << "[MPC] step " << (step + 1) << "/" << _dsg_cfg.mpc_steps
+                      << " pos=(" << rs.x << ", " << rs.y << ")"
+                      << " dist=" << std::sqrt(dx*dx + dy*dy)
+                      << " act=[" << a.vx << ", " << a.vy << ", " << a.yaw << "]\n";
+        }
+
         auto action_tensor = torch::tensor(
             { static_cast<float>(a.vx),
               static_cast<float>(a.vy),
@@ -686,7 +735,12 @@ AbstractedState DeepSkillGraph::_runMPC(const AbstractedState &target)
             break;
     }
 
-    return _env->getAbstractedState();
+    auto s_reached = _env->getAbstractedState();
+    float dx = s_reached.position[0] - static_cast<float>(goal_x);
+    float dy = s_reached.position[1] - static_cast<float>(goal_y);
+    std::cout << "[MPC] reached (" << s_reached.position[0] << ", " << s_reached.position[1]
+              << ") dist=" << std::sqrt(dx*dx + dy*dy) << "\n";
+    return s_reached;
 }
 
 void DeepSkillGraph::_trainDSCBridge(int v_a_skill_idx)
@@ -745,6 +799,9 @@ bool DeepSkillGraph::_graphExpansionPhase()
     // Fallback: graph not yet reachable from current state — use globally nearest node
     if (v_nn == -1)
         v_nn = _nearestNodeToState(s_rand);
+
+    std::cout << "[DSG Expansion] s_rand=(" << s_rand.position[0] << ", " << s_rand.position[1]
+              << ") v_nn=" << v_nn << "\n";
 
     // 3. Navigate to v_nn using current graph plan / POO fallback
     _navigateTo(v_nn, _dsg_cfg.steps_per_episode / 2);
