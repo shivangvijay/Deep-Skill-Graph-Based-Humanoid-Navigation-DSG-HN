@@ -89,7 +89,7 @@ public:
     virtual int train(int max_episodes);
 
     // Execute one episode using πO over the trained chain. Returns cumulative reward.
-    float execute();
+    virtual float execute();
 
     void visualizeInitiationSets();
 
