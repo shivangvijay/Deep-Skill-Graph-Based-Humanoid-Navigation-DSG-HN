@@ -220,6 +220,11 @@ public:
 
     float getMaxGoalDistance() const { return max_goal_distance; }
 
+    void updateGoalMarker(const AbstractedState &goal_)
+    {
+        robot_bridge->getEngine()->setGoalMarker(goal_.position[0], goal_.position[1], 0.5f);
+    }
+
     void updateGoalMarker()
     {
         robot_bridge->getEngine()->setGoalMarker(goal.position[0], goal.position[1], 0.5f);
