@@ -33,7 +33,8 @@ DSG_HN/train/
 ├── sandbox_mpc_torch.h                      # MPC API header
 ├── transition_train_transformer_delta.cpp   # Transformer trainer (toggleable improvements)
 ├── transition_train_gaussian_delta.cpp      # MLP trainer
-├── transition_rollout_eval_transformer_delta.cpp  # Rollout evaluator
+├── transition_rollout_eval_transformer_delta.cpp  # Transformer rollout evaluator
+├── transition_rollout_eval_gaussian_delta.cpp     # MLP rollout evaluator
 ├── CMakeLists.txt
 ├── checkpoints/
 │   ├── baseline/       # Transformer without improvements
@@ -63,7 +64,8 @@ cmake .. && make collect_sim_transitions -j$(nproc)
 This builds:
 - `transition_train_transformer_delta` — Transformer trainer
 - `transition_train_gaussian_delta` — MLP trainer
-- `transition_rollout_eval_transformer_delta` — Rollout evaluator
+- `transition_rollout_eval_transformer_delta` — Transformer rollout evaluator
+- `transition_rollout_eval_gaussian_delta` — MLP rollout evaluator
 - `sandbox_mpc` — Live MPC with MuJoCo rendering
 - `collect_sim_transitions` — Joystick/keyboard data collector
 
@@ -180,6 +182,13 @@ The rollout evaluator measures prediction errors in physical units (meters, radi
   --normaliser output_improved/normaliser.txt \
   --horizons "0.5,1,2,5" \
   --history 10 --d-model 128 --n-heads 4 --n-layers 4
+
+# Evaluate MLP Gaussian Delta
+./transition_rollout_eval_gaussian_delta \
+  --csv ../../../DSG_HN/data_collection/transitions_umaze.csv \
+  --checkpoint output_mlp/transition_gaussian_delta_model_best.pt \
+  --normaliser output_mlp/normaliser.txt \
+  --horizons "0.5,1,2,5"
 ```
 
 **Output metrics** (per horizon):
