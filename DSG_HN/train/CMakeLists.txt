@@ -145,3 +145,11 @@ add_executable(dsc
   ${PROJECT_SOURCE_DIR}/../robot_bridge/robot_bridge.cpp
   ${PROJECT_SOURCE_DIR}/../robot_bridge/robot_bridge_train.cpp
 )
+
+add_executable(baselines
+  baselines.cpp
+  agent.cpp
+  ${PROJECT_SOURCE_DIR}/../robot_bridge/mujoco_utils/mujoco_engine.cpp
+  ${PROJECT_SOURCE_DIR}/../robot_bridge/robot_bridge.cpp
+  ${PROJECT_SOURCE_DIR}/../robot_bridge/robot_bridge_train.cpp
+)
