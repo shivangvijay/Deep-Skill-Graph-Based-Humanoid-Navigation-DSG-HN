@@ -238,6 +238,8 @@ public:
         float goal_region_epsilon  = 1.0f; // epsilon-ball radius (metres) defining a goal region node
         int   max_expansion_tries  = 10;   // max attempts per expansion phase before falling back to consolidation
         float edge_weight_kappa    = 0.95f; // multiplicative factor for edge weight updates: w *= κ^f(s), f∈{1,-1}
+        int   save_interval        = 100;  // checkpoint every N episodes (0 = no periodic saves)
+        std::string save_path      = "../dsg_models"; // directory for all checkpoints
 
         // DSG only: MPC look-ahead horizon (K in paper Appendix G, Table 5)
         int mpc_horizon = 7;
@@ -334,10 +336,11 @@ protected:
 
 private:
     // --- unified node dispatch ---
-    int   _totalNodes() const;
-    bool  _nodeCanStart(int node_idx, const AbstractedState &s) const;
-    float _nodeDistanceToState(int node_idx, const AbstractedState &s) const;
-    int   _currentNodeIdx() const;
+    int         _totalNodes() const;
+    bool        _nodeCanStart(int node_idx, const AbstractedState &s) const;
+    float       _nodeDistanceToState(int node_idx, const AbstractedState &s) const;
+    int         _currentNodeIdx() const;
+    std::string _nodeLabel(int node_idx) const; // human-readable label for logging
 
     // --- graph queries ---
     std::vector<int>   _getV(const AbstractedState &s) const;   // V(s) = O(s) ∪ B(s): all nodes whose region contains s
@@ -360,7 +363,8 @@ private:
     // cfg.mpc_steps real environment steps.  Returns the state reached.
     // Falls back to running the global option as a proxy if no transition model is loaded.
     AbstractedState _runMPC(const AbstractedState &target);
-    void            _trainDSCBridge(int v_a_skill_idx);
+    // Returns a representative AbstractedState for any node in the unified index space.
+    AbstractedState _nodeRepresentativeState(int node_idx) const;
 
     // --- phase methods ---
     bool _graphExpansionPhase(); // returns true if a goal region was accepted (not rejected)

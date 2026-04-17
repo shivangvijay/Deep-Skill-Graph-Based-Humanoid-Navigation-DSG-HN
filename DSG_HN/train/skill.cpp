@@ -208,7 +208,7 @@ void Skill::validateSkill(bool success)
 
 bool Skill::canStart(const RobotState &state) const
 {
-    if (getTrainingPhase() == "gestation")
+    if (_is_global || getTrainingPhase() == "gestation")
         return true;
     auto vec = _classifierVec(state);
     return _classifier.classify(vec) || _pessimistic_classifier.classify(vec);
@@ -216,7 +216,7 @@ bool Skill::canStart(const RobotState &state) const
 
 bool Skill::canStart(const AbstractedState &state) const
 {
-    if (getTrainingPhase() == "gestation")
+    if (_is_global || getTrainingPhase() == "gestation")
         return true;
     auto vec = _classifierVec(state);
     return _classifier.classify(vec) || _pessimistic_classifier.classify(vec);
@@ -224,14 +224,14 @@ bool Skill::canStart(const AbstractedState &state) const
 
 bool Skill::canStartPessimistic(const RobotState &state) const
 {
-    if (getTrainingPhase() == "gestation")
+    if (_is_global || getTrainingPhase() == "gestation")
         return true;
     return _pessimistic_classifier.classify(_classifierVec(state));
 }
 
 bool Skill::canStartPessimistic(const AbstractedState &state) const
 {
-    if (getTrainingPhase() == "gestation")
+    if (_is_global || getTrainingPhase() == "gestation")
         return true;
     return _pessimistic_classifier.classify(_classifierVec(state));
 }

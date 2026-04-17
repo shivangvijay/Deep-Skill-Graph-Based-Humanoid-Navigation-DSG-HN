@@ -75,7 +75,16 @@ void DeepSkillGraph::_makeSkill(bool is_global, std::shared_ptr<Skill> parent)
 {
     DeepSkillChaining::_makeSkill(is_global, parent);
     if (parent)
+    {
         parent->children.push_back(_skills.back());
+        // A skill just matured and triggered backward chaining — save all artifacts.
+        if (!_dsg_cfg.save_path.empty())
+        {
+            std::filesystem::create_directories(_dsg_cfg.save_path);
+            save(_dsg_cfg.save_path);
+            std::cout << "[DSG] Saved after Option " << (_skills.size() - 1) << " created → " << _dsg_cfg.save_path << "\n";
+        }
+    }
 }
 
 bool DeepSkillGraph::_shouldCreateNewOption()
@@ -132,6 +141,16 @@ int DeepSkillGraph::train(int max_episodes)
 {
     if (_dsg_cfg.render_training)
         _robot_bridge->startRender();
+
+    // Seed the graph with the start state as the first GoalRegion (G = (V, E, W)).
+    // This makes _getV(s_t) return a non-empty set when the robot is at s_0, so
+    // D(s_t) is non-empty from episode 0 and consolidation can find (v_d, v_a) pairs.
+    if (_goal_regions.empty())
+    {
+        _goal_regions.push_back({_global_start, _dsg_cfg.goal_region_epsilon});
+        std::cout << "[DSG] Seeded graph with start state as GoalRegion 0 at ("
+                  << _global_start.position[0] << ", " << _global_start.position[1] << ")\n";
+    }
 
     for (int episode = 0; episode < max_episodes; episode++)
     {
@@ -352,7 +371,7 @@ void DeepSkillGraph::_updateEdges()
             if (all_covered)
             {
                 _edges.push_back({i, j, 1.0f});
-                std::cout << "[DSG] Edge " << i << " → " << j << "\n";
+                std::cout << "[DSG] Edge " << _nodeLabel(i) << " → " << _nodeLabel(j) << "\n";
             }
         }
 
@@ -367,7 +386,7 @@ void DeepSkillGraph::_updateEdges()
             if (all_covered)
             {
                 _edges.push_back({i, gr_idx, 1.0f});
-                std::cout << "[DSG] Edge " << i << " → GR" << r << "\n";
+                std::cout << "[DSG] Edge " << _nodeLabel(i) << " → " << _nodeLabel(gr_idx) << "\n";
             }
         }
     }
@@ -461,6 +480,15 @@ float DeepSkillGraph::_nodeDistanceToState(int node_idx, const AbstractedState &
     return std::sqrt(dx*dx + dy*dy + dz*dz);
 }
 
+std::string DeepSkillGraph::_nodeLabel(int node_idx) const
+{
+    if (node_idx < 0) return "none";
+    if (node_idx < (int)_skills.size())
+        return (node_idx == _global_option_idx) ? "GlobalOption"
+             : "Option " + std::to_string(node_idx - _global_option_idx);
+    return "GoalRegion " + std::to_string(node_idx - (int)_skills.size());
+}
+
 int DeepSkillGraph::_currentNodeIdx() const
 {
     auto s = _env->getAbstractedState();
@@ -480,9 +508,11 @@ int DeepSkillGraph::_currentNodeIdx() const
 std::vector<int> DeepSkillGraph::_getV(const AbstractedState &s) const
 {
     std::vector<int> V;
-    // O(s): skill nodes (excluding global) whose initiation set contains s
+    // O(s): mature skill nodes (excluding global) whose initiation set contains s.
+    // Gestating skills have canStart()=true everywhere; including them would pollute
+    // the navigation graph with untrained options that steer toward _global_goal=zeros.
     for (int o = _global_option_idx + 1; o < (int)_skills.size(); o++)
-        if (_skills[o]->canStart(s))
+        if (_skills[o]->getTrainingPhase() == "mature" && _skills[o]->canStart(s))
             V.push_back(o);
     // B(s): goal region nodes containing s
     for (int r = 0; r < (int)_goal_regions.size(); r++)
@@ -765,62 +795,15 @@ AbstractedState DeepSkillGraph::_runMPC(const AbstractedState &target)
     return s_reached;
 }
 
-void DeepSkillGraph::_trainDSCBridge(int v_a_skill_idx)
+AbstractedState DeepSkillGraph::_nodeRepresentativeState(int node_idx) const
 {
-    // When v_a is a goal region its ε-ball is the termination set for the bridge skill.
-    // We create a null-parent skill (atTermination uses computeReward) and temporarily
-    // set success_radius = goal_region_epsilon so termination fires at the ε-ball boundary.
-    bool v_a_is_goal_region = (v_a_skill_idx >= (int)_skills.size());
-    AbstractedState bridge_goal;
-
-    if (v_a_is_goal_region)
-    {
-        int gr_idx = v_a_skill_idx - (int)_skills.size();
-        bridge_goal = _goal_regions[gr_idx].center;
-        _makeSkill(false, nullptr);
-    }
-    else
-    {
-        _makeSkill(false, _skills[v_a_skill_idx]);
-    }
-    int bridge_idx = (int)_skills.size() - 1;
-
-    std::cout << "[DSG] Training bridge skill " << bridge_idx
-              << " toward " << (v_a_is_goal_region ? "goal region " : "skill ")
-              << v_a_skill_idx << "\n";
-
-    // Widen success radius to ε for goal-region targets so termination matches the ε-ball.
-    float prev_success_radius = _env->success_radius;
-    if (v_a_is_goal_region)
-        _env->success_radius = _dsg_cfg.goal_region_epsilon;
-
-    // Run rollouts until the bridge skill matures or the step budget is exhausted.
-    int step = 0;
-    while (_skills[bridge_idx]->getTrainingPhase() != "mature" &&
-           step < _dsg_cfg.steps_per_episode)
-    {
-        AbstractedState goal = v_a_is_goal_region
-            ? bridge_goal
-            : _skills[bridge_idx]->getLocalGoal();
-        auto [steps_taken, cum_reward, done, first_poo, last_poo] =
-            _skills[bridge_idx]->rollout(goal);
-
-        if (steps_taken == 0) { step++; continue; }
-
-        _poo.addExperience(first_poo, bridge_idx, cum_reward, last_poo, done, steps_taken);
-        _poo.learn();
-        step += steps_taken;
-    }
-
-    _env->success_radius = prev_success_radius;
-
-    bool matured = _skills[bridge_idx]->getTrainingPhase() == "mature";
-    std::cout << "[DSG] Bridge skill " << bridge_idx
-              << (matured ? " matured" : " budget exhausted")
-              << " after " << step << "/" << _dsg_cfg.steps_per_episode << " steps"
-              << " hits=" << _skills[bridge_idx]->goalHits()
-              << "/" << _skills[bridge_idx]->gestationPeriod() << "\n";
+    if (node_idx >= (int)_skills.size())
+        return _goal_regions[node_idx - (int)_skills.size()].center;
+    if (_skills[node_idx]->getTrainingPhase() == "mature")
+        return _skills[node_idx]->sampleSubgoalState();
+    return _env->getRandomValidAbstractedState();
 }
+
 
 // =============================================================================
 // Phase methods
@@ -847,7 +830,7 @@ bool DeepSkillGraph::_graphExpansionPhase()
         v_nn = _nearestNodeToState(s_rand);
 
     std::cout << "[DSG Expansion] s_rand=(" << s_rand.position[0] << ", " << s_rand.position[1]
-              << ") v_nn=" << v_nn << "\n";
+              << ") v_nn=" << _nodeLabel(v_nn) << "\n";
 
     // 3. Navigate to v_nn using current graph plan / POO fallback
     _navigateTo(v_nn, _dsg_cfg.steps_per_episode / 2);
@@ -901,14 +884,33 @@ void DeepSkillGraph::_graphConsolidationPhase()
         return;
     }
 
-    std::cout << "[DSG Consolidation] Bridging " << v_d << " → " << v_a
-              << " to reach node " << v_g << "\n";
+    std::cout << "[DSG Consolidation] Bridging " << _nodeLabel(v_d)
+              << " → " << _nodeLabel(v_a)
+              << " to reach " << _nodeLabel(v_g) << "\n";
 
     // 4. Navigate to v_d
     _navigateTo(v_d, _dsg_cfg.steps_per_episode / 3);
 
-    // 5. Train a DSC bridge from current position toward v_a
-    _trainDSCBridge(v_a);
+    // 5. Train a DSC bridge from v_d toward v_a.
+    {
+        AbstractedState v_d_state = _env->getAbstractedState();
+        AbstractedState v_a_state = _nodeRepresentativeState(v_a);
+
+        std::cout << "[DSG Consolidation] Bridge " << _nodeLabel(v_d)
+                  << " → " << _nodeLabel(v_a)
+                  << " start=(" << v_d_state.position[0] << ", " << v_d_state.position[1] << ")"
+                  << " goal=(" << v_a_state.position[0] << ", " << v_a_state.position[1] << ")\n";
+
+        auto saved_start = _global_start;
+        auto saved_goal  = _global_goal;
+        _global_start = v_d_state;
+        _global_goal  = v_a_state;
+
+        DeepSkillChaining::train(1);
+
+        _global_start = saved_start;
+        _global_goal  = saved_goal;
+    }
 
     // 6. Navigate to v_g
     _navigateTo(v_g, _dsg_cfg.steps_per_episode / 3);
@@ -922,7 +924,7 @@ void DeepSkillGraph::_graphConsolidationPhase()
 #error "dsg.cpp must be compiled with -DDSG_BUILD to suppress DSC main"
 #endif
 
-#define SCENE_FILE       "../config/scene/umaze_scene_obs_free.xml"
+#define SCENE_FILE       "../config/scene/test_scene.xml"
 #define OG_ACTOR         "../models/best_actor.pt"
 #define OG_CRITIC1       "../models/best_critic_1.pt"
 #define OG_CRITIC2       "../models/best_critic_2.pt"
@@ -971,6 +973,7 @@ int main(int argc, char **argv)
     cfg.expansion_freq         = 5; // frequency of expansion phase (every N episodes)
     cfg.mpc_steps              = 50;
     cfg.goal_region_epsilon    = 1.0f;
+    cfg.save_path              = DSG_SAVE_PATH;
 
     AbstractedState global_start = {{-5.3, -4.5, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 
@@ -989,7 +992,6 @@ int main(int argc, char **argv)
     {
         int n = dsg.train(20000);
         std::cout << "\nTraining complete: " << n << " skill(s) in graph.\n";
-        dsg.save(DSG_SAVE_PATH);
     }
     else
     {
