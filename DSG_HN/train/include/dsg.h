@@ -1,7 +1,7 @@
 #pragma once
 
 #include "dsc.h"
-#include "transition_model.hpp"
+#include "../sandbox_mpc_torch.h"
 
 // DeepSkillGraph — extends DeepSkillChaining to a directed graph of options and goal regions.
 
@@ -245,29 +245,24 @@ public:
         // DSG only: MPC look-ahead horizon (K in paper Appendix G, Table 5)
         int mpc_horizon = 7;
 
-        // DSG only: number of random action sequences to evaluate per MPC solve (M in paper)
-        int mpc_candidates = 1000;
+        // DSG only: number of CEM candidate action sequences per solve
+        int mpc_candidates = 256;
 
-        // DSG only: robot base footprint radius for MPC collision checking (metres)
-        double mpc_base_radius = 0.35;
+        // DSG only: number of CEM refinement rounds
+        int mpc_cem_rounds = 3;
 
-        // DSG only: extra safety clearance around obstacles during MPC (metres)
-        double mpc_clearance = 0.05;
+        // DSG only: number of elite samples kept per CEM round
+        int mpc_cem_elites = 32;
 
-        // DSG only: cost penalty applied to colliding imagined rollouts
-        double mpc_collision_penalty = 1000.0;
-
-        // DSG only: quadratic penalty on action magnitude in MPC cost
-        double mpc_action_penalty = 0.01;
-
-        // DSG only: quadratic penalty on action change (smoothness) in MPC cost
-        double mpc_smoothness_penalty = 0.02;
-
-        // DSG only: weight on squared distance-to-goal in MPC cost
-        double mpc_goal_weight = 1.0;
-
-        // DSG only: [vx, vy, yaw] action magnitude limits used for random shooting
-        std::array<double, 3> mpc_action_limits = {0.5, 0.3, 0.2};
+        // DSG only: CEM cost weights (matched to MpcConfig in sandbox_mpc_torch.h)
+        double mpc_w_pos       = 1.0;    // squared distance-to-goal at each step
+        double mpc_w_heading   = 0.5;    // squared heading error toward goal
+        double mpc_w_terminal  = 3.0;    // terminal squared distance-to-goal
+        double mpc_w_smooth    = 0.1;    // action smoothness (delta penalty)
+        double mpc_w_backward  = 0.3;    // penalty for negative vx
+        double mpc_w_collision = 1000.0; // cost per imagined step in collision
+        double mpc_base_radius = 0.35;   // robot footprint radius (metres)
+        double mpc_clearance   = 0.05;   // safety margin around obstacles
     };
 
     DeepSkillGraph(std::shared_ptr<RobotBridgeTrain> robot_bridge,
@@ -295,10 +290,10 @@ public:
     void  save(const std::string &dir) const override;
     void  load(const std::string &dir, const std::string &scene_file) override;
 
-    // Load a pre-trained Gaussian delta transition model for MPC-based graph expansion.
-    // model_path    : path to the .pt checkpoint produced by transition_train_gaussian_delta
+    // Load a pre-trained Transformer transition model for CEM-based graph expansion.
+    // model_path      : path to the .pt checkpoint (farnaz/transition training script)
     // normaliser_path : path to the matching normaliser.txt
-    // Once loaded, _runMPC() will use real model-based planning instead of the global-option proxy.
+    // Once loaded, _runMPC() will use the Transformer+CEM planner instead of the global-option proxy.
     void loadTransitionModel(const std::string &model_path, const std::string &normaliser_path);
 
 protected:
@@ -354,9 +349,8 @@ private:
                                     const std::vector<int> &A) const;
 
     // --- transition model (loaded once via loadTransitionModel()) ---
-    GaussianMLP          _transition_model{nullptr};
-    TransitionNormaliser _normaliser;
-    bool                 _has_transition_model = false;
+    // Opaque handle to the Transformer+CEM MPC context (null until loadTransitionModel() is called).
+    MpcContextPtr _mpc_ctx;
 
     // --- navigation and training primitives ---
     void            _navigateTo(int node_idx, int max_steps);

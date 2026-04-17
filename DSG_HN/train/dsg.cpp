@@ -15,7 +15,6 @@ static RolloutState robotStateToRolloutState(const RobotState &rs)
     RolloutState out;
     out.x = rs.position[0];
     out.y = rs.position[1];
-    out.z = rs.position[2];
 
     // Extract yaw from quaternion [qw, qx, qy, qz]
     const double qw = rs.orientation[0], qx = rs.orientation[1];
@@ -37,9 +36,10 @@ static RolloutState robotStateToRolloutState(const RobotState &rs)
 static AbstractedState rolloutStateToAbstractedState(const RolloutState &rs)
 {
     AbstractedState as;
+    // RolloutState has no z; use 0 (navigation planning is 2-D)
     as.position    = { static_cast<float>(rs.x),
                        static_cast<float>(rs.y),
-                       static_cast<float>(rs.z) };
+                       0.0f };
     const float qw = static_cast<float>(std::cos(rs.yaw * 0.5));
     const float qz = static_cast<float>(std::sin(rs.yaw * 0.5));
     as.orientation = { qw, 0.0f, 0.0f, qz };
@@ -56,15 +56,27 @@ static AbstractedState rolloutStateToAbstractedState(const RolloutState &rs)
 void DeepSkillGraph::loadTransitionModel(const std::string &model_path,
                                           const std::string &normaliser_path)
 {
-    _transition_model = GaussianMLP(kTM_InputDim, kTM_OutputDim, /*dropout=*/0.2);
-    torch::load(_transition_model, model_path, _device);
-    _transition_model->to(_device);
-    _transition_model->eval();
+    MpcConfig mpc_cfg;
+    mpc_cfg.horizon    = _dsg_cfg.mpc_horizon;
+    mpc_cfg.candidates = _dsg_cfg.mpc_candidates;
+    mpc_cfg.cem_rounds = _dsg_cfg.mpc_cem_rounds;
+    mpc_cfg.cem_elites = _dsg_cfg.mpc_cem_elites;
+    mpc_cfg.w_pos       = _dsg_cfg.mpc_w_pos;
+    mpc_cfg.w_heading   = _dsg_cfg.mpc_w_heading;
+    mpc_cfg.w_terminal  = _dsg_cfg.mpc_w_terminal;
+    mpc_cfg.w_smooth    = _dsg_cfg.mpc_w_smooth;
+    mpc_cfg.w_backward  = _dsg_cfg.mpc_w_backward;
+    mpc_cfg.w_collision = _dsg_cfg.mpc_w_collision;
+    mpc_cfg.base_radius = _dsg_cfg.mpc_base_radius;
+    mpc_cfg.clearance   = _dsg_cfg.mpc_clearance;
 
-    _normaliser = TransitionNormaliser::load(normaliser_path);
+    // Transformer architecture: seq_len=10, d_model=128, n_heads=4, n_layers=4
+    // (must match the checkpoint produced by farnaz/transition training script)
+    _mpc_ctx = mpc_create(model_path, normaliser_path,
+                          /*history=*/10, /*d_model=*/128, /*n_heads=*/4, /*n_layers=*/4,
+                          mpc_cfg);
 
-    _has_transition_model = true;
-    std::cout << "[DSG] Transition model loaded from " << model_path << "\n";
+    std::cout << "[DSG] Transformer transition model loaded from " << model_path << "\n";
 }
 
 // =============================================================================
@@ -698,8 +710,8 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
 
 AbstractedState DeepSkillGraph::_runMPC(const AbstractedState &target)
 {
-    // ── Fallback: no transition model loaded, use global option ─────────────────────────────────
-    if (!_has_transition_model)
+    // ── Fallback: no transition model loaded, use global option ──────────────
+    if (!_mpc_ctx)
     {
         std::cout << "[MPC Fallback] No model — global option proxy for "
                   << _dsg_cfg.mpc_steps << " steps toward ("
@@ -721,16 +733,14 @@ AbstractedState DeepSkillGraph::_runMPC(const AbstractedState &target)
         return s_reached;
     }
 
-    // ── Real receding-horizon MPC ─────────────────────────────────────────────
-    // At each of mpc_steps real environment steps:
-    //   1. Observe current full robot state.
-    //   2. Run random-shooting MPC (imagined rollouts via transition model) to
-    //      find the best action sequence toward `target`.
-    //   3. Execute only the first action in the real environment.
-    //   4. Stop early on collision / episode termination.
+    // ── Transformer+CEM receding-horizon MPC ─────────────────────────────────
+    // Clear history: we don't have context from the preceding _navigateTo() call.
+    mpc_clear_history(*_mpc_ctx);
+    // Obstacles are static within one expansion step — set once up front.
+    mpc_set_obstacles(*_mpc_ctx, _robot_bridge->getObstacles());
+
     const double goal_x = target.position[0];
     const double goal_y = target.position[1];
-    const auto obstacles = _robot_bridge->getObstacles();
 
     std::cout << "[MPC] target=(" << goal_x << ", " << goal_y << ")"
               << " horizon=" << _dsg_cfg.mpc_horizon
@@ -748,24 +758,8 @@ AbstractedState DeepSkillGraph::_runMPC(const AbstractedState &target)
 
         RolloutState rs = robotStateToRolloutState(robot_state);
 
-        auto plan = randomShootMPC(
-            _transition_model, _normaliser, rs, obstacles, _device,
-            goal_x, goal_y,
-            _dsg_cfg.mpc_horizon, _dsg_cfg.mpc_candidates, _dsg_cfg.mpc_action_limits,
-            _dsg_cfg.mpc_base_radius, _dsg_cfg.mpc_clearance,
-            _dsg_cfg.mpc_collision_penalty, _dsg_cfg.mpc_action_penalty,
-            _dsg_cfg.mpc_smoothness_penalty, _dsg_cfg.mpc_goal_weight,
-            _rng()   // seed derived from DSG's own RNG for reproducibility
-        );
-
-        if (plan.actions.empty())
-        {
-            std::cout << "[MPC] step " << step << " — early stop (empty plan)\n";
-            break;
-        }
-
-        // Execute the first action of the best plan in the real environment
-        const auto &a = plan.actions.front();
+        // CEM plan: returns the first action of the best sequence
+        ActionCmd cmd = mpc_plan(*_mpc_ctx, rs, goal_x, goal_y, _rng());
 
         if (_cfg.verbose)
         {
@@ -774,15 +768,19 @@ AbstractedState DeepSkillGraph::_runMPC(const AbstractedState &target)
             std::cout << "[MPC] step " << (step + 1) << "/" << _dsg_cfg.mpc_steps
                       << " pos=(" << rs.x << ", " << rs.y << ")"
                       << " dist=" << std::sqrt(dx*dx + dy*dy)
-                      << " act=[" << a.vx << ", " << a.vy << ", " << a.yaw << "]\n";
+                      << " act=[" << cmd.vx << ", " << cmd.vy << ", " << cmd.yaw << "]\n";
         }
 
         auto action_tensor = torch::tensor(
-            { static_cast<float>(a.vx),
-              static_cast<float>(a.vy),
-              static_cast<float>(a.yaw) }, torch::kFloat32);
+            { static_cast<float>(cmd.vx),
+              static_cast<float>(cmd.vy),
+              static_cast<float>(cmd.yaw) }, torch::kFloat32);
 
         auto [_ns, _r, done_t] = _env->step(action_tensor);
+
+        // Update Transformer history with the (state, action) pair just executed
+        mpc_update_history(*_mpc_ctx, rs, cmd);
+
         if (done_t.item<float>() > 0.5f)
             break;
     }
@@ -929,8 +927,8 @@ void DeepSkillGraph::_graphConsolidationPhase()
 #define OG_CRITIC1       "../models/best_critic_1.pt"
 #define OG_CRITIC2       "../models/best_critic_2.pt"
 #define DSG_SAVE_PATH    "../dsg_models"
-#define TM_CHECKPOINT    "../transition_model/transition_gaussian_model_best.pt"
-#define TM_NORMALISER    "../transition_model/normaliser.txt"
+#define TM_CHECKPOINT    "../checkpoints/improved/transition_transformer_delta_latest.pt"
+#define TM_NORMALISER    "../checkpoints/improved/normaliser.txt"
 #define TEST false
 
 #define X_MIN -7.0f

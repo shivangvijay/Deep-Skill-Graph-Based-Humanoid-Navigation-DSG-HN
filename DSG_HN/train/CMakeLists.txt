@@ -13,7 +13,8 @@ add_definitions(-DSPDLOG_FMT_EXTERNAL)
 find_package(Boost REQUIRED COMPONENTS program_options)
 find_package(yaml-cpp REQUIRED)
 
-set(MUJOCO_DIR "${PROJECT_SOURCE_DIR}/../../unitree_mujoco/simulate/mujoco")
+set(MUJOCO_DIR    "${PROJECT_SOURCE_DIR}/../../unitree_mujoco/simulate/mujoco")
+set(JOYSTICK_SRC  "${PROJECT_SOURCE_DIR}/../../unitree_mujoco/simulate/src")
 set(POLICY_CONFIG_DIR "${PROJECT_SOURCE_DIR}/../deploy/robots/g1_29dof/config")
 set(SCENE_XML_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../unitree_mujoco/unitree_robots/g1")
 set(LIBTORCH_PATH "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/libtorch")
@@ -107,6 +108,44 @@ target_link_libraries(transition_mpc_eval PRIVATE
   fmt
 )
 
+# sandbox_mpc: split into two object libs to avoid the fmt/libtorch ODR clash.
+#   sandbox_mpc.cpp       — robot bridge + main loop  (no torch headers)
+#   sandbox_mpc_torch.cpp — model, MPC planner         (torch headers only)
+add_library(sandbox_mpc_bridge OBJECT
+  sandbox_mpc.cpp
+  ${JOYSTICK_SRC}/joystick/joystick.cc
+  ${PROJECT_SOURCE_DIR}/../robot_bridge/mujoco_utils/mujoco_engine.cpp
+  ${PROJECT_SOURCE_DIR}/../robot_bridge/robot_bridge.cpp
+  ${PROJECT_SOURCE_DIR}/../robot_bridge/robot_bridge_train.cpp
+)
+target_include_directories(sandbox_mpc_bridge PRIVATE ${JOYSTICK_SRC})
+
+add_library(sandbox_mpc_torch_obj OBJECT sandbox_mpc_torch.cpp)
+target_include_directories(sandbox_mpc_torch_obj PRIVATE ${TORCH_INCLUDE_DIRS})
+
+add_executable(sandbox_mpc
+  $<TARGET_OBJECTS:sandbox_mpc_bridge>
+  $<TARGET_OBJECTS:sandbox_mpc_torch_obj>
+)
+target_link_libraries(sandbox_mpc PRIVATE
+  ${TORCH_LIBRARIES}
+  ${MUJOCO_DIR}/lib/libmujoco.so
+  glfw
+  unitree_sdk2 ddsc ddscxx rt pthread
+  libboost_program_options.a libyaml-cpp.a fmt
+  ${PROJECT_SOURCE_DIR}/../deploy/thirdparty/onnxruntime-linux-x64-1.22.0/lib/libonnxruntime.so.1.22.0
+  $ENV{CONDA_PREFIX}/lib/libsvm.so
+)
+
+add_executable(test_mpc_obstacles
+  test_mpc_obstacles.cpp
+  sandbox_mpc_torch.cpp
+  ${PROJECT_SOURCE_DIR}/../robot_bridge/robot_bridge.cpp
+)
+target_link_libraries(test_mpc_obstacles PRIVATE
+  ${TORCH_LIBRARIES}
+)
+
 link_libraries(
   unitree_sdk2 ddsc ddscxx rt pthread # dds
   libboost_program_options.a libyaml-cpp.a fmt spdlog
@@ -151,6 +190,7 @@ add_executable(dsg
   dsc.cpp
   agent.cpp
   skill.cpp
+  sandbox_mpc_torch.cpp
   ${PROJECT_SOURCE_DIR}/../robot_bridge/mujoco_utils/mujoco_engine.cpp
   ${PROJECT_SOURCE_DIR}/../robot_bridge/robot_bridge.cpp
   ${PROJECT_SOURCE_DIR}/../robot_bridge/robot_bridge_train.cpp
