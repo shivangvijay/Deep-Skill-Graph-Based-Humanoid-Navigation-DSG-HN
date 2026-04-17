@@ -228,11 +228,48 @@ void PurePursuitBaseline::_readScene(float robot_radius, float discretization)
     }
 }
 
+TD3Baseline::TD3Baseline(std::shared_ptr<RobotBridgeTrain> robot_bridge, const std::string& actor_path, const std::string& critic_1_path, const std::string& critic_2_path, const std::vector<int>& actor_layer_sizes, const std::vector<int>& critic_layer_sizes, const torch::Device device)
+    : _robot_bridge(robot_bridge), _env(std::make_shared<TrainEnvironment>(robot_bridge, 1000)),
+     _agent(_env, actor_layer_sizes, critic_layer_sizes, device, 0, 0, 0, 0, 0, 0, 0)
+{
+    torch::load(_agent.actor_local, actor_path);
+    torch::load(_agent.critic_local_1, critic_1_path);
+    torch::load(_agent.critic_local_2, critic_2_path);
+    _agent.toDevice(device);
+}
+
+float TD3Baseline::execute(const AbstractedState &start, const AbstractedState &goal)
+{
+    _env->setGoal(goal);
+    _env->updateGoalMarker(goal);
+    auto state = _env->resetTo(start);
+    float cum_reward = 0.0f;
+    bool done = false;
+
+    while (!done)
+    {
+        auto [action, _]  = _agent.getAction(_env->getState(), true);
+        auto [next_state, reward, env_done] = _env->step(action);
+        cum_reward += reward.item<float>();
+        done = env_done.item<bool>();
+        state = next_state;
+    }
+    return cum_reward;
+}
+
 #define X_MIN -7.0f
 #define X_MAX 7.0f
 #define Y_MIN -7.0f
 #define Y_MAX 7.0f
 #define SCENE_FILE "../config/scene/umaze_scene.xml"
+
+#define ACTOR_PATH "../models/actor.pt"
+#define CRITIC_1_PATH "../models/critic_1.pt"
+#define CRITIC_2_PATH "../models/critic_2.pt"
+#define ACTOR_LAYER_SIZES {256, 256, 256}
+#define CRITIC_LAYER_SIZES {256, 256, 256}
+
+#define BASELINE_TYPE "td3" // "pure_pursuit" or "td3"
 
 int main(int argc, char **argv)
 {
@@ -253,13 +290,29 @@ int main(int argc, char **argv)
     }
 
     auto robot_bridge = std::make_shared<RobotBridgeTrain>(
-        SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, /*render=*/true);
+        SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, true);
 
-    PurePursuitBaseline baseline(robot_bridge, 0.1f, 0.2f);
+    std::unique_ptr<Baseline> baseline;
+    
+    if (BASELINE_TYPE == "pure_pursuit")
+    {
+        baseline = std::make_unique<PurePursuitBaseline>(robot_bridge, 0.1f, 0.3f, 0.5f);
+    }
+    else if (BASELINE_TYPE == "td3")
+    {
+        std::vector<int> actor_layer_sizes = ACTOR_LAYER_SIZES;
+        std::vector<int> critic_layer_sizes = CRITIC_LAYER_SIZES;
+        baseline = std::make_unique<TD3Baseline>(robot_bridge, ACTOR_PATH, CRITIC_1_PATH, CRITIC_2_PATH, actor_layer_sizes, critic_layer_sizes, device);
+    }
+    else
+    {
+        std::cerr << "Invalid BASELINE_TYPE specified. Must be 'pure_pursuit' or 'td3'." << std::endl;
+        return 1;
+    }
 
     AbstractedState global_goal = {{-4.5, 4.1, 0.}, {0, 0, 0, -1}, {0, 0, 0}, {0, 0, 0}};
     AbstractedState global_start = {{-5.3, -4.5, 0.}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 
-    float reward = baseline.execute(global_start, global_goal);
+    float reward = baseline->execute(global_start, global_goal);
     std::cout << "Total reward: " << reward << std::endl;
 }
