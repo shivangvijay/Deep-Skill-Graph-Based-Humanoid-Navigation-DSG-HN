@@ -240,6 +240,7 @@ public:
         float edge_weight_kappa    = 0.95f; // multiplicative factor for edge weight updates: w *= κ^f(s), f∈{1,-1}
         int   save_interval        = 100;  // checkpoint every N episodes (0 = no periodic saves)
         std::string save_path      = "../dsg_models"; // directory for all checkpoints
+        int   training_episodes    = 20000; // total episodes for DeepSkillGraph::train()
 
         // DSG only: MPC look-ahead horizon (K in paper Appendix G, Table 5)
         int mpc_horizon = 7;

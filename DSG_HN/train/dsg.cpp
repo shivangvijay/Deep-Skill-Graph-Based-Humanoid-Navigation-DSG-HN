@@ -970,10 +970,11 @@ int main(int argc, char **argv)
     cfg.log_interval           = 5;
     cfg.visualize_initiation_sets = true;
     cfg.max_children_per_node  = 3;
-    cfg.expansion_freq         = 5; // frequency of expansion phase (every N episodes)
+    cfg.expansion_freq         = 100; // frequency of expansion phase (every N episodes)
     cfg.mpc_steps              = 50;
     cfg.goal_region_epsilon    = 1.0f;
     cfg.save_path              = DSG_SAVE_PATH;
+    cfg.training_episodes      = 20000;
 
     AbstractedState global_start = {{-5.3, -4.5, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 
@@ -990,7 +991,7 @@ int main(int argc, char **argv)
 
     if (!TEST)
     {
-        int n = dsg.train(20000);
+        int n = dsg.train(cfg.training_episodes); // cfg.training_episodes default = 20000
         std::cout << "\nTraining complete: " << n << " skill(s) in graph.\n";
     }
     else
