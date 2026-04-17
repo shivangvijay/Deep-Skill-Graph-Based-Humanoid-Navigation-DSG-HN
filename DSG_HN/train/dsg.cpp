@@ -231,11 +231,6 @@ int DeepSkillGraph::train(int max_episodes)
                 visualizeInitiationSets();
         }
 
-        if (_containsGlobalStartState())
-        {
-            std::cout << "Success!\n";
-            break;
-        }
     }
     return (int)_skills.size() - 1;
 }
@@ -906,7 +901,7 @@ void DeepSkillGraph::_graphConsolidationPhase()
         _global_start = v_d_state;
         _global_goal  = v_a_state;
 
-        DeepSkillChaining::train(1);
+        DeepSkillChaining::train(1); // this does env->resetTo(global_start), which means the navigation to v_d is only partially useful, it only trains the graph
 
         _global_start = saved_start;
         _global_goal  = saved_goal;
