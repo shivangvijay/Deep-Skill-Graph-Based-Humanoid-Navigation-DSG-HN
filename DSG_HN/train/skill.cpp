@@ -776,18 +776,20 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
 {
     if (term_success)
     {
-        // 1. Capture the "Entry Point": The state where the robot began this successful rollout.
-        // This is crucial for chaining: it tells the next skill in the chain exactly where
-        // a successful path was found. We skip this for the global/goal option.
+        // 1. Capture the "Entry Point" for SVM training only — NOT the effect set.
+        // The start state teaches the classifier where execution can begin, but it must not
+        // enter _positive_gestation_records because that vector is used as the effect set
+        // for edge inference (E_o ⊆ I_j). Including start states contaminates the effect set
+        // with random spawn positions, causing every option pair to pass the containment check.
         if (_parent != nullptr)
         {
-            _positive_gestation_records.push_back(visited.front());
             _gestation_vecs.push_back(visited.front().classifier_vec);
             _gestation_labels.push_back(1);
         }
 
         // 2. Capture the "Success Buffer": The last K states of the trajectory.
-        // These represent the region where the robot successfully entered the parent's set.
+        // These are the effect set — states where this option actually terminated near the
+        // parent's initiation boundary. Only these go into _positive_gestation_records.
         int buffer_size = std::min((int)visited.size(), _k);
         int start_idx = (int)visited.size() - buffer_size;
 
