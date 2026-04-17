@@ -217,44 +217,211 @@ static ActionCmd sample_action(std::mt19937 &rng) {
     return {dvx(rng), dvy(rng), dyaw(rng)};
 }
 
-static double evaluate_candidate(MpcContext &ctx,
-                                 const RolloutState &state,
-                                 const std::vector<ActionCmd> &actions,
-                                 double goal_x, double goal_y)
+// =====================================================================
+//  Batched candidate evaluation — all N candidates in one forward pass
+// =====================================================================
+
+// Batched state: [N] parallel rollout states stored as tensors
+struct BatchedRollout {
+    torch::Tensor x, y, yaw, vx, vy, oz;    // each [N]
+    torch::Tensor joint_pos, joint_vel;      // [N, kJointDim]
+};
+
+static BatchedRollout init_batched(const RolloutState &s, int N) {
+    BatchedRollout b;
+    b.x   = torch::full({N}, s.x,   torch::kFloat64);
+    b.y   = torch::full({N}, s.y,   torch::kFloat64);
+    b.yaw = torch::full({N}, s.yaw, torch::kFloat64);
+    b.vx  = torch::full({N}, s.vx,  torch::kFloat64);
+    b.vy  = torch::full({N}, s.vy,  torch::kFloat64);
+    b.oz  = torch::full({N}, s.oz,  torch::kFloat64);
+    auto jp = torch::empty({N, kJointDim}, torch::kFloat64);
+    auto jv = torch::empty({N, kJointDim}, torch::kFloat64);
+    for (int i = 0; i < kJointDim; ++i) {
+        jp.select(1,i).fill_(s.joint_pos[i]);
+        jv.select(1,i).fill_(s.joint_vel[i]);
+    }
+    b.joint_pos = jp; b.joint_vel = jv;
+    return b;
+}
+
+static torch::Tensor batched_input_vec(const BatchedRollout &b) {
+    int N = (int)b.x.size(0);
+    auto qw = torch::cos(b.yaw * 0.5).to(torch::kFloat32);
+    auto qz = torch::sin(b.yaw * 0.5).to(torch::kFloat32);
+    auto zero = torch::zeros({N}, torch::kFloat32);
+    // [qw, 0, 0, qz, vx, vy, oz, joint_pos(35), joint_vel(35)] = 77-D
+    return torch::stack({
+        qw, zero, zero, qz,
+        b.vx.to(torch::kFloat32), b.vy.to(torch::kFloat32), b.oz.to(torch::kFloat32)
+    }, 1).to(torch::kFloat32);  // [N, 7] — need to cat with joints
+}
+
+static torch::Tensor batched_to_input(const BatchedRollout &b) {
+    int N = (int)b.x.size(0);
+    auto qw = torch::cos(b.yaw * 0.5).to(torch::kFloat32);
+    auto qz = torch::sin(b.yaw * 0.5).to(torch::kFloat32);
+    auto zero = torch::zeros({N, 1}, torch::kFloat32);
+    auto base = torch::cat({
+        qw.unsqueeze(1), zero, zero, qz.unsqueeze(1),
+        b.vx.unsqueeze(1).to(torch::kFloat32),
+        b.vy.unsqueeze(1).to(torch::kFloat32),
+        b.oz.unsqueeze(1).to(torch::kFloat32)
+    }, 1); // [N, 7]
+    return torch::cat({base, b.joint_pos.to(torch::kFloat32),
+                             b.joint_vel.to(torch::kFloat32)}, 1); // [N, 77]
+}
+
+static void batched_apply_delta(BatchedRollout &b, const torch::Tensor &delta) {
+    // delta: [N, kOutputDim=76] on CPU
+    auto d = delta.to(torch::kFloat64);
+    b.x   += d.select(1, 0);
+    b.y   += d.select(1, 1);
+    b.yaw  = torch::atan2(torch::sin(b.yaw + d.select(1,2)),
+                           torch::cos(b.yaw + d.select(1,2)));
+    b.vx  += d.select(1, 3);
+    b.vy  += d.select(1, 4);
+    b.oz  += d.select(1, 5);
+    b.joint_pos += d.narrow(1, 6, kJointDim).to(torch::kFloat64);
+    b.joint_vel += d.narrow(1, 6 + kJointDim, kJointDim).to(torch::kFloat64);
+}
+
+// Predict delta for all N candidates in one batched forward pass
+static torch::Tensor predict_delta_batched(
+    TransformerTransitionModel &model,
+    const Normaliser &norm,
+    const torch::Tensor &seq,   // [N, seq_len, kTokenDim]
+    torch::Device device)
+{
+    torch::NoGradGuard ng;
+    auto [mu, _] = model->forward(seq.to(device));
+    return norm.unnorm_target(mu.to(torch::kCPU)); // [N, kOutputDim]
+}
+
+// Build batched history sequences [N, seq_len, kTokenDim] from shared
+// history prefix + per-candidate current token
+static torch::Tensor build_batched_sequences(
+    const std::deque<torch::Tensor> &hist_buf,
+    int seq_len,
+    const torch::Tensor &new_tokens)  // [N, kTokenDim]
+{
+    int N = (int)new_tokens.size(0);
+    int hist_len = (int)hist_buf.size();
+    int pad = seq_len - hist_len - 1; // -1 for the new token
+
+    std::vector<torch::Tensor> parts;
+    // Zero-pad
+    if (pad > 0) {
+        auto zeros = torch::zeros({N, pad, kTokenDim}, torch::kFloat32);
+        parts.push_back(zeros);
+    }
+    // Shared history (broadcast to N)
+    int copy_start = std::max(0, hist_len - (seq_len - 1));
+    for (int i = copy_start; i < hist_len; ++i)
+        parts.push_back(hist_buf[i].unsqueeze(0).expand({N, -1}).unsqueeze(1));
+    // New per-candidate token
+    parts.push_back(new_tokens.unsqueeze(1));
+    return torch::cat(parts, 1); // [N, seq_len, kTokenDim]
+}
+
+static void evaluate_candidates_batched(
+    MpcContext &ctx,
+    const RolloutState &state,
+    const std::vector<std::vector<ActionCmd>> &cands,
+    double goal_x, double goal_y,
+    std::vector<double> &costs)
 {
     const auto &cfg = ctx.cfg;
-    std::deque<torch::Tensor> hist = ctx.history_buf;
-    RolloutState cur = state;
-    double cost = 0.0;
+    const int N = (int)cands.size();
+    const int H = (int)cands[0].size();
 
-    for (int t = 0; t < (int)actions.size(); ++t) {
-        auto &a = actions[t];
-        auto sinp = rollout_to_input_vec(cur);
-        auto act = torch::tensor({(float)a.vx, (float)a.vy, (float)a.yaw}, torch::kFloat32);
-        hist.push_back(make_token(ctx.norm, sinp, act));
-        if ((int64_t)hist.size() > ctx.history) hist.pop_front();
-        auto delta = predict_delta(ctx.model, ctx.norm, hist, ctx.history, ctx.device);
-        apply_delta(cur, delta);
+    std::fill(costs.begin(), costs.end(), 0.0);
 
-        double dx = cur.x - goal_x, dy = cur.y - goal_y;
-        cost += cfg.w_pos * (dx * dx + dy * dy);
+    auto br = init_batched(state, N);
 
-        double angle_err = wrap_angle(std::atan2(goal_y - cur.y, goal_x - cur.x) - cur.yaw);
-        cost += cfg.w_heading * angle_err * angle_err;
+    // We need to track per-candidate history sequences.
+    // Start with shared history, then diverge as rollouts proceed.
+    // seq: [N, seq_len, kTokenDim] — maintained across horizon steps
+    // Initialize from shared history buffer
+    int seq_len = ctx.history;
+    int hist_len = (int)ctx.history_buf.size();
+    int pad = seq_len - hist_len;
 
-        if (t > 0) {
-            auto &pa = actions[t - 1];
-            double dvx = a.vx - pa.vx, dvy = a.vy - pa.vy, dyaw = a.yaw - pa.yaw;
-            cost += cfg.w_smooth * (dvx * dvx + dvy * dvy + dyaw * dyaw);
+    std::vector<torch::Tensor> init_parts;
+    if (pad > 0)
+        init_parts.push_back(torch::zeros({N, pad, kTokenDim}, torch::kFloat32));
+    for (int i = 0; i < hist_len; ++i)
+        init_parts.push_back(ctx.history_buf[i].unsqueeze(0).expand({N, -1}).unsqueeze(1));
+    // If history is empty, ensure we have at least seq_len slots
+    auto seq = init_parts.empty()
+        ? torch::zeros({N, seq_len, kTokenDim}, torch::kFloat32)
+        : torch::cat(init_parts, 1); // [N, hist_len+pad, kTokenDim]
+    // Trim to seq_len-1 (leave room for new token at each step)
+    if (seq.size(1) > seq_len - 1)
+        seq = seq.narrow(1, seq.size(1) - (seq_len - 1), seq_len - 1);
+
+    for (int t = 0; t < H; ++t) {
+        // Build action tensor [N, 3]
+        auto act_data = torch::empty({N, kActionDim}, torch::kFloat32);
+        auto act_acc = act_data.accessor<float, 2>();
+        for (int c = 0; c < N; ++c) {
+            act_acc[c][0] = (float)cands[c][t].vx;
+            act_acc[c][1] = (float)cands[c][t].vy;
+            act_acc[c][2] = (float)cands[c][t].yaw;
         }
 
-        if (a.vx < 0)
-            cost += cfg.w_backward * a.vx * a.vx;
+        // Build input tokens: [N, kTokenDim]
+        auto inp = batched_to_input(br);  // [N, 77]
+        auto norm_inp = ctx.norm.norm_input(inp);    // [N, 77]
+        auto norm_act = ctx.norm.norm_action(act_data); // [N, 3]
+        auto new_tok = torch::cat({norm_inp, norm_act}, 1); // [N, 80]
+
+        // Append to sequence and trim to seq_len
+        auto full_seq = torch::cat({seq, new_tok.unsqueeze(1)}, 1);
+        if (full_seq.size(1) > seq_len)
+            full_seq = full_seq.narrow(1, full_seq.size(1) - seq_len, seq_len);
+        seq = full_seq;
+
+        // Single batched forward pass for all N candidates
+        auto delta = predict_delta_batched(ctx.model, ctx.norm, seq, ctx.device); // [N, 76]
+        batched_apply_delta(br, delta);
+
+        // Compute costs (on CPU tensors)
+        auto dx = br.x - goal_x;
+        auto dy = br.y - goal_y;
+        auto dist_sq = dx * dx + dy * dy;
+        auto dist_sq_acc = dist_sq.accessor<double, 1>();
+
+        auto heading_to_goal = torch::atan2(
+            torch::full({N}, goal_y, torch::kFloat64) - br.y,
+            torch::full({N}, goal_x, torch::kFloat64) - br.x);
+        auto angle_err = torch::atan2(
+            torch::sin(heading_to_goal - br.yaw),
+            torch::cos(heading_to_goal - br.yaw));
+        auto angle_sq_t = angle_err * angle_err;
+        auto angle_sq = angle_sq_t.accessor<double, 1>();
+
+        for (int c = 0; c < N; ++c) {
+            costs[c] += cfg.w_pos * dist_sq_acc[c];
+            costs[c] += cfg.w_heading * angle_sq[c];
+
+            if (t > 0) {
+                auto &a = cands[c][t], &pa = cands[c][t-1];
+                double dvx = a.vx-pa.vx, dvy = a.vy-pa.vy, dyaw = a.yaw-pa.yaw;
+                costs[c] += cfg.w_smooth * (dvx*dvx + dvy*dvy + dyaw*dyaw);
+            }
+            if (cands[c][t].vx < 0)
+                costs[c] += cfg.w_backward * cands[c][t].vx * cands[c][t].vx;
+        }
     }
 
-    double tdx = cur.x - goal_x, tdy = cur.y - goal_y;
-    cost += cfg.w_terminal * (tdx * tdx + tdy * tdy);
-    return cost;
+    // Terminal cost
+    auto tdx = br.x - goal_x;
+    auto tdy = br.y - goal_y;
+    auto term_sq_t = tdx*tdx + tdy*tdy;
+    auto term_sq = term_sq_t.accessor<double, 1>();
+    for (int c = 0; c < N; ++c)
+        costs[c] += cfg.w_terminal * term_sq[c];
 }
 
 ActionCmd mpc_plan(MpcContext &ctx,
@@ -303,8 +470,9 @@ ActionCmd mpc_plan(MpcContext &ctx,
             }
         }
 
+        evaluate_candidates_batched(ctx, state, cands, goal_x, goal_y, costs);
+
         for (int c = 0; c < N; ++c) {
-            costs[c] = evaluate_candidate(ctx, state, cands[c], goal_x, goal_y);
             if (costs[c] < best_cost_overall) {
                 best_cost_overall = costs[c];
                 best_seq = cands[c];

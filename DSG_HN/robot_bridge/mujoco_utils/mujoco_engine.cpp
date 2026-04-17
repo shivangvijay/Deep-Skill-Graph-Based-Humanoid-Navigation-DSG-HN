@@ -103,6 +103,30 @@ void MuJoCoEngine::initViz()
     mjr_makeContext(m, &con, mjFONTSCALE_150);
 }
 
+void MuJoCoEngine::addMarker(const mjtNum pos[3], float radius,
+                             const float rgba[4], mjtGeom type)
+{
+    Marker mk;
+    mk.pos[0] = pos[0]; mk.pos[1] = pos[1]; mk.pos[2] = pos[2];
+    if (type == mjGEOM_CYLINDER) {
+        mk.size[0] = (mjtNum)radius;
+        mk.size[1] = 0.02;     // half-height (thin disc)
+        mk.size[2] = 0.0;
+    } else {
+        mk.size[0] = (mjtNum)radius;
+        mk.size[1] = (mjtNum)radius;
+        mk.size[2] = (mjtNum)radius;
+    }
+    mk.rgba[0] = rgba[0]; mk.rgba[1] = rgba[1]; mk.rgba[2] = rgba[2]; mk.rgba[3] = rgba[3];
+    mk.type = type;
+    markers_.push_back(mk);
+}
+
+void MuJoCoEngine::clearMarkers()
+{
+    markers_.clear();
+}
+
 void MuJoCoEngine::render()
 {
     if (!window)
@@ -112,6 +136,14 @@ void MuJoCoEngine::render()
     glfwGetFramebufferSize(window, &viewport.width, &viewport.height);
 
     mjv_updateScene(m, d, &opt, NULL, &cam, mjCAT_ALL, &scn);
+
+    for (auto &mk : markers_)
+    {
+        if (scn.ngeom >= scn.maxgeom) break;
+        mjvGeom *g = &scn.geoms[scn.ngeom++];
+        mjv_initGeom(g, mk.type, mk.size, mk.pos, NULL, mk.rgba);
+        g->category = mjCAT_DECOR;
+    }
 
     mjr_render(viewport, &scn, &con);
 

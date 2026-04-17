@@ -25,6 +25,7 @@ public:
 
     mjModel* getModel() const { return eng->getModel(); }
     mjData*  getData()  const { return eng->getData(); }
+    MuJoCoEngine* getEngine() const { return eng.get(); }
 
 private:
     std::shared_ptr<MuJoCoEngine> eng;

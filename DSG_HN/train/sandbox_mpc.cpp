@@ -23,8 +23,8 @@
 #define USE_WALL_CLOCK_TIME true
 #define CONTROL_HZ          10
 #define GOAL_REACHED_DIST   0.15
-#define STALL_WINDOW        50
-#define STALL_THRESHOLD     0.95
+#define STALL_WINDOW        200
+#define STALL_THRESHOLD     0.98
 
 #define JS_DEVICE     "/dev/input/js0"
 #define JS_MAX_AXIS   32767.0f
@@ -229,6 +229,18 @@ int main(int argc, char **argv)
         auto best = mpc_plan(*ctx, rollout_state, goal_x, goal_y, seed_base + step);
 
         robot_bridge->publishVelCommand({(float)best.vx, (float)best.vy, (float)best.yaw});
+
+        // Draw goal marker as a red disc on the ground
+        auto *eng = robot_bridge->getEngine();
+        eng->clearMarkers();
+        mjtNum goal_pos[3] = {goal_x, goal_y, 0.01};
+        float  goal_rgba[4] = {1.0f, 0.0f, 0.0f, 0.8f};
+        eng->addMarker(goal_pos, 0.4f, goal_rgba, mjGEOM_CYLINDER);
+        // Also add a tall sphere so it's visible from any camera angle
+        mjtNum goal_sphere[3] = {goal_x, goal_y, 0.5};
+        float  sphere_rgba[4] = {1.0f, 0.2f, 0.2f, 0.9f};
+        eng->addMarker(goal_sphere, 0.15f, sphere_rgba, mjGEOM_SPHERE);
+
         robot_bridge->update();
 
         mpc_update_history(*ctx, rollout_state, best);

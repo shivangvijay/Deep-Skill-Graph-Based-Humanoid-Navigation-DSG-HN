@@ -123,3 +123,12 @@ target_link_libraries(transition_rollout_eval_transformer_delta PRIVATE
   libboost_program_options.a
   fmt
 )
+
+add_executable(transition_train_gaussian_delta
+  transition_train_gaussian_delta.cpp
+)
+target_link_libraries(transition_train_gaussian_delta PRIVATE
+  ${TORCH_LIBRARIES}
+  libboost_program_options.a
+  fmt
+)

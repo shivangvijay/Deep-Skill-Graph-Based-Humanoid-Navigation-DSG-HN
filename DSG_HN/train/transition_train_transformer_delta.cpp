@@ -418,22 +418,25 @@ TORCH_MODULE(TransformerTransitionModel);
 // =====================================================================
 //  Loss functions & output weights (same as gaussian_delta)
 // =====================================================================
-static torch::Tensor make_output_weights(torch::Device device)
+static torch::Tensor make_output_weights(torch::Device device, bool tuned)
 {
     auto w = torch::ones({kOutputDim}, torch::TensorOptions().dtype(torch::kFloat32).device(device));
-    w[0] = 5.0f; w[1] = 5.0f;           // dx, dy — position accuracy is critical for MPC
-    w[2] = 3.0f;                         // dyaw — heading matters for navigation
-    w[3] = 1.5f; w[4] = 1.5f;           // dvx, dvy — velocity stability
-    w[5] = 1.0f;                         // doz
-    for (int i = 6; i < 6 + kJointDim; ++i) w[i] = 0.3f;
-    for (int i = 6 + kJointDim; i < kOutputDim; ++i) w[i] = 0.1f;
+    if (tuned)
+    {
+        w[0] = 5.0f; w[1] = 5.0f;           // dx, dy
+        w[2] = 3.0f;                         // dyaw
+        w[3] = 1.5f; w[4] = 1.5f;           // dvx, dvy
+        w[5] = 1.0f;                         // doz
+        for (int i = 6; i < 6 + kJointDim; ++i) w[i] = 0.3f;
+        for (int i = 6 + kJointDim; i < kOutputDim; ++i) w[i] = 0.1f;
+    }
     return w;
 }
 
-// Cosine LR with linear warmup
 static double cosine_lr(int epoch, int total_epochs, double base_lr,
-                        double warmup_frac = 0.05, double min_lr_frac = 0.01)
+                        bool use_schedule, double warmup_frac = 0.05, double min_lr_frac = 0.01)
 {
+    if (!use_schedule) return base_lr;
     int warmup_epochs = std::max(1, (int)(total_epochs * warmup_frac));
     if (epoch <= warmup_epochs)
         return base_lr * (double)epoch / (double)warmup_epochs;
@@ -583,6 +586,8 @@ int main(int argc, char **argv)
         ("max-time-gap",   po::value<double>()->default_value(0.5),  "max seconds between rows before episode break")
         ("future-steps",   po::value<int>()->default_value(3),       "multi-step rollout loss horizon K")
         ("multistep-weight", po::value<double>()->default_value(0.3),"weight for multi-step loss (annealed 0 -> this)")
+        ("tuned-weights",  po::bool_switch()->default_value(false),  "use tuned output weights (dx/dy=5, dyaw=3, ...)")
+        ("cosine-lr",      po::bool_switch()->default_value(false),  "use cosine LR schedule with warmup")
         ("seed",           po::value<int>()->default_value(42),      "random seed");
 
     po::variables_map vm;
@@ -610,11 +615,19 @@ int main(int argc, char **argv)
     const double max_gap     = vm["max-time-gap"].as<double>();
     const int  future_steps  = vm["future-steps"].as<int>();
     const double ms_weight_max = vm["multistep-weight"].as<double>();
+    const bool tuned_weights = vm["tuned-weights"].as<bool>();
+    const bool use_cosine_lr = vm["cosine-lr"].as<bool>();
     const int  seed          = vm["seed"].as<int>();
 
     std::filesystem::create_directories(output_dir);
     torch::manual_seed(seed);
     std::srand(seed);
+
+    std::cout << "Features: tuned-weights=" << (tuned_weights ? "ON" : "OFF")
+              << "  cosine-lr=" << (use_cosine_lr ? "ON" : "OFF")
+              << "  multi-step=" << (future_steps > 0 ? "ON" : "OFF")
+              << " (steps=" << future_steps << " weight=" << ms_weight_max << ")"
+              << "\nOutput: " << output_dir << "\n" << std::flush;
 
     const torch::Device device(torch::cuda::is_available() ? torch::kCUDA : torch::kCPU);
     std::cout << "Device: " << device << std::endl;
@@ -655,20 +668,36 @@ int main(int argc, char **argv)
     std::minstd_rand split_rng(seed);
     std::shuffle(episodes.begin(), episodes.end(), split_rng);
 
-    // Assign episodes to splits by cumulative row count
-    int64_t target_train = static_cast<int64_t>(total_rows * 0.70);
-    int64_t target_val   = static_cast<int64_t>(total_rows * 0.20);
-
+    // Assign episodes to splits, guaranteeing at least 1 episode for val and test.
+    int64_t n_eps = static_cast<int64_t>(episodes.size());
     std::vector<int64_t> train_idx, val_idx, test_idx;
-    int64_t train_count = 0, val_count = 0;
-    for (auto &ep : episodes)
+
+    if (n_eps < 3)
     {
-        std::vector<int64_t> *dest;
-        if (train_count < target_train) { dest = &train_idx; train_count += ep.len; }
-        else if (val_count < target_val) { dest = &val_idx; val_count += ep.len; }
-        else { dest = &test_idx; }
-        for (int64_t r = ep.start; r < ep.start + ep.len; ++r)
-            dest->push_back(r);
+        std::cout << "\nWARNING: Only " << n_eps << " episodes — using all for train (no val/test).\n";
+        for (auto &ep : episodes)
+            for (int64_t r = ep.start; r < ep.start + ep.len; ++r)
+                train_idx.push_back(r);
+    }
+    else
+    {
+        int64_t val_eps_max   = std::max((int64_t)1, n_eps / 5);
+        int64_t test_eps_max  = std::max((int64_t)1, n_eps / 10);
+        int64_t train_eps_max = n_eps - val_eps_max - test_eps_max;
+
+        int64_t train_eps = 0, val_eps = 0;
+        for (auto &ep : episodes)
+        {
+            std::vector<int64_t> *dest;
+            if (train_eps < train_eps_max)
+                { dest = &train_idx; ++train_eps; }
+            else if (val_eps < val_eps_max)
+                { dest = &val_idx; ++val_eps; }
+            else
+                { dest = &test_idx; }
+            for (int64_t r = ep.start; r < ep.start + ep.len; ++r)
+                dest->push_back(r);
+        }
     }
 
     // Sort indices within each split to preserve temporal order for windowing
@@ -733,7 +762,7 @@ int main(int argc, char **argv)
               << " heads=" << n_heads << " layers=" << n_layers
               << " seq=" << history << " params=" << param_count << ")" << std::endl;
 
-    auto weights = make_output_weights(device);
+    auto weights = make_output_weights(device, tuned_weights);
     torch::optim::AdamW opt(model->parameters(), torch::optim::AdamWOptions(lr).weight_decay(wd));
 
     const auto best_path   = output_dir / "transition_transformer_delta_best.pt";
@@ -748,7 +777,7 @@ int main(int argc, char **argv)
     {
         auto ep_start = std::chrono::steady_clock::now();
 
-        double cur_lr = cosine_lr(ep, epochs, lr);
+        double cur_lr = cosine_lr(ep, epochs, lr, use_cosine_lr);
         for (auto &pg : opt.param_groups())
             static_cast<torch::optim::AdamWOptions &>(pg.options()).lr(cur_lr);
 
