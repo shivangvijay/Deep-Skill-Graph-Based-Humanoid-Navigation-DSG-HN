@@ -93,6 +93,7 @@ public:
     const std::vector<GestationRecord>& getEffectSet() const { return _effect_records; }
     std::shared_ptr<Skill> getParent() const { return _parent; }
     void setEvalMode(bool eval) { _eval = eval; }
+    void setGlobalGoal(const AbstractedState &g) { _global_goal = g; }
 
     // Child skills that target this skill's initiation set as their termination condition.
     // Populated by DeepSkillGraph when creating sibling options under the same parent.
