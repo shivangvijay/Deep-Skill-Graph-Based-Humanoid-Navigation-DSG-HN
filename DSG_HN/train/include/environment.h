@@ -281,7 +281,7 @@ public:
             _collision = true;
             terminated = true;
         }
-        else if (use_goal_radius && pos_error < 0.5)
+        else if (use_goal_radius && pos_error < success_radius)
         {
             reward += 50;
             terminated = true;
@@ -386,6 +386,7 @@ public:
 
     float max_goal_distance = 3.0f;
     float min_goal_distance = 1.0f;
+    float success_radius = 0.5f;
 
     const std::vector<Obstacle> &getObstacles() const { return obstacles; }
 

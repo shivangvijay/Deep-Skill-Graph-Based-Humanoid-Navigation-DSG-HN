@@ -57,12 +57,14 @@ public:
         float tau = 0.005f;
         float gamma = 0.99f;
         int batch_size = 256;
+        int poo_batch_size = 16;
         int actor_update_freq = 2;
 
         bool render_training = false;           // if true, startRender() is called before the training loop (slows training)
         bool verbose = false;                   // per-rollout logging inside each episode
         bool visualize_initiation_sets = false; // if true, periodically render initiation set visualization
         int log_interval = 50;                  // print episode summary + skill status table every N episodes
+        bool strict_sampling = false;           // if true, all rollout spawns come from _sampleSpawnState() near _global_start
     };
 
     // TODO: depending on DSG setup may need other constructors that allow you to pass in the global agent
@@ -85,20 +87,20 @@ public:
                       Config cfg, bool eval=false);
 
     // Train the chain backward from the global goal. Returns total skill count excluding the global option
-    int train(int max_episodes);
+    virtual int train(int max_episodes);
 
     // Execute one episode using πO over the trained chain. Returns cumulative reward.
-    float execute();
+    virtual float execute();
 
     void visualizeInitiationSets();
 
-    void save(const std::string &dir) const;
-    void load(const std::string &dir, const std::string &scene_file);
+    virtual void save(const std::string &dir) const;
+    virtual void load(const std::string &dir, const std::string &scene_file);
 
     int numSkills() const;
     void setEvalMode(bool eval);
 
-private:
+protected:
     std::shared_ptr<RobotBridgeTrain> _robot_bridge;
     std::shared_ptr<TrainEnvironment> _env;
     torch::Device _device;
@@ -120,15 +122,16 @@ private:
     float _dscRollout();
     std::pair<int, AbstractedState> _pickOption();
     bool _containsGlobalStartState();
-    void _makeSkill(bool is_global, std::shared_ptr<Skill> parent);
+    virtual void _makeSkill(bool is_global, std::shared_ptr<Skill> parent);
     void _loadGlobalOption(const std::string &actor_path, const std::string &critic1_path, const std::string &critic2_path);
 
-    float _sampleGaussianDist(float mu, float std);                                                               // utility function to sample a gaussian
-    std::array<float, 4> _getGaussianQuaternionPerturbation(const std::array<float, 4> &q_orig, float sigma_rad); // utility function to perturb quaternion by random noise
+    float _sampleGaussianDist(float mu, float std);
+    std::array<float, 4> _getGaussianQuaternionPerturbation(const std::array<float, 4> &q_orig, float sigma_rad);
 
-    AbstractedState _sampleStartNearObstacle(); // gaussian sampling (see robot autonomy slides)
-    AbstractedState _sampleStartInterpolated(); // randomly sample position linearly interpolated between start and goal (with noise)
-    AbstractedState _sampleStartNearBoundary(); // sample start near edge of last mature option
-    void _validateOption();
-    bool _shouldCreateNewOption();
+    AbstractedState _sampleStartNearObstacle();
+    AbstractedState _sampleStartInterpolated();
+    AbstractedState _sampleStartNearBoundary();
+    virtual AbstractedState _sampleSpawnState(); // used when strict_sampling=true; default returns _global_start
+    virtual void _validateOption();
+    virtual bool _shouldCreateNewOption();
 };

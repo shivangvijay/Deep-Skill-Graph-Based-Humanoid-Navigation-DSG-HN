@@ -2,6 +2,7 @@
 #include "model.hpp"
 #include "environment.h"
 #include <torch/torch.h>
+#include <unordered_map>
 
 using namespace torch;
 using Experience = std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>;
@@ -103,7 +104,8 @@ private:
     void softUpdate();
 
     std::unique_ptr<torch::optim::Adam> optimizer;
-    ReplayBuffer replay_buffer;
+    std::unordered_map<int, ReplayBuffer> replay_buffers;
+    int option_count = 0;
     torch::Device device;
     float lr;
     float tau;

@@ -166,6 +166,7 @@ PolicyOverOptionsAgent::PolicyOverOptionsAgent(
 
 void PolicyOverOptionsAgent::addOption(float initial_bias)
 {
+    option_count++;
     q->addOption(initial_bias);
     target_q->addOption(initial_bias);
     hardCopy();                                                                                       // ensure target_q has the same new parameters as q
@@ -188,40 +189,46 @@ void PolicyOverOptionsAgent::addExperience(torch::Tensor state, int option, floa
 
 void PolicyOverOptionsAgent::addExperience(torch::Tensor state, torch::Tensor option, torch::Tensor cumulative_reward, torch::Tensor next_state, torch::Tensor done, torch::Tensor num_steps)
 {
-    replay_buffer.addExperienceState(state, option, cumulative_reward, next_state, done, num_steps);
+    int option_idx = option.item<int>();
+    replay_buffers[option_idx].addExperienceState(state, option, cumulative_reward, next_state, done, num_steps);
 }
 
 void PolicyOverOptionsAgent::learn()
 {
-    if (replay_buffer.getLength() < batch_size)
-        return;
+    for (auto& [option_idx, replay_buffer] : replay_buffers)
+    {
+        if (replay_buffer.getLength() < batch_size)
+            continue;
 
-    auto experiences = replay_buffer.sample(batch_size);
-    auto states = std::get<0>(experiences).to(q->device);
-    auto options = std::get<1>(experiences).to(q->device).to(torch::kInt64);
-    auto cumulative_rewards = std::get<2>(experiences).to(q->device);
-    auto next_states = std::get<3>(experiences).to(q->device);
-    auto dones = std::get<4>(experiences).to(q->device).narrow(-1, 0, 1).to(torch::kInt64); // note that dones and num_steps are concatenated in the same tensor, with num_steps in the last dimension
-    auto num_steps = std::get<4>(experiences).to(q->device).narrow(-1, 1, 1).to(torch::kInt64);
-    auto q_values = q->forward(states);
+        auto experiences = replay_buffer.sample(batch_size);
+        auto states = std::get<0>(experiences).to(q->device);
+        auto options = std::get<1>(experiences).to(q->device).to(torch::kInt64);
+        auto cumulative_rewards = std::get<2>(experiences).to(q->device);
+        auto next_states = std::get<3>(experiences).to(q->device);
+        auto dones = std::get<4>(experiences).to(q->device).narrow(-1, 0, 1).to(torch::kInt64); // note that dones and num_steps are concatenated in the same tensor, with num_steps in the last dimension
+        auto num_steps = std::get<4>(experiences).to(q->device).narrow(-1, 1, 1).to(torch::kInt64);
+        auto q_values = q->forward(states);
 
-    // Compute target Q values using target_q in eval mode (for consistency)
-    target_q->eval();
-    auto target_q_values = std::get<0>(torch::max(target_q->forward(next_states), -1, true)).detach();
-    target_q->train();  // Reset to training mode
-    
-    auto discount_factor = torch::pow(gamma, num_steps);
-    auto y = cumulative_rewards + (discount_factor * target_q_values * (1 - dones));
+        // Compute target Q values using target_q in eval mode (for consistency)
+        target_q->eval();
+        auto best_options = std::get<1>(torch::max(q->forward(next_states), -1, true)); // in torch, max returns values, indices
+        // Double DQN: pick actions based on current q, but evaluate them with the target q. Gather allows us to select values of selected indices along a given dim
+        auto target_q_values = target_q->forward(next_states).gather(-1, best_options).detach();
+        target_q->train();  // Reset to training mode
+        
+        auto discount_factor = torch::pow(gamma, num_steps);
+        auto y = cumulative_rewards + (discount_factor * target_q_values * (1 - dones));
 
-    if (options.dim() == 1)
-        options = options.unsqueeze(-1);
-    auto q_values_selected = q_values.gather(-1, options);
-    auto loss = torch::nn::functional::mse_loss(q_values_selected, y);
+        if (options.dim() == 1)
+            options = options.unsqueeze(-1);
+        auto q_values_selected = q_values.gather(-1, options);
+        auto loss = torch::nn::functional::mse_loss(q_values_selected, y);
 
-    optimizer->zero_grad();
-    loss.backward();
-    torch::nn::utils::clip_grad_norm_(q->parameters(), 1.0);
-    optimizer->step();
+        optimizer->zero_grad();
+        loss.backward();
+        torch::nn::utils::clip_grad_norm_(q->parameters(), 1.0);
+        optimizer->step();
+    }
 
     softUpdate();
 }
