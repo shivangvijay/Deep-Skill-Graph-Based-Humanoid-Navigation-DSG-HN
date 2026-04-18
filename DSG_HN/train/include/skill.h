@@ -90,6 +90,8 @@ public:
     int gestationPeriod() const { return _gestation_period; }
     double getDecisionValue(const AbstractedState &state) const;
     const std::vector<GestationRecord>& getPositiveGestationRecords() const { return _positive_gestation_records; }
+    const std::vector<GestationRecord>& getEffectSet() const { return _effect_records; }
+    std::shared_ptr<Skill> getParent() const { return _parent; }
     void setEvalMode(bool eval) { _eval = eval; }
 
     // Child skills that target this skill's initiation set as their termination condition.
@@ -109,7 +111,8 @@ private:
     TD3Agent _agent;
     InitiationSetClassifier _classifier;             // optimistic boundary: loose OneClassSVM or balanced SVC
     InitiationSetClassifier _pessimistic_classifier; // tight boundary: OneClassSVM(nu) or OneClassSVM re-fit on SVC-positives
-    std::vector<GestationRecord> _positive_gestation_records;
+    std::vector<GestationRecord> _positive_gestation_records; // initiation set proxy: spawn + termination states
+    std::vector<GestationRecord> _effect_records;             // effect set E_o: termination states only (no spawn)
     std::vector<std::vector<float>> _gestation_vecs;
     std::vector<int> _gestation_labels;
     bool _has_negative_gestation = false;

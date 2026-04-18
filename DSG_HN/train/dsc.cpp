@@ -53,32 +53,29 @@ int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout wh
 
     for (int episode = 0; episode < max_episodes; episode++)
     {
-        // TODO: more intelligent sampling. The big thing is not just randomly sampling, but perhaps sampling in the
-        // area of the previously learned skill so that it has a bit of an easier time learning
-        std::uniform_real_distribution<float> dis(0.0f, 1.0f);
-        float p = dis(_rng);
-        if (p < 0.1) // bit of goal biased sampling, may want to do even more intelligent sampling going forward
+        if (_cfg.strict_sampling)
         {
-            _env->resetTo(_global_start);
-        }
-        // else if (p >= 0.2 && p < 0.4)
-        // {
-        //     auto start = _sampleStartNearObstacle();
-        //     _env->resetTo(start);
-        // }
-        // else if (p >= 0.4 && p < 0.6)
-        // {
-        //     auto start = _sampleStartInterpolated();
-        //     _env->resetTo(start);
-        // }
-        else if (p >= 0.1 && p < 0.7)
-        {
-            auto start = _sampleStartNearBoundary();
-            _env->resetTo(start);
+            _env->resetTo(_sampleSpawnState());
         }
         else
         {
-            _env->reset(); // random start
+            // TODO: more intelligent sampling. The big thing is not just randomly sampling, but perhaps sampling in the
+            // area of the previously learned skill so that it has a bit of an easier time learning
+            std::uniform_real_distribution<float> dis(0.0f, 1.0f);
+            float p = dis(_rng);
+            if (p < 0.1) // bit of goal biased sampling, may want to do even more intelligent sampling going forward
+            {
+                _env->resetTo(_global_start);
+            }
+            else if (p >= 0.1 && p < 0.7)
+            {
+                auto start = _sampleStartNearBoundary();
+                _env->resetTo(start);
+            }
+            else
+            {
+                _env->reset(); // random start
+            }
         }
 
         float ep_reward = 0.0f;
@@ -691,6 +688,11 @@ AbstractedState DeepSkillChaining::_sampleStartNearBoundary()
     std::cerr << "Warning: Could not generate sample near boundary of previous option, returning random sample" << std::endl;
 
     return _env->getRandomValidAbstractedState();
+}
+
+AbstractedState DeepSkillChaining::_sampleSpawnState()
+{
+    return _global_start;
 }
 
 /************************************** main **************************************/

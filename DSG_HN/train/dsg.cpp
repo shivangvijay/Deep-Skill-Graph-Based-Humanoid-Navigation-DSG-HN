@@ -83,6 +83,36 @@ void DeepSkillGraph::loadTransitionModel(const std::string &model_path,
 // DSC overrides
 // =============================================================================
 
+AbstractedState DeepSkillGraph::_sampleSpawnState()
+{
+    int n_skills = (int)_skills.size();
+
+    // Case 1: _global_start is inside a goal region — sample uniformly within its epsilon-ball.
+    for (int r = 0; r < (int)_goal_regions.size(); r++)
+    {
+        if (_nodeCanStart(n_skills + r, _global_start))
+        {
+            const auto &gr = _goal_regions[r];
+            std::uniform_real_distribution<float> angle_dist(0.0f, 2.0f * M_PI);
+            std::uniform_real_distribution<float> radius_dist(0.0f, gr.epsilon);
+            float angle = angle_dist(_rng);
+            float radius = radius_dist(_rng);
+            AbstractedState spawn = gr.center;
+            spawn.position[0] += radius * std::cos(angle);
+            spawn.position[1] += radius * std::sin(angle);
+            return spawn;
+        }
+    }
+
+    // Case 2: _global_start is the physical landing state after executing v_d (its effect set).
+    // Small XY perturbation gives diversity across episodes while staying within the effect set.
+    AbstractedState spawn = _global_start;
+    std::normal_distribution<float> gauss(0.0f, 0.3f);
+    spawn.position[0] += gauss(_rng);
+    spawn.position[1] += gauss(_rng);
+    return spawn;
+}
+
 void DeepSkillGraph::_makeSkill(bool is_global, std::shared_ptr<Skill> parent)
 {
     DeepSkillChaining::_makeSkill(is_global, parent);
@@ -361,19 +391,21 @@ void DeepSkillGraph::_updateEdges()
         return false;
     };
 
-    // skill → skill edges: effect_set(i) ⊆ initiation_set(j)
-    // O(n^2) connecting skills based on effect set containment in initiation set
+    // skill → skill/goal_region edges: effect_set(i) ⊆ initiation_set(j)
+    // E_i = _effect_records: states where skill i actually triggered its termination condition.
+    // Stored separately from _positive_gestation_records (which also contains spawn states used
+    // for initiation set classifier training). Only termination states participate in edge inference.
     for (int i = _global_option_idx + 1; i < n_skills; i++)
     {
         if (_skills[i]->getTrainingPhase() != "mature") continue;
-        const auto &records = _skills[i]->getPositiveGestationRecords();
-        if (records.empty()) continue;
+        const auto &effect_set = _skills[i]->getEffectSet();
+        if (effect_set.empty()) continue;
 
         for (int j = _global_option_idx + 1; j < n_skills; j++)
         {
             if (i == j || edge_exists(i, j)) continue;
             bool all_covered = true;
-            for (const auto &rec : records)
+            for (const auto &rec : effect_set)
                 if (!_skills[j]->canStartPessimistic(rec.state)) { all_covered = false; break; }
             if (all_covered)
             {
@@ -388,7 +420,7 @@ void DeepSkillGraph::_updateEdges()
             int gr_idx = n_skills + r;
             if (edge_exists(i, gr_idx)) continue;
             bool all_covered = true;
-            for (const auto &rec : records)
+            for (const auto &rec : effect_set)
                 if (!_nodeCanStart(gr_idx, rec.state)) { all_covered = false; break; }
             if (all_covered)
             {
@@ -666,7 +698,7 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
                 best_cost   = cost;
                 best_option = v;
                 next_node   = path.front();
-                best_goal   = _skills[v]->getLocalGoal();
+                best_goal   = _nodeRepresentativeState(next_node); // steer toward next hop, not GlobalOption's random subgoal
             }
         }
 
@@ -884,9 +916,16 @@ void DeepSkillGraph::_graphConsolidationPhase()
     // 4. Navigate to v_d
     _navigateTo(v_d, _dsg_cfg.steps_per_episode / 3);
 
+    // 4b. If v_d is a skill node, execute it to land in its effect set.
+    //     The robot's physical state after execution is the correct spawn anchor for the
+    //     bridge DSC chain: the new skill's initiation set must cover these landing states
+    //     so that E_{v_d} ⊆ I_{new} holds and a valid graph edge can be inferred.
+    if (v_d < (int)_skills.size() && v_d != _global_option_idx)
+        _skills[v_d]->rollout(_skills[v_d]->getLocalGoal());
+
     // 5. Train a DSC bridge from v_d toward v_a.
     {
-        AbstractedState v_d_state = _env->getAbstractedState();
+        AbstractedState v_d_state = _env->getAbstractedState(); // inside v_d's effect set
         AbstractedState v_a_state = _nodeRepresentativeState(v_a);
 
         std::cout << "[DSG Consolidation] Bridge " << _nodeLabel(v_d)
@@ -894,15 +933,18 @@ void DeepSkillGraph::_graphConsolidationPhase()
                   << " start=(" << v_d_state.position[0] << ", " << v_d_state.position[1] << ")"
                   << " goal=(" << v_a_state.position[0] << ", " << v_a_state.position[1] << ")\n";
 
-        auto saved_start = _global_start;
-        auto saved_goal  = _global_goal;
-        _global_start = v_d_state;
-        _global_goal  = v_a_state;
+        auto saved_start   = _global_start;
+        auto saved_goal    = _global_goal;
+        bool saved_strict  = _cfg.strict_sampling;
+        _global_start      = v_d_state;
+        _global_goal       = v_a_state;
+        _cfg.strict_sampling = true; // always spawn near v_d_state; boundary heuristic is meaningless here
 
-        DeepSkillChaining::train(1); // this does env->resetTo(global_start), which means the navigation to v_d is only partially useful, it only trains the graph
+        DeepSkillChaining::train(1);
 
-        _global_start = saved_start;
-        _global_goal  = saved_goal;
+        _global_start        = saved_start;
+        _global_goal         = saved_goal;
+        _cfg.strict_sampling = saved_strict;
     }
 
     // 6. Navigate to v_g

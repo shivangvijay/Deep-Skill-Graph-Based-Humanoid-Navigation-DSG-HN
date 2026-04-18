@@ -322,6 +322,7 @@ protected:
     void _validateOption() override;
     void _warmupRollout(); // override: rolls out global option toward a random valid state
     std::pair<int, AbstractedState> _pickOption();
+    AbstractedState _sampleSpawnState() override;
 
     // --- graph edge management ---
     void _updateEdges();

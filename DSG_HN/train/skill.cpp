@@ -34,14 +34,13 @@ std::string Skill::getTrainingPhase() const
 
 AbstractedState Skill::getLocalGoal()
 {
-    if (_parent == nullptr || _is_global)
-    {
+    // The global option has no meaningful initiation region to sample from.
+    // The first skill in a DSC chain (parent = global option) should target
+    // its own _global_goal (the goal it was trained to reach), not a random
+    // state from the global option's empty gestation records.
+    if (_parent == nullptr || _is_global || _parent->getTrainingPhase() == "global")
         return _global_goal;
-    }
-    else
-    {
-        return _parent->sampleSubgoalState();
-    }
+    return _parent->sampleSubgoalState();
 }
 
 // bool Skill::atTermination(const AbstractedState &goal) const
@@ -459,23 +458,24 @@ void Skill::save(const std::string &actor_path,
         std::cout << "[Skill " << _id << "] Saved pessimistic classifier to " << classifier_path + "_pessimistic" << "\n";
     }
 
-    if (!_is_global && !_positive_gestation_records.empty())
-    {
-        std::ofstream out(classifier_path + "_positives.txt");
-        out << _positive_gestation_records.size() << "\n";
-        for (const auto &record : _positive_gestation_records)
+    auto write_records = [](const std::string &path, const std::vector<GestationRecord> &records) {
+        std::ofstream out(path);
+        out << records.size() << "\n";
+        for (const auto &record : records)
         {
-            for (float v : record.state.position)
-                out << v << " ";
-            for (float v : record.state.orientation)
-                out << v << " ";
-            for (float v : record.state.velocity)
-                out << v << " ";
-            for (float v : record.state.angular_velocity)
-                out << v << " ";
+            for (float v : record.state.position)         out << v << " ";
+            for (float v : record.state.orientation)      out << v << " ";
+            for (float v : record.state.velocity)         out << v << " ";
+            for (float v : record.state.angular_velocity) out << v << " ";
             out << "\n";
         }
-    }
+    };
+
+    if (!_is_global && !_positive_gestation_records.empty())
+        write_records(classifier_path + "_positives.txt", _positive_gestation_records);
+
+    if (!_is_global && !_effect_records.empty())
+        write_records(classifier_path + "_effect.txt", _effect_records);
 }
 
 void Skill::load(const std::string &actor_path,
@@ -534,6 +534,24 @@ void Skill::load(const std::string &actor_path,
             _positive_gestation_records.push_back({_classifierVec(state), state});
         }
     }
+
+    auto load_records = [&](const std::string &path, std::vector<GestationRecord> &records) {
+        std::ifstream f(path);
+        if (!f.good() || _is_global) return;
+        size_t count = 0; f >> count;
+        for (size_t i = 0; i < count; i++)
+        {
+            AbstractedState state;
+            for (auto &v : state.position)         f >> v;
+            for (auto &v : state.orientation)      f >> v;
+            for (auto &v : state.velocity)         f >> v;
+            for (auto &v : state.angular_velocity) f >> v;
+            records.push_back({_classifierVec(state), state});
+        }
+    };
+
+    _effect_records.clear();
+    load_records(classifier_path + "_effect.txt", _effect_records);
 
     if (!_is_global && _classifier.trained())
     {
@@ -779,8 +797,7 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
     if (term_success)
     {
         // 1. Capture the "Entry Point": The state where the robot began this successful rollout.
-        // This is crucial for chaining: it tells the next skill in the chain exactly where
-        // a successful path was found. We skip this for the global/goal option.
+        // Feeds the SVM (initiation set classifier) only — not the effect set.
         if (_parent != nullptr)
         {
             _positive_gestation_records.push_back(visited.front());
@@ -789,13 +806,16 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
         }
 
         // 2. Capture the "Success Buffer": The last K states of the trajectory.
-        // These represent the region where the robot successfully entered the parent's set.
+        // These go into both the initiation set proxy and the effect set.
+        // The effect set E_o is the stored record of where the option actually terminated;
+        // it excludes spawn states so edge inference (E_i ⊆ I_j) is not contaminated.
         int buffer_size = std::min((int)visited.size(), _k);
         int start_idx = (int)visited.size() - buffer_size;
 
         for (int t = start_idx; t < (int)visited.size(); ++t)
         {
             _positive_gestation_records.push_back(visited[t]);
+            _effect_records.push_back(visited[t]);
             _gestation_vecs.push_back(visited[t].classifier_vec);
             _gestation_labels.push_back(1);
         }
