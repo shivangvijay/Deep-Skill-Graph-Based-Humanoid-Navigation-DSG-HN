@@ -940,6 +940,14 @@ void DeepSkillGraph::_graphConsolidationPhase()
         _global_goal       = v_a_state;
         _cfg.strict_sampling = true; // always spawn near v_d_state; boundary heuristic is meaningless here
 
+        // The frontier skill (parent=nullptr) uses _global_goal directly in getLocalGoal().
+        // It was created in the DSG constructor before any bridge target was known — update it now.
+        // Mature skills and parent-chain skills are not touched: their rollout goals are
+        // determined by classifier boundaries, not _global_goal.
+        if (_unfinished_option_idx > _global_option_idx &&
+            _skills[_unfinished_option_idx]->getParent() == nullptr)
+            _skills[_unfinished_option_idx]->setGlobalGoal(v_a_state);
+
         DeepSkillChaining::train(1);
 
         _global_start        = saved_start;
