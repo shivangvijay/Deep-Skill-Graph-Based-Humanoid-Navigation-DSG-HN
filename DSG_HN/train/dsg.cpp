@@ -456,11 +456,15 @@ std::pair<float, std::vector<int>> DeepSkillGraph::_dijkstraPath(int from_node, 
         std::vector<std::pair<int, float>> nbrs;
         for (const auto &e : _edges)
             if (e.from == u) nbrs.push_back({e.to, e.weight});
-        // implicit parent→child edges for skill nodes
+        // implicit child→parent edges for skill nodes: a learned child option
+        // should hand off into its parent's initiation set during execution.
         if (u < (int)_skills.size())
-            for (int k = 0; k < (int)_skills.size(); k++)
-                for (const auto &child : _skills[u]->children)
-                    if (_skills[k] == child) { nbrs.push_back({k, 1.0f}); break; }
+        {
+            auto parent = _skills[u]->getParent();
+            if (parent)
+                for (int k = 0; k < (int)_skills.size(); k++)
+                    if (_skills[k] == parent) { nbrs.push_back({k, 1.0f}); break; }
+        }
         return nbrs;
     };
 
@@ -584,11 +588,14 @@ std::vector<int> DeepSkillGraph::_getReachableDescendants(int node_idx) const
         // follow explicit edges
         for (const auto &e : _edges)
             if (e.from == u && !visited.count(e.to)) { visited.insert(e.to); q.push(e.to); }
-        // follow implicit parent→child edges for skill nodes
+        // follow implicit child→parent edges for skill nodes
         if (u < (int)_skills.size())
-            for (int k = 0; k < (int)_skills.size(); k++)
-                for (const auto &child : _skills[u]->children)
-                    if (_skills[k] == child && !visited.count(k)) { visited.insert(k); q.push(k); break; }
+        {
+            auto parent = _skills[u]->getParent();
+            if (parent)
+                for (int k = 0; k < (int)_skills.size(); k++)
+                    if (_skills[k] == parent && !visited.count(k)) { visited.insert(k); q.push(k); break; }
+        }
     }
     return std::vector<int>(visited.begin(), visited.end());
 }
@@ -605,10 +612,10 @@ std::vector<int> DeepSkillGraph::_getAncestors(int node_idx) const
         // reverse explicit edges
         for (const auto &e : _edges)
             if (e.to == u && !visited.count(e.from)) { visited.insert(e.from); q.push(e.from); }
-        // reverse implicit child→parent edges for skill nodes
+        // reverse implicit child→parent edges: ancestors of a parent include
+        // children that can hand off into it during execution.
         for (int k = 0; k < (int)_skills.size(); k++)
-            for (const auto &child : _skills[k]->children)
-                if (child == _skills[u] && !visited.count(k)) { visited.insert(k); q.push(k); break; }
+            if (_skills[k]->getParent() == _skills[u] && !visited.count(k)) { visited.insert(k); q.push(k); }
     }
     return std::vector<int>(visited.begin(), visited.end());
 }
