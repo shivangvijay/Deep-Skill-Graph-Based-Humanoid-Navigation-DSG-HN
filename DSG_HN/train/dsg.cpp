@@ -637,6 +637,7 @@ int DeepSkillGraph::_closestDisconnectedNode() const
     for (int i = 0; i < _totalNodes(); i++)
     {
         if (reachable_set.count(i)) continue;
+        if (i < (int)_skills.size() && _skills[i]->getTrainingPhase() != "mature") continue;
         float d = _nodeDistanceToState(i, s);
         if (d < best_dist) { best = i; best_dist = d; }
     }
