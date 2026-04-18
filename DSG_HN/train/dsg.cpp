@@ -941,6 +941,18 @@ void DeepSkillGraph::_graphConsolidationPhase()
         _global_goal       = v_a_state;
         _cfg.strict_sampling = true; // always spawn near v_d_state; boundary heuristic is meaningless here
 
+        // DSC bridge training expects _unfinished_option_idx to point at the
+        // gestating bridge option being optimized. If the current unfinished
+        // skill has already matured, allocate a fresh bridge option before
+        // entering the inner DSC train() call.
+        if (_unfinished_option_idx <= _global_option_idx ||
+            _skills[_unfinished_option_idx]->getTrainingPhase() == "mature")
+        {
+            std::shared_ptr<Skill> bridge_parent =
+                (v_a < (int)_skills.size() && v_a != _global_option_idx) ? _skills[v_a] : nullptr;
+            _makeSkill(false, bridge_parent);
+        }
+
         // The frontier skill (parent=nullptr) uses _global_goal directly in getLocalGoal().
         // It was created in the DSG constructor before any bridge target was known — update it now.
         // Mature skills and parent-chain skills are not touched: their rollout goals are
