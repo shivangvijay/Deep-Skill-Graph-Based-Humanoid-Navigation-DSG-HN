@@ -12,7 +12,7 @@ DeepSkillChaining::DeepSkillChaining(
     const std::string &pretrain_critic1_path,
     const std::string &pretrain_critic2_path,
     const std::string &scene_file,
-    Config cfg, bool eval)
+    Config cfg, bool eval, bool make_goal_option)
     : _robot_bridge(robot_bridge), _device(device), _global_goal(global_goal), _global_start(global_start), _scene_file_path(scene_file), _cfg(std::move(cfg)), _eval(eval),
       _env(std::make_shared<TrainEnvironment>(_robot_bridge, cfg.steps_per_episode)),
       _poo(_env, _cfg.poo_layers, device, _cfg.lr_poo, _cfg.tau, _cfg.gamma, _cfg.poo_batch_size), _rng(std::random_device{}())
@@ -20,7 +20,8 @@ DeepSkillChaining::DeepSkillChaining(
     _loadGlobalOption(pretrain_actor_path, pretrain_critic1_path, pretrain_critic2_path);
     _unfinished_option_idx = _global_option_idx; // assigning global option index to unfinished option index, as this is the index of the next option we will train, and we have only trained the global option at this point
 
-    _makeSkill(false, nullptr); // this is the goal option getting pushed
+    if (make_goal_option)
+        _makeSkill(false, nullptr); // this is the goal option getting pushed
 }
 
 DeepSkillChaining::DeepSkillChaining(
@@ -29,7 +30,7 @@ DeepSkillChaining::DeepSkillChaining(
     AbstractedState global_goal,
     AbstractedState global_start,
     const std::string &scene_file,
-    Config cfg, bool eval)
+    Config cfg, bool eval, bool make_goal_option)
     : _robot_bridge(robot_bridge), _device(device), _global_goal(global_goal), _global_start(global_start), _scene_file_path(scene_file), _cfg(std::move(cfg)), _eval(eval),
       _env(std::make_shared<TrainEnvironment>(_robot_bridge, cfg.steps_per_episode)),
       _poo(_env, _cfg.poo_layers, device, _cfg.lr_poo, _cfg.tau, _cfg.gamma, _cfg.batch_size), _rng(std::random_device{}())
@@ -38,7 +39,8 @@ DeepSkillChaining::DeepSkillChaining(
 
     _unfinished_option_idx = _global_option_idx; // assigning global option index to unfinished option index, as this is the index of the next option we will train, and we have only trained the global option at this point
 
-    _makeSkill(false, nullptr); // this is the goal option getting pushed
+    if (make_goal_option)
+        _makeSkill(false, nullptr); // this is the goal option getting pushed
 }
 
 int DeepSkillChaining::numSkills() const
@@ -141,7 +143,7 @@ float DeepSkillChaining::execute()
 void DeepSkillChaining::visualizeInitiationSets()
 {
     std::vector<std::vector<std::array<float, 3>>> points_per_skill;
-    int max_points = 1000;
+    int max_points = 500;
     for (const auto &skill : _skills)
     {
         std::vector<std::array<float, 3>> points;
@@ -169,7 +171,7 @@ void DeepSkillChaining::visualizeInitiationSets()
     }
     out.close();
 
-    std::string cmd = "python ../../visualize.py " + _scene_file_path + " " + temp_file;
+    std::string cmd = "python ../visualize.py " + _scene_file_path + " " + temp_file;
     system(cmd.c_str());
 }
 
@@ -494,6 +496,34 @@ bool DeepSkillChaining::_containsGlobalStartState()
             start_in_init = true;
     }
     return start_in_init;
+}
+
+void DeepSkillChaining::_makeSkill(bool is_global, std::shared_ptr<Skill> parent, const AbstractedState &local_goal)
+{
+    int id = (is_global) ? _global_option_idx : _unfinished_option_idx + 1;
+    float lr_actor = (is_global) ? _cfg.lr_actor_global : _cfg.lr_actor;
+    float lr_critic = (is_global) ? _cfg.lr_critic_global : _cfg.lr_critic;
+    std::shared_ptr<Skill> global_option = (is_global) ? nullptr : _skills[_global_option_idx];
+    std::shared_ptr<Skill> new_skill = std::make_shared<Skill>(id, _env,
+                                                               _cfg.actor_layers, _cfg.critic_layers, _device,
+                                                               lr_actor, lr_critic, _cfg.tau, _cfg.gamma, _cfg.actor_warmup_steps,
+                                                               _cfg.batch_size, _cfg.actor_update_freq, _cfg.last_k,
+                                                               _cfg.max_option_steps, _cfg.nu, parent, _cfg.gestation_n, is_global, local_goal, global_option, _eval);
+    if (!is_global)
+        new_skill->initFromSkill(_skills[_global_option_idx]);
+
+    new_skill->agent().hardCopy();
+    new_skill->agent().toDevice(_device);
+    _unfinished_option_idx = id;
+
+    if (parent)
+        std::cout << "\nMaking New Skill With ID: " << id << " (parent=" << parent->goalHits() << "/" << parent->gestationPeriod() << " id=" << id - 1 << ")\n";
+    else
+        std::cout << "\nMaking New Skill With ID: " << id << "\n";
+    _skills.push_back(new_skill);
+
+    _poo.addOption(0.0f); // global option also needs to be added to poo
+    _poo.hardCopy();
 }
 
 void DeepSkillChaining::_makeSkill(bool is_global, std::shared_ptr<Skill> parent)

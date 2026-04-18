@@ -43,32 +43,6 @@ AbstractedState Skill::getLocalGoal()
     return _parent->sampleSubgoalState();
 }
 
-// bool Skill::atTermination(const AbstractedState &goal) const
-// {
-//     auto [reward, done] = _env->computeReward(goal);
-//     if (!_parent)
-//     {
-//         // if the goal option, return if we ended up at the goal
-//         return (done.data_ptr<float>()[0] > 0.5f && reward.data_ptr<float>()[0] > 45);
-//     }
-//     else // return true if the current state is within the parents initiation set
-//     {
-//         // If the environment flagged a terminal state with negative reward,
-//         // this was a collision/OOB/timeout — not a real success.
-//         if (done.data_ptr<float>()[0] > 0.5f && reward.data_ptr<float>()[0] < 0)
-//             return false;
-
-//         auto state = _env->getAbstractedState();
-//         bool collision = _env->getUnderlyingState().second;
-//         // Use pessimistic classifier, but allow near-boundary points (d_val > -0.01)
-//         // only when the optimistic classifier also agrees — this prevents the RBF
-//         // kernel's near-zero tail from matching points far from the parent's region.
-//         bool pessimistic = _parent->canStartPessimistic(state);
-//         bool near_boundary = _parent->canStart(state) && _parent->getDecisionValue(state) > -0.001;
-//         return (pessimistic || near_boundary) && !collision;
-//     }
-// }
-
 bool Skill::atTermination(const AbstractedState &goal) const
 {
     if (!_parent)
@@ -377,10 +351,10 @@ AbstractedState Skill::sampleSubgoalState() const
     }
 
     // 3. Final selection from robust candidates
-    if (robust_indices.empty())
-    {
-        std::cout << "No robust candidates found, sampling from all positives\n";
-    }
+    // if (robust_indices.empty())
+    // {
+    //     std::cout << "No robust candidates found, sampling from all positives\n";
+    // }
     const auto &final_pool = robust_indices.empty() ? candidate_indices : robust_indices;
 
     // Nearest-neighbor filtering to keep the chain tight

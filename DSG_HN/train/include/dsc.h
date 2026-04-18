@@ -67,6 +67,14 @@ public:
         bool strict_sampling = false;           // if true, all rollout spawns come from _sampleSpawnState() near _global_start
     };
 
+    struct DSCProblem
+    {
+        int v_d;
+        int v_a;
+        int v_g;
+        std::vector<int> dsc_chain; // skill chain from v_d to v_a, excluding v_d and v_a themselves
+    };
+
     // TODO: depending on DSG setup may need other constructors that allow you to pass in the global agent
     // without having to save it to a file
     DeepSkillChaining(std::shared_ptr<RobotBridgeTrain> robot_bridge,
@@ -77,14 +85,14 @@ public:
                       const std::string &pretrain_critic1_path,
                       const std::string &pretrain_critic2_path,
                       const std::string &scene_file,
-                      Config cfg, bool eval=false);
+                      Config cfg, bool eval=false, bool make_goal_option=true);
 
     DeepSkillChaining(std::shared_ptr<RobotBridgeTrain> robot_bridge,
                       torch::Device device,
                       AbstractedState global_goal,
                       AbstractedState global_start,
                       const std::string &scene_file,
-                      Config cfg, bool eval=false);
+                      Config cfg, bool eval=false, bool make_goal_option=true);
 
     // Train the chain backward from the global goal. Returns total skill count excluding the global option
     virtual int train(int max_episodes);
@@ -119,10 +127,11 @@ protected:
     int _unfinished_option_idx = 0;
 
     void _warmupRollout();
-    float _dscRollout();
-    std::pair<int, AbstractedState> _pickOption();
+    virtual float _dscRollout();
+    virtual std::pair<int, AbstractedState> _pickOption();
     bool _containsGlobalStartState();
     virtual void _makeSkill(bool is_global, std::shared_ptr<Skill> parent);
+    virtual void _makeSkill(bool is_global, std::shared_ptr<Skill> parent, const AbstractedState& local_goal);
     void _loadGlobalOption(const std::string &actor_path, const std::string &critic1_path, const std::string &critic2_path);
 
     float _sampleGaussianDist(float mu, float std);
