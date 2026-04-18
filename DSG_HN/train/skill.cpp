@@ -806,19 +806,20 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
         }
 
         // 2. Capture the "Success Buffer": The last K states of the trajectory.
-        // These go into both the initiation set proxy and the effect set.
-        // The effect set E_o is the stored record of where the option actually terminated;
-        // it excludes spawn states so edge inference (E_i ⊆ I_j) is not contaminated.
+        // These go into the initiation set proxy (classifier training).
+        // The effect set E_o gets only the single terminal state — the state at which
+        // atTermination() fired. Approach states are outside the parent's boundary and
+        // would cause edge inference (E_i ⊆ I_j) to fail spuriously.
         int buffer_size = std::min((int)visited.size(), _k);
         int start_idx = (int)visited.size() - buffer_size;
 
         for (int t = start_idx; t < (int)visited.size(); ++t)
         {
             _positive_gestation_records.push_back(visited[t]);
-            _effect_records.push_back(visited[t]);
             _gestation_vecs.push_back(visited[t].classifier_vec);
             _gestation_labels.push_back(1);
         }
+        _effect_records.push_back(visited.back());
     }
     else
     {

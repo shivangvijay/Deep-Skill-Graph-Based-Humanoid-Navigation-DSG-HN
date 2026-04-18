@@ -456,11 +456,15 @@ std::pair<float, std::vector<int>> DeepSkillGraph::_dijkstraPath(int from_node, 
         std::vector<std::pair<int, float>> nbrs;
         for (const auto &e : _edges)
             if (e.from == u) nbrs.push_back({e.to, e.weight});
-        // implicit parent→child edges for skill nodes
+        // implicit child→parent edges for skill nodes: a learned child option
+        // should hand off into its parent's initiation set during execution.
         if (u < (int)_skills.size())
-            for (int k = 0; k < (int)_skills.size(); k++)
-                for (const auto &child : _skills[u]->children)
-                    if (_skills[k] == child) { nbrs.push_back({k, 1.0f}); break; }
+        {
+            auto parent = _skills[u]->getParent();
+            if (parent)
+                for (int k = 0; k < (int)_skills.size(); k++)
+                    if (_skills[k] == parent) { nbrs.push_back({k, 1.0f}); break; }
+        }
         return nbrs;
     };
 
@@ -584,11 +588,14 @@ std::vector<int> DeepSkillGraph::_getReachableDescendants(int node_idx) const
         // follow explicit edges
         for (const auto &e : _edges)
             if (e.from == u && !visited.count(e.to)) { visited.insert(e.to); q.push(e.to); }
-        // follow implicit parent→child edges for skill nodes
+        // follow implicit child→parent edges for skill nodes
         if (u < (int)_skills.size())
-            for (int k = 0; k < (int)_skills.size(); k++)
-                for (const auto &child : _skills[u]->children)
-                    if (_skills[k] == child && !visited.count(k)) { visited.insert(k); q.push(k); break; }
+        {
+            auto parent = _skills[u]->getParent();
+            if (parent)
+                for (int k = 0; k < (int)_skills.size(); k++)
+                    if (_skills[k] == parent && !visited.count(k)) { visited.insert(k); q.push(k); break; }
+        }
     }
     return std::vector<int>(visited.begin(), visited.end());
 }
@@ -605,10 +612,10 @@ std::vector<int> DeepSkillGraph::_getAncestors(int node_idx) const
         // reverse explicit edges
         for (const auto &e : _edges)
             if (e.to == u && !visited.count(e.from)) { visited.insert(e.from); q.push(e.from); }
-        // reverse implicit child→parent edges for skill nodes
+        // reverse implicit child→parent edges: ancestors of a parent include
+        // children that can hand off into it during execution.
         for (int k = 0; k < (int)_skills.size(); k++)
-            for (const auto &child : _skills[k]->children)
-                if (child == _skills[u] && !visited.count(k)) { visited.insert(k); q.push(k); break; }
+            if (_skills[k]->getParent() == _skills[u] && !visited.count(k)) { visited.insert(k); q.push(k); }
     }
     return std::vector<int>(visited.begin(), visited.end());
 }
@@ -637,6 +644,7 @@ int DeepSkillGraph::_closestDisconnectedNode() const
     for (int i = 0; i < _totalNodes(); i++)
     {
         if (reachable_set.count(i)) continue;
+        if (i < (int)_skills.size() && _skills[i]->getTrainingPhase() != "mature") continue;
         float d = _nodeDistanceToState(i, s);
         if (d < best_dist) { best = i; best_dist = d; }
     }
@@ -939,6 +947,26 @@ void DeepSkillGraph::_graphConsolidationPhase()
         _global_start      = v_d_state;
         _global_goal       = v_a_state;
         _cfg.strict_sampling = true; // always spawn near v_d_state; boundary heuristic is meaningless here
+
+        // DSC bridge training expects _unfinished_option_idx to point at the
+        // gestating bridge option being optimized. If the current unfinished
+        // skill has already matured, allocate a fresh bridge option before
+        // entering the inner DSC train() call.
+        if (_unfinished_option_idx <= _global_option_idx ||
+            _skills[_unfinished_option_idx]->getTrainingPhase() == "mature")
+        {
+            std::shared_ptr<Skill> bridge_parent =
+                (v_a < (int)_skills.size() && v_a != _global_option_idx) ? _skills[v_a] : nullptr;
+            _makeSkill(false, bridge_parent);
+        }
+
+        // The frontier skill (parent=nullptr) uses _global_goal directly in getLocalGoal().
+        // It was created in the DSG constructor before any bridge target was known — update it now.
+        // Mature skills and parent-chain skills are not touched: their rollout goals are
+        // determined by classifier boundaries, not _global_goal.
+        if (_unfinished_option_idx > _global_option_idx &&
+            _skills[_unfinished_option_idx]->getParent() == nullptr)
+            _skills[_unfinished_option_idx]->setGlobalGoal(v_a_state);
 
         DeepSkillChaining::train(1);
 

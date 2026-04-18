@@ -11,3 +11,5 @@ unitree_mujoco/simulate/mujoco
 *.png
 dsc_models*/
 **/dsg_models/*
+*.log
+**/references/*
