@@ -823,7 +823,7 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
 AbstractedState DeepSkillGraph::_runMPC(const AbstractedState &target)
 {
     // ── Fallback: no transition model loaded, use global option ──────────────
-    if (!_mpc_ctx || true)
+    if (!_mpc_ctx)
     {
         std::cout << "[MPC Fallback] No model — global option proxy for "
                   << _dsg_cfg.mpc_steps << " steps toward ("
@@ -1220,9 +1220,9 @@ void DeepSkillGraph::_graphConsolidationPhase()
 #endif
 
 #define SCENE_FILE "../config/scene/test_scene.xml"
-#define OG_ACTOR "../models/actor.pt"
-#define OG_CRITIC1 "../models/critic_1.pt"
-#define OG_CRITIC2 "../models/critic_2.pt"
+#define OG_ACTOR "../models/best_actor.pt"
+#define OG_CRITIC1 "../models/best_critic_1.pt"
+#define OG_CRITIC2 "../models/best_critic_2.pt"
 #define DSG_SAVE_PATH "../dsg_models"
 #define TM_CHECKPOINT "../checkpoints/improved/transition_transformer_delta_latest.pt"
 #define TM_NORMALISER "../checkpoints/improved/normaliser.txt"
@@ -1265,8 +1265,8 @@ int main(int argc, char **argv)
     cfg.log_interval = 25;
     cfg.visualize_initiation_sets = true;
     cfg.max_children_per_node = 3;
-    cfg.expansion_freq = 100; // frequency of expansion phase (every N episodes)
-    cfg.mpc_steps = 50;
+    cfg.expansion_freq = 10;  // frequency of expansion phase (every N episodes)
+    cfg.mpc_steps = 200;
     cfg.goal_region_epsilon = 0.5f;
     cfg.save_path = DSG_SAVE_PATH;
     cfg.training_episodes = 20000;
