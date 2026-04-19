@@ -17,6 +17,7 @@ DeepSkillChaining::DeepSkillChaining(
       _env(std::make_shared<TrainEnvironment>(_robot_bridge, cfg.steps_per_episode)),
       _poo(_env, _cfg.poo_layers, device, _cfg.lr_poo, _cfg.tau, _cfg.gamma, _cfg.poo_batch_size), _rng(std::random_device{}())
 {
+    _env->setSuccessRadius(_cfg.success_radius);
     _loadGlobalOption(pretrain_actor_path, pretrain_critic1_path, pretrain_critic2_path);
     _unfinished_option_idx = _global_option_idx; // assigning global option index to unfinished option index, as this is the index of the next option we will train, and we have only trained the global option at this point
 
@@ -35,6 +36,7 @@ DeepSkillChaining::DeepSkillChaining(
       _env(std::make_shared<TrainEnvironment>(_robot_bridge, cfg.steps_per_episode)),
       _poo(_env, _cfg.poo_layers, device, _cfg.lr_poo, _cfg.tau, _cfg.gamma, _cfg.batch_size), _rng(std::random_device{}())
 {
+    _env->setSuccessRadius(_cfg.success_radius);
     _makeSkill(true, nullptr);
 
     _unfinished_option_idx = _global_option_idx; // assigning global option index to unfinished option index, as this is the index of the next option we will train, and we have only trained the global option at this point

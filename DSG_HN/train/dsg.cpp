@@ -1449,6 +1449,7 @@ int main(int argc, char **argv)
     cfg.expansion_freq = 100; // frequency of expansion phase (every N episodes)
     cfg.mpc_steps = 50;
     cfg.goal_region_epsilon = 0.1f;
+    cfg.success_radius = 0.1f;
     cfg.save_path = DSG_SAVE_PATH;
     cfg.training_episodes = 20000;
 
