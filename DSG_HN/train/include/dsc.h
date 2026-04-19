@@ -115,6 +115,7 @@ protected:
     AbstractedState _global_goal;
     AbstractedState _global_start;
     std::string _scene_file_path;
+    std::string _mpc_viz_log_path;  // set by DeepSkillGraph::enableMpcViz(); passed to visualize.py
     bool _eval;
 
     Config _cfg;

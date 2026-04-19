@@ -894,9 +894,17 @@ AbstractedState DeepSkillGraph::_runMPC(const AbstractedState &target)
         // Update Transformer history with the (state, action) pair just executed
         mpc_update_history(*_mpc_ctx, rs, cmd);
 
+        if (!_mpc_viz_log_path.empty()) {
+            std::ofstream viz(_mpc_viz_log_path, std::ios::app);
+            viz << "STEP " << _mpc_viz_color << " " << rs.x << " " << rs.y << "\n";
+        }
+
         if (done_t.item<float>() > 0.5f)
             break;
     }
+
+    if (!_mpc_viz_log_path.empty())
+        ++_mpc_viz_color;
 
     auto s_reached = _env->getAbstractedState();
     float dx = s_reached.position[0] - static_cast<float>(goal_x);
@@ -950,6 +958,15 @@ bool DeepSkillGraph::_graphExpansionPhase()
 
     // 3. Navigate to v_nn
     _navigateTo(v_nn, _dsg_cfg.steps_per_episode / 2);
+
+    // Log expansion start position (after navigation, before MPC)
+    if (!_mpc_viz_log_path.empty()) {
+        auto s_start = _env->getAbstractedState();
+        std::ofstream viz(_mpc_viz_log_path, std::ios::app);
+        viz << "EXPANSION " << _mpc_viz_color
+            << " " << s_start.position[0] << " " << s_start.position[1]
+            << " " << s_rand.position[0]  << " " << s_rand.position[1] << "\n";
+    }
 
     // 4. Extend graph via MPC toward s_rand
     AbstractedState s_mpc = _runMPC(s_rand);
@@ -1283,6 +1300,8 @@ int main(int argc, char **argv)
     else
         std::cout << "[DSG] No transition model found at " << TM_CHECKPOINT
                   << " — using global-option proxy for graph expansion.\n";
+
+    dsg.enableMpcViz(std::string(DSG_SAVE_PATH) + "/mpc_viz.log");
 
     if (!TEST)
     {

@@ -2,6 +2,7 @@
 
 #include "dsc.h"
 #include "../sandbox_mpc_torch.h"
+#include <fstream>
 
 // inherits DSC's skill learning and execution machinery, but overrides option selection to implement graph-based planning and expansion, and adds graph management methods to maintain the structure of the skill graph and its edges
 class DeepSkillGraph : public DeepSkillChaining
@@ -76,6 +77,13 @@ public:
     // Once loaded, _runMPC() will use the Transformer+CEM planner instead of the global-option proxy.
     void loadTransitionModel(const std::string &model_path, const std::string &normaliser_path);
 
+    // Enable MPC expansion visualization logging.  Each expansion attempt appends
+    // one EXPANSION header + per-step STEP lines to `log_path`.
+    void enableMpcViz(const std::string &log_path) {
+        _mpc_viz_log_path = log_path;
+        std::ofstream(_mpc_viz_log_path, std::ios::trunc);  // clear on start
+    }
+
 protected:
     // Lightweight graph node representing a reached state in unexplored space.
     // Has no policy or classifier — membership is a pure Euclidean epsilon-ball check.
@@ -147,6 +155,9 @@ private:
     // --- transition model (loaded once via loadTransitionModel()) ---
     // Opaque handle to the Transformer+CEM MPC context (null until loadTransitionModel() is called).
     MpcContextPtr _mpc_ctx;
+
+    // --- MPC viz logging ---
+    int _mpc_viz_color = 0;  // incremented each expansion for distinct colors
 
     // --- navigation and training primitives ---
     void _navigateTo(int node_idx, int max_steps);

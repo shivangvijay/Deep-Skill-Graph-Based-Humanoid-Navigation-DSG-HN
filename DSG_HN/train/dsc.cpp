@@ -172,6 +172,8 @@ void DeepSkillChaining::visualizeInitiationSets()
     out.close();
 
     std::string cmd = "python ../visualize.py " + _scene_file_path + " " + temp_file;
+    if (!_mpc_viz_log_path.empty())
+        cmd += " " + _mpc_viz_log_path;
     system(cmd.c_str());
 }
 
