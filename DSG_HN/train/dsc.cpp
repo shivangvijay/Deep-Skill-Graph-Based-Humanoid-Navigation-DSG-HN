@@ -171,7 +171,7 @@ void DeepSkillChaining::visualizeInitiationSets()
     }
     out.close();
 
-    std::string cmd = "python ../visualize.py " + _scene_file_path + " " + temp_file;
+    std::string cmd = "python ../../visualize.py " + _scene_file_path + " " + temp_file;
     system(cmd.c_str());
 }
 

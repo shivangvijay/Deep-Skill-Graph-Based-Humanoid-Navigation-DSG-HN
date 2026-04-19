@@ -122,10 +122,7 @@ bool DeepSkillGraph::_containsStart(int v_d, const std::vector<int> &dsc_chain)
                 can_start_count++;
 
         if (static_cast<float>(can_start_count) / static_cast<float>(_dsg_cfg.gestation_n) > 0.5f)
-        {
-            _updateEdges(o);
             return true;
-        }
     }
     return false;
 }
@@ -172,7 +169,7 @@ void DeepSkillGraph::_validateOption()
                         }
                     }
                 }
-                _updateEdges(new_id); // Force recalculation of shortcuts
+                _updateEdges();
             }
         }
     }
@@ -219,7 +216,7 @@ int DeepSkillGraph::train(int max_episodes)
         n.goal_region = {_global_start, _dsg_cfg.goal_region_epsilon};
         n.id = 0;
         _nodes.push_back(n);
-        _updateEdges(0);
+        _updateEdges();
         std::cout << "[DSG] Seeded graph with Node 0 at (" << _global_start.position[0] << ", " << _global_start.position[1] << ")\n";
     }
 
@@ -272,9 +269,8 @@ int DeepSkillGraph::train(int max_episodes)
             // _validateOption(); // run validation phase for newly matured options
         }
 
-        // if (_dsg_cfg.graph_update_freq > 0 && episode % _dsg_cfg.graph_update_freq == 0)
-        // connect new options to graph and update edges
-        // _updateEdges();
+        if (_dsg_cfg.graph_update_freq > 0 && (episode + 1) % _dsg_cfg.graph_update_freq == 0)
+            _updateEdges();
 
         if (_dsg_cfg.log_interval > 0 && (episode + 1) % _dsg_cfg.log_interval == 0)
         {
@@ -416,61 +412,89 @@ void DeepSkillGraph::load(const std::string &dir, const std::string &scene_file)
 // Graph edge management
 // =============================================================================
 
-// this seems to be a bit buggy, maybe make more strict
-void DeepSkillGraph::_updateEdges(int new_id)
+void DeepSkillGraph::_updateEdges()
 {
-    for (int i = 0; i < _totalNodes(); ++i)
+    const int N = _totalNodes();
+
+    auto is_mature = [&](int idx) -> bool {
+        return _nodes[idx].is_goal_region || _nodes[idx].skill->getTrainingPhase() == "mature";
+    };
+
+    // Returns true iff effect set of src is fully contained in initiation set of dst.
+    // Use pessimistic initiation regions for robust edge creation.
+    auto check_link = [&](int src, int dst) -> bool
     {
-        if (i == new_id)
-            continue;
-        if (!_nodes[i].is_goal_region && _nodes[i].skill->getTrainingPhase() != "mature")
-            continue;
+        if (src == dst) return false; 
+        // Skip if edge already exists
+        for (const auto &c : _nodes[src].children)
+            if (c.first == dst) return false;
 
-        auto check_link = [&](int src, int dst) -> bool
+        if (_nodes[src].is_goal_region)
         {
-            if (_nodes[src].is_goal_region)
-            {
-                return _nodeCanStart(dst, _nodes[src].goal_region.center, true);
-            }
-            else
-            {
-                // Endpoint of a Skill is its Effect Set
-                const auto &effects = _nodes[src].skill->getEffectSet();
-                if (effects.empty())
+            return _nodeCanStart(dst, _nodes[src].goal_region.center, true);
+        }
+        else
+        {
+            const auto &effects = _nodes[src].skill->getEffectSet();
+            if (effects.empty()) return false;
+            for (const auto &rec : effects)
+                if (!_nodeCanStart(dst, rec.state, true))
                     return false;
-                int covered = 0;
-                for (const auto &rec : effects)
-                    if (_nodeCanStart(dst, rec.state, true))
-                        covered++;
-                return (float)covered / effects.size() > 0.7f;
-            }
-        };
+            return true;
+        }
+    };
 
-        // 1. Check existing node -> new node (i reaches new_id)
-        if (check_link(i, new_id))
+    // --- Addition pass: check all ordered pairs (i, j) of mature nodes ---
+    for (int i = 0; i < N; ++i)
+    {
+        if (!is_mature(i)) continue;
+        for (int j = 0; j < N; ++j)
         {
-            bool exists = false;
-            for (const auto &c : _nodes[i].children)
-                if (c.first == new_id)
-                    exists = true;
-            if (!exists)
+            if (!is_mature(j)) continue;
+            if (check_link(i, j))
             {
-                _nodes[i].children.push_back({new_id, 1.0f});
-                _nodes[new_id].parents.push_back({i, 1.0f});
+                _nodes[i].children.push_back({j, 1.0f});
+                _nodes[j].parents.push_back({i, 1.0f});
+                std::cout << "[DSG] Edge added: " << _nodeLabel(i) << " → " << _nodeLabel(j) << "\n";
             }
         }
+    }
 
-        // 2. Check new node -> existing node (new_id reaches i)
-        if (check_link(new_id, i))
+    // --- Deletion pass: check all existing edges across all nodes ---
+    // Sample K=5 effect states; delete only if >3/5 fail (conservative threshold).
+    auto check_stale = [&](int src, int dst) -> bool
+    {
+        const int K = 5;
+        int fail = 0;
+        if (_nodes[src].is_goal_region)
         {
-            bool exists = false;
-            for (const auto &c : _nodes[new_id].children)
-                if (c.first == i)
-                    exists = true;
-            if (!exists)
+            if (!_nodeCanStart(dst, _nodes[src].goal_region.center, false))
+                fail = K;
+        }
+        else
+        {
+            const auto &effects = _nodes[src].skill->getEffectSet();
+            if (effects.empty()) return true;
+            for (int k = 0; k < K; ++k)
+                if (!_nodeCanStart(dst, effects[rand() % effects.size()].state, false))
+                    fail++;
+        }
+        return fail > 3;
+    };
+
+    for (int i = 0; i < N; ++i)
+    {
+        auto &ch = _nodes[i].children;
+        for (int ci = (int)ch.size() - 1; ci >= 0; --ci)
+        {
+            int j = ch[ci].first;
+            if (check_stale(i, j))
             {
-                _nodes[new_id].children.push_back({i, 1.0f});
-                _nodes[i].parents.push_back({new_id, 1.0f});
+                std::cout << "[DSG] Edge removed: " << _nodeLabel(i) << " → " << _nodeLabel(j) << "\n";
+                auto &par = _nodes[j].parents;
+                par.erase(std::remove_if(par.begin(), par.end(),
+                    [i](const auto &p){ return p.first == i; }), par.end());
+                ch.erase(ch.begin() + ci);
             }
         }
     }
@@ -978,7 +1002,7 @@ bool DeepSkillGraph::_graphExpansionPhase()
     int new_node_id = n.id;
     _nodes.push_back(n);
 
-    _updateEdges(new_node_id);
+    _updateEdges();
 
     std::cout << "[DSG Expansion] Added " << _nodeLabel(new_node_id)
               << " linked from " << _nodeLabel(v_nn) << "\n";
@@ -1220,9 +1244,9 @@ void DeepSkillGraph::_graphConsolidationPhase()
 #endif
 
 #define SCENE_FILE "../config/scene/test_scene.xml"
-#define OG_ACTOR "../models/actor.pt"
-#define OG_CRITIC1 "../models/critic_1.pt"
-#define OG_CRITIC2 "../models/critic_2.pt"
+#define OG_ACTOR "../models/best_actor.pt"
+#define OG_CRITIC1 "../models/best_critic_1.pt"
+#define OG_CRITIC2 "../models/best_critic_2.pt"
 #define DSG_SAVE_PATH "../dsg_models"
 #define TM_CHECKPOINT "../checkpoints/improved/transition_transformer_delta_latest.pt"
 #define TM_NORMALISER "../checkpoints/improved/normaliser.txt"

@@ -54,12 +54,7 @@ bool Skill::atTermination(const AbstractedState &goal) const
     auto state = _env->getAbstractedState();
     bool collision = _env->getUnderlyingState().second;
 
-    // The key change: Relax the decision value threshold from -0.001 to -0.1
-    // to allow for a smoother handover between skills.
-    bool pessimistic = _parent->canStartPessimistic(state);
-    bool near_boundary = _parent->canStart(state) && _parent->getDecisionValue(state) > -0.01;
-
-    return (pessimistic || near_boundary) && !collision;
+    return _inParentChainTarget(state) && !collision;
 }
 
 // TODO: clear training buffer after you move to mature phase
@@ -300,7 +295,7 @@ AbstractedState Skill::sampleSubgoalState() const
     if (_positive_gestation_records.empty())
         return _env->getRandomValidAbstractedState();
 
-    // 1. Identify candidate indices based on the parent's pessimistic region
+    // 1. Identify candidate indices based on the parent's pessimistic region.
     std::vector<size_t> candidate_indices;
     for (size_t i = 0; i < _positive_gestation_records.size(); ++i)
     {
@@ -310,7 +305,7 @@ AbstractedState Skill::sampleSubgoalState() const
         }
     }
 
-    // Fallback if the pessimistic set is too small/empty during early training
+    // Fallback if the pessimistic set is too small or empty during early training.
     if (candidate_indices.empty())
     {
         candidate_indices.resize(_positive_gestation_records.size());
@@ -338,7 +333,7 @@ AbstractedState Skill::sampleSubgoalState() const
         {
             AbstractedState n_state = _positive_gestation_records[idx].state;
             n_state.position = n_pos;
-            // The Python reference requires the neighborhood to be valid in the classifier
+            // Require a small neighborhood to remain inside the pessimistic set.
             if (_parent && !_parent->canStartPessimistic(n_state))
             {
                 neighborhood_valid = false;
@@ -865,14 +860,20 @@ bool Skill::_atLocalGoal(const AbstractedState &goal) const
     bool at_goal = env_done && (r > 45);
     bool bad_termination = env_done && (r < 45); // collision, OOB, timeout
     auto abs_state = _env->getAbstractedState();
-    bool pessimistic = _parent->canStartPessimistic(abs_state);
-    bool near_boundary = _parent->canStart(abs_state) && _parent->getDecisionValue(abs_state) > -0.01;
-    bool in_parent = pessimistic || near_boundary;
+    bool in_parent = _inParentChainTarget(abs_state);
     if (at_goal && !in_parent)
     {
-        std::cout << "Warning: reached goal state outside of parent's pessimistic initiation set. dval=" << _parent->getDecisionValue(abs_state) << "\n";
+        std::cout << "Warning: reached goal state outside of parent's pessimistic initiation set.\n";
     }
     return (in_parent && at_goal) || bad_termination;
+}
+
+bool Skill::_inParentChainTarget(const AbstractedState &state) const
+{
+    if (!_parent)
+        return false;
+
+    return _parent->canStartPessimistic(state);
 }
 
 std::vector<float> Skill::_classifierVec(const AbstractedState &state) const

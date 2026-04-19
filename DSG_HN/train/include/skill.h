@@ -140,6 +140,7 @@ private:
 
     // Unified termination check for gestation and refinement rollouts.
     bool _atLocalGoal(const AbstractedState &goal) const;
+    bool _inParentChainTarget(const AbstractedState &state) const;
 
     void _fitClassifier(const std::vector<GestationRecord> &states, bool term_success);
 

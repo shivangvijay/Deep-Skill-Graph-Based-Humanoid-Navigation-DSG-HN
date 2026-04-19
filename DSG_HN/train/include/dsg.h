@@ -118,7 +118,7 @@ protected:
     void _warmupRollout(); // override: rolls out global option toward a random valid state
 
     // --- graph edge management ---
-    void _updateEdges(int new_id);
+    void _updateEdges();
     // Returns {total_cost, path} from from_node to to_node. Path is empty if unreachable.
     std::pair<float, std::vector<int>> _dijkstraPath(int from_node, int to_node) const;
     // Multiplicative edge weight update: w *= κ^f(s), κ=0.95, f=1 success / f=-1 failure.
