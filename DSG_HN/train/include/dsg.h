@@ -116,10 +116,9 @@ protected:
     std::pair<int, AbstractedState> _pickOption() override;
 
     void _warmupRollout(); // override: rolls out global option toward a random valid state
-    AbstractedState _sampleSpawnState() override;
 
     // --- graph edge management ---
-    void _updateEdges();
+    void _updateEdges(int new_id);
     // Returns {total_cost, path} from from_node to to_node. Path is empty if unreachable.
     std::pair<float, std::vector<int>> _dijkstraPath(int from_node, int to_node) const;
     // Multiplicative edge weight update: w *= κ^f(s), κ=0.95, f=1 success / f=-1 failure.
@@ -130,7 +129,7 @@ private:
 
     // --- unified node dispatch ---
     int _totalNodes() const;
-    bool _nodeCanStart(int node_idx, const AbstractedState &s) const;
+    bool _nodeCanStart(int node_idx, const AbstractedState &s, bool pessimistic) const;
     float _nodeDistanceToState(int node_idx, const AbstractedState &s) const;
     int _currentNodeIdx() const;
     std::string _nodeLabel(int node_idx) const; // human-readable label for logging
