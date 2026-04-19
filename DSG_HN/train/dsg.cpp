@@ -745,6 +745,12 @@ std::pair<int, int> DeepSkillGraph::_closestPair(const std::vector<int> &D,
     int best_d = -1, best_a = -1;
     float best_dist = std::numeric_limits<float>::infinity();
 
+    if (_cfg.verbose)
+    {
+        std::cout << "[ClosestPair] Evaluating candidates: |D|=" << D.size()
+                  << " |A|=" << A.size() << "\n";
+    }
+
     for (int vd : D)
     {
         AbstractedState s_vd = _nodeRepresentativeState(vd);
@@ -757,12 +763,33 @@ std::pair<int, int> DeepSkillGraph::_closestPair(const std::vector<int> &D,
 
             float d = _nodeDistanceToState(va, s_vd);
 
+            if (_cfg.verbose)
+            {
+                std::cout << "[ClosestPair] candidate vd=" << _nodeLabel(vd)
+                          << " va=" << _nodeLabel(va)
+                          << " dist=" << d << "\n";
+            }
+
             if (d < best_dist)
             {
                 best_d = vd;
                 best_a = va;
                 best_dist = d;
             }
+        }
+    }
+
+    if (_cfg.verbose)
+    {
+        if (best_d == -1 || best_a == -1)
+        {
+            std::cout << "[ClosestPair] no valid pair selected\n";
+        }
+        else
+        {
+            std::cout << "[ClosestPair] selected vd=" << _nodeLabel(best_d)
+                      << " va=" << _nodeLabel(best_a)
+                      << " dist=" << best_dist << "\n";
         }
     }
     return {best_d, best_a};
@@ -802,8 +829,11 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
             {
                 std::cout << "[Navigate] Already in target " << _nodeLabel(node_idx) << "\n";
             }
-            std::cout << "[Navigate] Reached point "
-                      << current_state.position[0] << ", " << current_state.position[1] << "\n";
+            else
+            {
+                std::cout << "[Navigate] Reached point "
+                          << current_state.position[0] << ", " << current_state.position[1] << "\n";
+            }
             return;
         }
 
@@ -990,6 +1020,7 @@ AbstractedState DeepSkillGraph::_nodeRepresentativeState(int node_idx) const
 
 bool DeepSkillGraph::_graphExpansionPhase()
 {
+    std::cout << "\n[DSG Expansion] Starting graph expansion phase...\n";
     // 1. Sample random reachable state (exploration target)
     AbstractedState s_rand = _env->getRandomValidAbstractedState();
 
@@ -1253,11 +1284,31 @@ std::pair<int, AbstractedState> DeepSkillGraph::_pickOption()
 
 void DeepSkillGraph::_graphConsolidationPhase()
 {
+    std::cout << "\n[DSG Consolidation] Starting graph consolidation phase...\n";
+    auto labelsToString = [&](const std::vector<int> &ids) -> std::string
+    {
+        if (ids.empty())
+            return "[]";
+        std::string out = "[";
+        for (size_t i = 0; i < ids.size(); ++i)
+        {
+            out += _nodeLabel(ids[i]);
+            if (i + 1 < ids.size())
+                out += ", ";
+        }
+        out += "]";
+        return out;
+    };
+
     bool can_start_new_problem = _current_dsc_problem == nullptr || _containsStart(_current_dsc_problem->v_d, _current_dsc_problem->dsc_chain);
 
     if (can_start_new_problem)
     {
         // 1. Find closest node not reachable from current state
+        auto current_state = _env->getAbstractedState();
+        auto V_s = _getV(current_state);
+        int v_0 = _nearestNodeToState(current_state);
+
         int v_g = _closestDisconnectedNode();
         if (v_g == -1)
         {
@@ -1266,8 +1317,15 @@ void DeepSkillGraph::_graphConsolidationPhase()
         }
 
         // 2. D(s_t): descendants of all nodes in V(s_t); A(v_g): ancestors of the target node
-        auto D_s = _getDSt(_env->getAbstractedState());
+        auto D_s = _getDSt(current_state);
         auto A_vg = _getAncestors(v_g);
+
+        std::cout << "[VertexSelect] v0=" << _nodeLabel(v_0)
+                  << " at=(" << current_state.position[0] << ", " << current_state.position[1] << ")\n";
+        std::cout << "[VertexSelect] V(s_t)=" << labelsToString(V_s) << "\n";
+        std::cout << "[VertexSelect] chosen v_g=" << _nodeLabel(v_g) << "\n";
+        std::cout << "[VertexSelect] D(s_t)=" << labelsToString(D_s) << "\n";
+        std::cout << "[VertexSelect] A(v_g)=" << labelsToString(A_vg) << "\n";
 
         // 3. Find closest bridgeable pair (v_d ∈ D_s, v_a ∈ A_vg)
         auto [v_d, v_a] = _closestPair(D_s, A_vg);
@@ -1276,6 +1334,8 @@ void DeepSkillGraph::_graphConsolidationPhase()
             std::cout << "[DSG Consolidation] No bridgeable pair found.\n";
             return;
         }
+        std::cout << "[VertexSelect] selected v_d=" << _nodeLabel(v_d)
+                  << " v_a=" << _nodeLabel(v_a) << " v_g=" << _nodeLabel(v_g) << "\n";
         if (!_current_dsc_problem)
             _current_dsc_problem = std::make_unique<DSCProblem>();
 
