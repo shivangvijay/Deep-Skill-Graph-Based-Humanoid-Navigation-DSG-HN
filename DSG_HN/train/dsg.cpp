@@ -222,6 +222,9 @@ int DeepSkillGraph::train(int max_episodes)
 
     for (int episode = 0; episode < max_episodes; episode++)
     {
+        if (episode > 0)
+            std::cout << "------\n";
+
         _env->resetTo(_global_start); // this can either be a fixed position or come from a small set of states.
 
         // Per-episode header: episode, phase, and current graph size
@@ -770,13 +773,39 @@ std::pair<int, int> DeepSkillGraph::_closestPair(const std::vector<int> &D,
 // =============================================================================
 void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
 {
+    auto pathToString = [&](const std::vector<int> &path, int from) -> std::string
+    {
+        std::string out = _nodeLabel(from);
+        for (int v : path)
+        {
+            out += " -> ";
+            out += _nodeLabel(v);
+        }
+        return out;
+    };
+
+    auto start_state = _env->getAbstractedState();
+    std::cout << "[Navigate] Start navigateTo from="
+              << start_state.position[0] << ", " << start_state.position[1]
+              << " target=" << _nodeLabel(node_idx)
+              << " max_steps=" << max_steps << "\n";
+
     int step = 0;
     while (step < max_steps)
     {
         auto current_state = _env->getAbstractedState();
         bool env_done = _env->computeReward(current_state).first.data_ptr<float>()[0] > 0.5;
-        if (_nodeCanStart(node_idx, current_state, false) || env_done)
+        bool already_in_target = _nodeCanStart(node_idx, current_state, false);
+        if (already_in_target || env_done)
+        {
+            if (already_in_target)
+            {
+                std::cout << "[Navigate] Already in target " << _nodeLabel(node_idx) << "\n";
+            }
+            std::cout << "[Navigate] Reached point "
+                      << current_state.position[0] << ", " << current_state.position[1] << "\n";
             return;
+        }
 
         // V(s_t): all nodes containing the current state
         auto V_s = _getV(current_state);
@@ -785,6 +814,7 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
         int next_hop_idx = -1;
         AbstractedState best_goal;
         float best_cost = std::numeric_limits<float>::infinity();
+        std::vector<int> best_path;
 
         // Case (a): find least-cost path to node_idx starting from a skill node in V_s
         for (int v : V_s)
@@ -799,6 +829,7 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
                 best_node_idx = v;
                 next_hop_idx = path.front();
                 best_goal = _nodeRepresentativeState(next_hop_idx);
+                best_path = path;
             }
         }
 
@@ -807,6 +838,10 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
         {
             best_node_idx = _global_option_idx; // Use the base class global skill index
             best_goal = _nodeRepresentativeState(node_idx);
+
+            std::cout << "[Navigate] No path found, using global option\n";
+            std::cout << "[Navigate] No graph path from current state. "
+                      << "Executing GlobalOpt toward " << _nodeLabel(node_idx) << "\n";
 
             auto [steps_taken, cum_reward, done, first_poo, last_poo] = // reak if done?
                 _skills[_global_option_idx]->rollout(best_goal);
@@ -822,6 +857,11 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
         }
         else
         {
+            std::cout << "[Navigate] Path selected: "
+                      << pathToString(best_path, best_node_idx)
+                      << " | execute=" << _nodeLabel(best_node_idx)
+                      << " -> next_hop=" << _nodeLabel(next_hop_idx) << "\n";
+
             // Execute the chosen skill
             // Access the skill object directly from the Node to avoid index-mismatch bugs
             if (_nodes[best_node_idx].is_goal_region) continue;
@@ -842,6 +882,10 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
             _updateEdgeWeight(best_node_idx, next_hop_idx, success);
         }
     }
+
+    auto final_state = _env->getAbstractedState();
+    std::cout << "[Navigate] Stopped at step budget with state=("
+              << final_state.position[0] << ", " << final_state.position[1] << ")\n";
 }
 
 AbstractedState DeepSkillGraph::_runMPC(const AbstractedState &target)
@@ -1093,6 +1137,54 @@ float DeepSkillGraph::_dscRollout()
     return total_reward;
 }
 
+void DeepSkillGraph::visualizeInitiationSets()
+{
+    std::vector<std::vector<std::array<float, 3>>> points_per_skill;
+    int max_points = 500;
+    for (const auto &skill : _skills)
+    {
+        std::vector<std::array<float, 3>> points;
+        int point = 0;
+        for (const auto &record : skill->getPositiveGestationRecords())
+        {
+            if (point >= max_points)
+                break;
+            point++;
+            points.push_back(record.state.position);
+        }
+        points_per_skill.push_back(points);
+    }
+
+    std::string temp_file = "/tmp/init_sets.txt";
+    std::ofstream out(temp_file);
+
+    int skill_idx = 0;
+    for (const auto &points : points_per_skill)
+    {
+        for (const auto &p : points)
+        {
+            out << skill_idx << " " << p[0] << " " << p[1] << "\n";
+        }
+        skill_idx++;
+    }
+
+    // Goal-region overlay entries for visualize.py:
+    // GR <id> <x> <y> <eps>
+    for (const auto &node : _nodes)
+    {
+        if (!node.is_goal_region)
+            continue;
+        out << "GR " << node.id << " "
+            << node.goal_region.center.position[0] << " "
+            << node.goal_region.center.position[1] << " "
+            << node.goal_region.epsilon << "\n";
+    }
+    out.close();
+
+    std::string cmd = "python ../../visualize.py " + _scene_file_path + " " + temp_file;
+    system(cmd.c_str());
+}
+
 std::pair<int, AbstractedState> DeepSkillGraph::_pickOption()
 {
     auto goal = _nodeRepresentativeState(_current_dsc_problem->v_a);
@@ -1226,13 +1318,18 @@ void DeepSkillGraph::_graphConsolidationPhase()
     if (_env->getUnderlyingState().second)
         return;
 
+    auto rollout_start = _env->getAbstractedState();
+    std::cout << "[Consolidation] starting dsc rollout from "
+              << rollout_start.position[0] << ", " << rollout_start.position[1] << "\n";
+
     float reward = _dscRollout();
     _validateOption();
     if (_env->getUnderlyingState().second)
         return;
 
+    // end consolidation episode when dscRollout() terminates
     // 6. Navigate to v_g
-    _navigateTo(_current_dsc_problem->v_g, _dsg_cfg.steps_per_episode / 3);
+    // _navigateTo(_current_dsc_problem->v_g, _dsg_cfg.steps_per_episode / 3);
 }
 
 // =============================================================================
@@ -1291,7 +1388,7 @@ int main(int argc, char **argv)
     cfg.max_children_per_node = 3;
     cfg.expansion_freq = 100; // frequency of expansion phase (every N episodes)
     cfg.mpc_steps = 50;
-    cfg.goal_region_epsilon = 0.5f;
+    cfg.goal_region_epsilon = 0.1f;
     cfg.save_path = DSG_SAVE_PATH;
     cfg.training_episodes = 20000;
 

@@ -67,6 +67,7 @@ public:
 
     int train(int max_episodes) override;
     float execute() override; // graph-based: navigate from _global_start toward frontier
+    void visualizeInitiationSets();
     void save(const std::string &dir) const override;
     void load(const std::string &dir, const std::string &scene_file) override;
 
