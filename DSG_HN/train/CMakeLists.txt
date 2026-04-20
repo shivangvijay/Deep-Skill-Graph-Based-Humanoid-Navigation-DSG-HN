@@ -146,6 +146,15 @@ target_link_libraries(test_mpc_obstacles PRIVATE
   ${TORCH_LIBRARIES}
 )
 
+add_executable(test_mpc_expansion
+  test_mpc_expansion.cpp
+  sandbox_mpc_torch.cpp
+  ${PROJECT_SOURCE_DIR}/../robot_bridge/robot_bridge.cpp
+)
+target_link_libraries(test_mpc_expansion PRIVATE
+  ${TORCH_LIBRARIES}
+)
+
 link_libraries(
   unitree_sdk2 ddsc ddscxx rt pthread # dds
   libboost_program_options.a libyaml-cpp.a fmt spdlog
