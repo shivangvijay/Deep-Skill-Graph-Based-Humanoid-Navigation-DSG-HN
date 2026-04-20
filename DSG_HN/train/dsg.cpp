@@ -163,11 +163,20 @@ void DeepSkillGraph::_validateOption()
                     {
                         if (!_nodes[j].is_goal_region && _nodes[j].skill == parent_skill)
                         {
-                            _nodes[new_id].children.push_back({j, 1.0f});
-                            _nodes[j].parents.push_back({new_id, 1.0f});
+                            _ensureStructuralEdge(new_id, j, "parent-link");
                             break;
                         }
                     }
+                }
+
+                // Ensure first-chain structural link to v_a 
+                auto pending_it = _pending_structural_target_node.find(_skills[i].get());
+                if (pending_it != _pending_structural_target_node.end())
+                {
+                    int target_id = pending_it->second;
+                    if (target_id >= 0 && target_id < (int)_nodes.size() && target_id != new_id)
+                        _ensureStructuralEdge(new_id, target_id, "first-option-to-v_a");
+                    _pending_structural_target_node.erase(pending_it);
                 }
                 _updateEdges();
             }
@@ -458,7 +467,7 @@ void DeepSkillGraph::_updateEdges()
             {
                 _nodes[i].children.push_back({j, 1.0f});
                 _nodes[j].parents.push_back({i, 1.0f});
-                std::cout << "[DSG] Edge added: " << _nodeLabel(i) << " → " << _nodeLabel(j) << "\n";
+                std::cout << "[UpdateEdges] Edge added: " << _nodeLabel(i) << " → " << _nodeLabel(j) << "\n";
             }
         }
     }
@@ -485,22 +494,45 @@ void DeepSkillGraph::_updateEdges()
         return fail > 3;
     };
 
-    for (int i = 0; i < N; ++i)
+    // for (int i = 0; i < N; ++i)
+    // {
+    //     auto &ch = _nodes[i].children;
+    //     for (int ci = (int)ch.size() - 1; ci >= 0; --ci)
+    //     {
+    //         int j = ch[ci].first;
+    //         if (check_stale(i, j))
+    //         {
+    //             std::cout << "[UpdateEdges] Edge removed: " << _nodeLabel(i) << " → " << _nodeLabel(j) << "\n";
+    //             auto &par = _nodes[j].parents;
+    //             par.erase(std::remove_if(par.begin(), par.end(),
+    //                 [i](const auto &p){ return p.first == i; }), par.end());
+    //             ch.erase(ch.begin() + ci);
+    //         }
+    //     }
+    // }
+}
+
+void DeepSkillGraph::_ensureStructuralEdge(int from, int to, const std::string &reason)
+{
+    if (from < 0 || to < 0 || from >= (int)_nodes.size() || to >= (int)_nodes.size() || from == to)
+        return;
+
+    bool exists = false;
+    for (const auto &c : _nodes[from].children)
     {
-        auto &ch = _nodes[i].children;
-        for (int ci = (int)ch.size() - 1; ci >= 0; --ci)
+        if (c.first == to)
         {
-            int j = ch[ci].first;
-            if (check_stale(i, j))
-            {
-                std::cout << "[DSG] Edge removed: " << _nodeLabel(i) << " → " << _nodeLabel(j) << "\n";
-                auto &par = _nodes[j].parents;
-                par.erase(std::remove_if(par.begin(), par.end(),
-                    [i](const auto &p){ return p.first == i; }), par.end());
-                ch.erase(ch.begin() + ci);
-            }
+            exists = true;
+            break;
         }
     }
+    if (exists)
+        return;
+
+    _nodes[from].children.push_back({to, 1.0f});
+    _nodes[to].parents.push_back({from, 1.0f});
+    std::cout << "[Structural] Edge added (" << reason << "): "
+              << _nodeLabel(from) << " → " << _nodeLabel(to) << "\n";
 }
 
 void DeepSkillGraph::_updateEdgeWeight(int from, int to, bool success)
@@ -1300,10 +1332,47 @@ void DeepSkillGraph::_graphConsolidationPhase()
         return out;
     };
 
-    bool can_start_new_problem = _current_dsc_problem == nullptr || _containsStart(_current_dsc_problem->v_d, _current_dsc_problem->dsc_chain);
+    bool solved_current_problem = false;
+    if (_current_dsc_problem != nullptr)
+    {
+        solved_current_problem = _containsStart(_current_dsc_problem->v_d, _current_dsc_problem->dsc_chain);
+        if (solved_current_problem)
+        {
+            int v_d = _current_dsc_problem->v_d;
+            AbstractedState vd_state = _nodeRepresentativeState(v_d);
+
+            int bridge_skill_idx = -1;
+            for (int o : _current_dsc_problem->dsc_chain)
+            {
+                if (_skills[o]->getTrainingPhase() == "mature" && _skills[o]->canStart(vd_state))
+                {
+                    bridge_skill_idx = o;
+                    break;
+                }
+            }
+
+            if (bridge_skill_idx != -1)
+            {
+                for (int j = 0; j < (int)_nodes.size(); ++j)
+                {
+                    if (!_nodes[j].is_goal_region && _nodes[j].skill == _skills[bridge_skill_idx])
+                    {
+                        _ensureStructuralEdge(v_d, j, "solve-v_d-to-chain");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    bool can_start_new_problem = _current_dsc_problem == nullptr || solved_current_problem;
 
     if (can_start_new_problem)
     {
+        // Refresh graph connectivity before vertex selection so v_g, D(s_t), and A(v_g)
+        // are computed from current initiation/effect set relationships.
+        _updateEdges();
+
         // 1. Find closest node not reachable from current state
         auto current_state = _env->getAbstractedState();
         auto V_s = _getV(current_state);
@@ -1313,6 +1382,7 @@ void DeepSkillGraph::_graphConsolidationPhase()
         if (v_g == -1)
         {
             std::cout << "[DSG Consolidation] Graph fully connected, skipping.\n";
+            _updateEdges();
             return;
         }
 
@@ -1332,6 +1402,7 @@ void DeepSkillGraph::_graphConsolidationPhase()
         if (v_d == -1 || v_a == -1)
         {
             std::cout << "[DSG Consolidation] No bridgeable pair found.\n";
+            _updateEdges();
             return;
         }
         std::cout << "[VertexSelect] selected v_d=" << _nodeLabel(v_d)
@@ -1361,6 +1432,8 @@ void DeepSkillGraph::_graphConsolidationPhase()
         }
 
         _makeSkill(false, parent);
+        // Always ensure first chain option links structurally to v_a (GR or option).
+        _pending_structural_target_node[_skills[_unfinished_option_idx].get()] = v_a;
         std::cout << _unfinished_option_idx << " is the new option being trained to bridge " << _nodeLabel(v_d) << " to " << _nodeLabel(v_g) << "\n";
         _current_dsc_problem->dsc_chain.push_back(_unfinished_option_idx);
 
@@ -1376,7 +1449,10 @@ void DeepSkillGraph::_graphConsolidationPhase()
     // 4. Navigate to v_d
     _navigateTo(_current_dsc_problem->v_d, _dsg_cfg.steps_per_episode / 3);
     if (_env->getUnderlyingState().second)
+    {
+        _updateEdges();
         return;
+    }
 
     auto rollout_start = _env->getAbstractedState();
     std::cout << "[Consolidation] starting dsc rollout from "
@@ -1384,6 +1460,8 @@ void DeepSkillGraph::_graphConsolidationPhase()
 
     float reward = _dscRollout();
     _validateOption();
+    // Explicit edge refresh after each consolidation rollout/validation step.
+    _updateEdges();
     if (_env->getUnderlyingState().second)
         return;
 
