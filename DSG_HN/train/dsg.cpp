@@ -110,15 +110,43 @@ bool DeepSkillGraph::_shouldCreateNewOption(int v_d, const std::vector<int> &dsc
 
 bool DeepSkillGraph::_containsStart(int v_d, const std::vector<int> &dsc_chain)
 {
-    // for (auto o : dsc_chain)
-    //     if (_skills[o]->getTrainingPhase() != "mature")
-    //         return false;
+    auto sample_vd_state = [&]() -> AbstractedState
+    {
+        const auto &vd = _nodes[v_d];
+
+        // Goal region: sample on the epsilon boundary ("edges").
+        if (vd.is_goal_region)
+        {
+            AbstractedState s = vd.goal_region.center;
+            const float r = std::max(0.0f, vd.goal_region.epsilon);
+            if (r > 0.0f)
+            {
+                static constexpr float kTwoPi = 6.28318530718f;
+                std::uniform_real_distribution<float> angle_dist(0.0f, kTwoPi);
+                const float theta = angle_dist(_rng);
+                s.position[0] += r * std::cos(theta);
+                s.position[1] += r * std::sin(theta);
+            }
+            return s;
+        }
+
+        // Option node: sample from effect set.
+        const auto &effects = vd.skill->getEffectSet();
+        if (!effects.empty())
+        {
+            std::uniform_int_distribution<size_t> pick(0, effects.size() - 1);
+            return effects[pick(_rng)].state;
+        }
+
+        // Fallback for sparse early-training cases.
+        return _nodeRepresentativeState(v_d);
+    };
 
     for (auto o : dsc_chain)
     {
         int can_start_count = 0;
         for (int i = 0; i < _dsg_cfg.gestation_n; i++)
-            if (_skills[o]->canStart(_nodeRepresentativeState(v_d)) && _skills[o]->getTrainingPhase() == "mature")
+            if (_skills[o]->canStart(sample_vd_state()) && _skills[o]->getTrainingPhase() == "mature")
                 can_start_count++;
 
         if (static_cast<float>(can_start_count) / static_cast<float>(_dsg_cfg.gestation_n) > 0.5f)
@@ -1526,8 +1554,8 @@ int main(int argc, char **argv)
     cfg.max_children_per_node = 3;
     cfg.expansion_freq = 100; // frequency of expansion phase (every N episodes)
     cfg.mpc_steps = 50;
-    cfg.goal_region_epsilon = 0.1f;
-    cfg.success_radius = 0.1f;
+    cfg.goal_region_epsilon = 0.3f;
+    cfg.success_radius = 0.3f;
     cfg.save_path = DSG_SAVE_PATH;
     cfg.training_episodes = 20000;
 
