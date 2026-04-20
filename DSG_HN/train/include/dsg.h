@@ -14,7 +14,7 @@ public:
         int graph_update_freq = 10;              // update edges every N episodes
         int max_children_per_node = 3;           // max sibling skills under one parent node
         int expansion_freq = 5;                  // run expansion phase every N episodes; consolidation otherwise
-        int mpc_steps = 20;                      // steps global option runs as MPC proxy toward s_rand
+        int mpc_steps = 100;                      // steps global option runs as MPC proxy toward s_rand
         float goal_region_epsilon = 1.0f;        // epsilon-ball radius (metres) defining a goal region node
         int max_expansion_tries = 10;            // max attempts per expansion phase before falling back to consolidation
         float edge_weight_kappa = 0.95f;         // multiplicative factor for edge weight updates: w *= κ^f(s), f∈{1,-1}
