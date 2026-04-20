@@ -2,6 +2,7 @@
 
 #include "dsc.h"
 #include "../sandbox_mpc_torch.h"
+#include <unordered_map>
 
 // inherits DSC's skill learning and execution machinery, but overrides option selection to implement graph-based planning and expansion, and adds graph management methods to maintain the structure of the skill graph and its edges
 class DeepSkillGraph : public DeepSkillChaining
@@ -120,6 +121,7 @@ protected:
 
     // --- graph edge management ---
     void _updateEdges();
+    void _ensureStructuralEdge(int from, int to, const std::string &reason);
     // Returns {total_cost, path} from from_node to to_node. Path is empty if unreachable.
     std::pair<float, std::vector<int>> _dijkstraPath(int from_node, int to_node) const;
     // Multiplicative edge weight update: w *= κ^f(s), κ=0.95, f=1 success / f=-1 failure.
@@ -127,6 +129,9 @@ protected:
 
 private:
     std::unique_ptr<DSCProblem> _current_dsc_problem = nullptr;
+    // For first-chain skills created with null Skill parent (anchor is a goal region),
+    // remember the intended anchor node so we can add a structural edge on maturation.
+    std::unordered_map<const Skill *, int> _pending_structural_target_node;
 
     // --- unified node dispatch ---
     int _totalNodes() const;
