@@ -19,14 +19,15 @@ public:
         RobotState state = robot_bridge->getRobotState();
         obstacles = robot_bridge->getObstacles();
 
-        int gravity_dim = 3;                                // local_up
-        int self_dyn_dim = 3 + 3;                            // local_vel, local_ang_vel
-        int goal_dim = 3;                                    // relative_pos (body frame)
+        int gravity_dim = 3;      // local_up
+        int self_dyn_dim = 3 + 3; // local_vel, local_ang_vel
+        int goal_dim = 3;         // relative_pos (body frame)
         int boundary_dim = 4;
-        int last_action_dim = 3;                             // previous velocity command
+        int last_action_dim = 3; // previous velocity command
+        int orientation_dim = 0; // cos and sin of yaw
         obstacle_dim = (int)obstacles.size() * obstacle_feature_dim;
 
-        state_dim = gravity_dim + self_dyn_dim + goal_dim + boundary_dim + last_action_dim;
+        state_dim = gravity_dim + self_dyn_dim + goal_dim + boundary_dim + last_action_dim + orientation_dim;
 
         std::array<float, 3> pos_scales = {(robot_bridge->x_max - robot_bridge->x_min) / 2, (robot_bridge->y_max - robot_bridge->y_min) / 2, 0.5}; // some of these may need to be tuned later
         std::array<float, 4> orientation_scales = {1, 1, 1, 1};
@@ -44,7 +45,8 @@ public:
         {
             start = robot_bridge->generateRandomValidConfiguration();
             float obs_dist = robot_bridge->distanceToNearestObstacle(start.position, start.orientation);
-            if (obs_dist >= 1.0f) break;
+            if (obs_dist >= 1.0f)
+                break;
         } while (++start_attempts < 200);
         start.velocity[0] = 0;
         start.velocity[1] = 0;
@@ -182,6 +184,7 @@ public:
     void setGoal(const AbstractedState &state)
     {
         goal = state;
+        _goal_fixed = true;
     }
 
     // see note a top about how you need to set vel and ang vel
@@ -316,6 +319,95 @@ public:
                 torch::tensor({(float)terminated}, torch::kFloat32)};
     }
 
+    // std::pair<torch::Tensor, torch::Tensor> computeReward(const RobotState &state, bool collision, const AbstractedState &goal_, bool use_goal_radius = true)
+    // {
+    //     auto goal_position = goal_.position;
+
+    //     // 1. Calculate Euclidean distance and progress
+    //     float pos_error = std::sqrt((state.position[0] - goal_position[0]) * (state.position[0] - goal_position[0]) +
+    //                                 (state.position[1] - goal_position[1]) * (state.position[1] - goal_position[1]));
+
+    //     float dist_reduction = prev_dist_to_goal - pos_error;
+    //     float reward = 0.0f;
+    //     bool terminated = false;
+
+    //     // 2. Inline Yaw and Alignment Logic
+    //     // Extract yaw from orientation quaternion [w, x, y, z]
+    //     float qw = state.orientation[0], qx = state.orientation[1], qy = state.orientation[2], qz = state.orientation[3];
+    //     float current_yaw = std::atan2(2.0f * (qw * qz + qx * qy), 1.0f - 2.0f * (qy * qy + qz * qz));
+
+    //     // Calculate angle from robot to goal
+    //     float dx = goal_position[0] - state.position[0];
+    //     float dy = goal_position[1] - state.position[1];
+    //     float angle_to_goal = std::atan2(dy, dx);
+
+    //     // Sinusoidal alignment: peaks at 90 and 270 degrees relative to goal
+    //     float sidling_alignment = std::abs(std::sin(current_yaw - angle_to_goal));
+
+    //     // 3. Obstacle awareness
+    //     float min_obs_dist = robot_bridge->distanceToNearestObstacle(state.position, state.orientation);
+
+    //     // Proximity Penalty: Restored to create "pressure" away from walls
+    //     constexpr float safe_margin = 0.30f;
+    //     if (min_obs_dist < safe_margin)
+    //     {
+    //         reward -= 5.0f * (safe_margin - min_obs_dist);
+    //     }
+
+    //     // 4. Terminal Conditions (High Stakes)
+    //     if (collision || _collision ||
+    //         state.position[0] > robot_bridge->x_max || state.position[0] < robot_bridge->x_min ||
+    //         state.position[1] > robot_bridge->y_max || state.position[1] < robot_bridge->y_min)
+    //     {
+    //         reward -= 50.0f; // Punish collision heavily
+    //         _collision = true;
+    //         terminated = true;
+    //     }
+    //     else if (use_goal_radius && pos_error < success_radius)
+    //     {
+    //         reward += 250.0f; // Major reward for success
+    //         terminated = true;
+    //     }
+    //     else
+    //     {
+    //         // 5. Gated Sidling & Progress Reward
+    //         // If inside a narrow area AND making forward progress, reward the posture
+    //         if (min_obs_dist < 0.6f && dist_reduction > 0.0f)
+    //         {
+    //             // Bonus = Alignment * Progress * Weighting (Exponential decay as dist from wall increases)
+    //             float sidling_weight = 25.0f * std::exp(-min_obs_dist / 0.15f);
+    //             reward += sidling_weight * sidling_alignment * dist_reduction;
+    //         }
+    //         else
+    //         {
+    //             // Standard progress reward in open space or when moving poorly
+    //             reward += 5.0f * dist_reduction;
+    //         }
+
+    //         // 6. Dense Penalties (to keep movement efficient)
+    //         reward -= 0.1f; // Step/Time penalty
+
+    //         float action_jerk = std::abs(last_action[0] - prev_action[0]) +
+    //                             std::abs(last_action[1] - prev_action[1]) +
+    //                             std::abs(last_action[2] - prev_action[2]);
+    //         reward -= 0.3f * action_jerk;
+    //     }
+
+    //     // 7. Timeout
+    //     if (current_step >= max_steps)
+    //     {
+    //         reward -= 20.0f;
+    //         terminated = true;
+    //     }
+
+    //     // Update history for next step
+    //     prev_dist_to_goal = pos_error;
+    //     prev_obs_dist = min_obs_dist;
+
+    //     return {torch::tensor({reward}, torch::kFloat32),
+    //             torch::tensor({(float)terminated}, torch::kFloat32)};
+    // }
+
     torch::Tensor transformState(const RobotState &state, const AbstractedState &goal_)
     {
         // when designing this, note that the state is a mix of being in the global and local reference frame
@@ -345,7 +437,7 @@ public:
         r_pos[1] /= env_scaling_factors.position[1];
         r_pos[2] /= env_scaling_factors.position[2];
 
-        copy_to_ptr(rotateVectorByQuat(r_pos, state.orientation, true));          // relative_pos (3)
+        copy_to_ptr(rotateVectorByQuat(r_pos, state.orientation, true)); // relative_pos (3)
 
         // relative distance to boundary
         float dist_left = state.position[0] - robot_bridge->x_min;
@@ -371,7 +463,12 @@ public:
             data_ptr[offset++] = obs.size[0];
         }
 
-        copy_to_ptr(last_action);                                                // last_action (3)
+        // float qw = state.orientation[0], qx = state.orientation[1], qy = state.orientation[2], qz = state.orientation[3];
+        // float yaw = std::atan2(2.0f * (qw * qz + qx * qy), 1.0f - 2.0f * (qy * qy + qz * qz));
+        // data_ptr[offset++] = std::cos(yaw);
+        // data_ptr[offset++] = std::sin(yaw);
+
+        copy_to_ptr(last_action); // last_action (3)
 
         return tensor_state;
     }
