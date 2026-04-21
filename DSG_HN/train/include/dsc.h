@@ -43,6 +43,7 @@ public:
         int max_skills = 6;
         float start_noise_radius = 2.0f;
         float val_accuracy_threshold = 0.8f;
+        float success_radius = 0.5f;      // environment goal termination radius (meters)
 
         std::vector<int> actor_layers = {256, 256, 256};
         std::vector<int> critic_layers = {256, 256, 256};

@@ -222,6 +222,8 @@ public:
     }
 
     float getMaxGoalDistance() const { return max_goal_distance; }
+    void setSuccessRadius(float r) { success_radius = std::max(0.0f, r); }
+    float getSuccessRadius() const { return success_radius; }
 
     void updateGoalMarker(const AbstractedState &goal_)
     {

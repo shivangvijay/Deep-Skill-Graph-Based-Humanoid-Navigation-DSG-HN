@@ -2,6 +2,7 @@
 
 #include "dsc.h"
 #include "../sandbox_mpc_torch.h"
+#include <unordered_map>
 
 // inherits DSC's skill learning and execution machinery, but overrides option selection to implement graph-based planning and expansion, and adds graph management methods to maintain the structure of the skill graph and its edges
 class DeepSkillGraph : public DeepSkillChaining
@@ -13,7 +14,7 @@ public:
         int graph_update_freq = 10;              // update edges every N episodes
         int max_children_per_node = 3;           // max sibling skills under one parent node
         int expansion_freq = 5;                  // run expansion phase every N episodes; consolidation otherwise
-        int mpc_steps = 20;                      // steps global option runs as MPC proxy toward s_rand
+        int mpc_steps = 100;                      // steps global option runs as MPC proxy toward s_rand
         float goal_region_epsilon = 1.0f;        // epsilon-ball radius (metres) defining a goal region node
         int max_expansion_tries = 10;            // max attempts per expansion phase before falling back to consolidation
         float edge_weight_kappa = 0.95f;         // multiplicative factor for edge weight updates: w *= κ^f(s), f∈{1,-1}
@@ -67,6 +68,7 @@ public:
 
     int train(int max_episodes) override;
     float execute() override; // graph-based: navigate from _global_start toward frontier
+    void visualizeInitiationSets();
     void save(const std::string &dir) const override;
     void load(const std::string &dir, const std::string &scene_file) override;
 
@@ -118,7 +120,8 @@ protected:
     void _warmupRollout(); // override: rolls out global option toward a random valid state
 
     // --- graph edge management ---
-    void _updateEdges(int new_id);
+    void _updateEdges();
+    void _ensureStructuralEdge(int from, int to, const std::string &reason);
     // Returns {total_cost, path} from from_node to to_node. Path is empty if unreachable.
     std::pair<float, std::vector<int>> _dijkstraPath(int from_node, int to_node) const;
     // Multiplicative edge weight update: w *= κ^f(s), κ=0.95, f=1 success / f=-1 failure.
@@ -126,6 +129,9 @@ protected:
 
 private:
     std::unique_ptr<DSCProblem> _current_dsc_problem = nullptr;
+    // For first-chain skills created with null Skill parent (anchor is a goal region),
+    // remember the intended anchor node so we can add a structural edge on maturation.
+    std::unordered_map<const Skill *, int> _pending_structural_target_node;
 
     // --- unified node dispatch ---
     int _totalNodes() const;

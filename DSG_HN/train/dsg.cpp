@@ -110,22 +110,47 @@ bool DeepSkillGraph::_shouldCreateNewOption(int v_d, const std::vector<int> &dsc
 
 bool DeepSkillGraph::_containsStart(int v_d, const std::vector<int> &dsc_chain)
 {
-    // for (auto o : dsc_chain)
-    //     if (_skills[o]->getTrainingPhase() != "mature")
-    //         return false;
+    auto sample_vd_state = [&]() -> AbstractedState
+    {
+        const auto &vd = _nodes[v_d];
+
+        // Goal region: sample on the epsilon boundary ("edges").
+        if (vd.is_goal_region)
+        {
+            AbstractedState s = vd.goal_region.center;
+            const float r = std::max(0.0f, vd.goal_region.epsilon);
+            if (r > 0.0f)
+            {
+                static constexpr float kTwoPi = 6.28318530718f;
+                std::uniform_real_distribution<float> angle_dist(0.0f, kTwoPi);
+                const float theta = angle_dist(_rng);
+                s.position[0] += r * std::cos(theta);
+                s.position[1] += r * std::sin(theta);
+            }
+            return s;
+        }
+
+        // Option node: sample from effect set.
+        const auto &effects = vd.skill->getEffectSet();
+        if (!effects.empty())
+        {
+            std::uniform_int_distribution<size_t> pick(0, effects.size() - 1);
+            return effects[pick(_rng)].state;
+        }
+
+        // Fallback for sparse early-training cases.
+        return _nodeRepresentativeState(v_d);
+    };
 
     for (auto o : dsc_chain)
     {
         int can_start_count = 0;
         for (int i = 0; i < _dsg_cfg.gestation_n; i++)
-            if (_skills[o]->canStart(_nodeRepresentativeState(v_d)) && _skills[o]->getTrainingPhase() == "mature")
+            if (_skills[o]->canStart(sample_vd_state()) && _skills[o]->getTrainingPhase() == "mature")
                 can_start_count++;
 
         if (static_cast<float>(can_start_count) / static_cast<float>(_dsg_cfg.gestation_n) > 0.5f)
-        {
-            _updateEdges(o);
             return true;
-        }
     }
     return false;
 }
@@ -166,13 +191,22 @@ void DeepSkillGraph::_validateOption()
                     {
                         if (!_nodes[j].is_goal_region && _nodes[j].skill == parent_skill)
                         {
-                            _nodes[new_id].children.push_back({j, 1.0f});
-                            _nodes[j].parents.push_back({new_id, 1.0f});
+                            _ensureStructuralEdge(new_id, j, "parent-link");
                             break;
                         }
                     }
                 }
-                _updateEdges(new_id); // Force recalculation of shortcuts
+
+                // Ensure first-chain structural link to v_a 
+                auto pending_it = _pending_structural_target_node.find(_skills[i].get());
+                if (pending_it != _pending_structural_target_node.end())
+                {
+                    int target_id = pending_it->second;
+                    if (target_id >= 0 && target_id < (int)_nodes.size() && target_id != new_id)
+                        _ensureStructuralEdge(new_id, target_id, "first-option-to-v_a");
+                    _pending_structural_target_node.erase(pending_it);
+                }
+                _updateEdges();
             }
         }
     }
@@ -219,12 +253,15 @@ int DeepSkillGraph::train(int max_episodes)
         n.goal_region = {_global_start, _dsg_cfg.goal_region_epsilon};
         n.id = 0;
         _nodes.push_back(n);
-        _updateEdges(0);
+        _updateEdges();
         std::cout << "[DSG] Seeded graph with Node 0 at (" << _global_start.position[0] << ", " << _global_start.position[1] << ")\n";
     }
 
     for (int episode = 0; episode < max_episodes; episode++)
     {
+        if (episode > 0)
+            std::cout << "------\n";
+
         _env->resetTo(_global_start); // this can either be a fixed position or come from a small set of states.
 
         // Per-episode header: episode, phase, and current graph size
@@ -272,9 +309,8 @@ int DeepSkillGraph::train(int max_episodes)
             // _validateOption(); // run validation phase for newly matured options
         }
 
-        // if (_dsg_cfg.graph_update_freq > 0 && episode % _dsg_cfg.graph_update_freq == 0)
-        // connect new options to graph and update edges
-        // _updateEdges();
+        if (_dsg_cfg.graph_update_freq > 0 && (episode + 1) % _dsg_cfg.graph_update_freq == 0)
+            _updateEdges();
 
         if (_dsg_cfg.log_interval > 0 && (episode + 1) % _dsg_cfg.log_interval == 0)
         {
@@ -416,64 +452,115 @@ void DeepSkillGraph::load(const std::string &dir, const std::string &scene_file)
 // Graph edge management
 // =============================================================================
 
-// this seems to be a bit buggy, maybe make more strict
-void DeepSkillGraph::_updateEdges(int new_id)
+void DeepSkillGraph::_updateEdges()
 {
-    for (int i = 0; i < _totalNodes(); ++i)
+    const int N = _totalNodes();
+
+    auto is_mature = [&](int idx) -> bool {
+        return _nodes[idx].is_goal_region || _nodes[idx].skill->getTrainingPhase() == "mature";
+    };
+
+    // Returns true iff effect set of src is fully contained in initiation set of dst.
+    // Use pessimistic initiation regions for robust edge creation.
+    auto check_link = [&](int src, int dst) -> bool
     {
-        if (i == new_id)
-            continue;
-        if (!_nodes[i].is_goal_region && _nodes[i].skill->getTrainingPhase() != "mature")
-            continue;
+        if (src == dst) return false; 
+        // Skip if edge already exists
+        for (const auto &c : _nodes[src].children)
+            if (c.first == dst) return false;
 
-        auto check_link = [&](int src, int dst) -> bool
+        if (_nodes[src].is_goal_region)
         {
-            if (_nodes[src].is_goal_region)
-            {
-                return _nodeCanStart(dst, _nodes[src].goal_region.center, true);
-            }
-            else
-            {
-                // Endpoint of a Skill is its Effect Set
-                const auto &effects = _nodes[src].skill->getEffectSet();
-                if (effects.empty())
-                    return false;
-                int covered = 0;
-                for (const auto &rec : effects)
-                    if (_nodeCanStart(dst, rec.state, true))
-                        covered++;
-                return (float)covered / effects.size() > 0.7f;
-            }
-        };
-
-        // 1. Check existing node -> new node (i reaches new_id)
-        if (check_link(i, new_id))
-        {
-            bool exists = false;
-            for (const auto &c : _nodes[i].children)
-                if (c.first == new_id)
-                    exists = true;
-            if (!exists)
-            {
-                _nodes[i].children.push_back({new_id, 1.0f});
-                _nodes[new_id].parents.push_back({i, 1.0f});
-            }
+            return _nodeCanStart(dst, _nodes[src].goal_region.center, true);
         }
-
-        // 2. Check new node -> existing node (new_id reaches i)
-        if (check_link(new_id, i))
+        else
         {
-            bool exists = false;
-            for (const auto &c : _nodes[new_id].children)
-                if (c.first == i)
-                    exists = true;
-            if (!exists)
+            const auto &effects = _nodes[src].skill->getEffectSet();
+            if (effects.empty()) return false;
+            for (const auto &rec : effects)
+                if (!_nodeCanStart(dst, rec.state, true))
+                    return false;
+            return true;
+        }
+    };
+
+    // --- Addition pass: check all ordered pairs (i, j) of mature nodes ---
+    for (int i = 0; i < N; ++i)
+    {
+        if (!is_mature(i)) continue;
+        for (int j = 0; j < N; ++j)
+        {
+            if (!is_mature(j)) continue;
+            if (check_link(i, j))
             {
-                _nodes[new_id].children.push_back({i, 1.0f});
-                _nodes[i].parents.push_back({new_id, 1.0f});
+                _nodes[i].children.push_back({j, 1.0f});
+                _nodes[j].parents.push_back({i, 1.0f});
+                std::cout << "[UpdateEdges] Edge added: " << _nodeLabel(i) << " → " << _nodeLabel(j) << "\n";
             }
         }
     }
+
+    // --- Deletion pass: check all existing edges across all nodes ---
+    // Sample K=5 effect states; delete only if >3/5 fail (conservative threshold).
+    auto check_stale = [&](int src, int dst) -> bool
+    {
+        const int K = 5;
+        int fail = 0;
+        if (_nodes[src].is_goal_region)
+        {
+            if (!_nodeCanStart(dst, _nodes[src].goal_region.center, false))
+                fail = K;
+        }
+        else
+        {
+            const auto &effects = _nodes[src].skill->getEffectSet();
+            if (effects.empty()) return true;
+            for (int k = 0; k < K; ++k)
+                if (!_nodeCanStart(dst, effects[rand() % effects.size()].state, false))
+                    fail++;
+        }
+        return fail > 3;
+    };
+
+    // for (int i = 0; i < N; ++i)
+    // {
+    //     auto &ch = _nodes[i].children;
+    //     for (int ci = (int)ch.size() - 1; ci >= 0; --ci)
+    //     {
+    //         int j = ch[ci].first;
+    //         if (check_stale(i, j))
+    //         {
+    //             std::cout << "[UpdateEdges] Edge removed: " << _nodeLabel(i) << " → " << _nodeLabel(j) << "\n";
+    //             auto &par = _nodes[j].parents;
+    //             par.erase(std::remove_if(par.begin(), par.end(),
+    //                 [i](const auto &p){ return p.first == i; }), par.end());
+    //             ch.erase(ch.begin() + ci);
+    //         }
+    //     }
+    // }
+}
+
+void DeepSkillGraph::_ensureStructuralEdge(int from, int to, const std::string &reason)
+{
+    if (from < 0 || to < 0 || from >= (int)_nodes.size() || to >= (int)_nodes.size() || from == to)
+        return;
+
+    bool exists = false;
+    for (const auto &c : _nodes[from].children)
+    {
+        if (c.first == to)
+        {
+            exists = true;
+            break;
+        }
+    }
+    if (exists)
+        return;
+
+    _nodes[from].children.push_back({to, 1.0f});
+    _nodes[to].parents.push_back({from, 1.0f});
+    std::cout << "[Structural] Edge added (" << reason << "): "
+              << _nodeLabel(from) << " → " << _nodeLabel(to) << "\n";
 }
 
 void DeepSkillGraph::_updateEdgeWeight(int from, int to, bool success)
@@ -718,6 +805,12 @@ std::pair<int, int> DeepSkillGraph::_closestPair(const std::vector<int> &D,
     int best_d = -1, best_a = -1;
     float best_dist = std::numeric_limits<float>::infinity();
 
+    if (_cfg.verbose)
+    {
+        std::cout << "[ClosestPair] Evaluating candidates: |D|=" << D.size()
+                  << " |A|=" << A.size() << "\n";
+    }
+
     for (int vd : D)
     {
         AbstractedState s_vd = _nodeRepresentativeState(vd);
@@ -730,12 +823,33 @@ std::pair<int, int> DeepSkillGraph::_closestPair(const std::vector<int> &D,
 
             float d = _nodeDistanceToState(va, s_vd);
 
+            if (_cfg.verbose)
+            {
+                std::cout << "[ClosestPair] candidate vd=" << _nodeLabel(vd)
+                          << " va=" << _nodeLabel(va)
+                          << " dist=" << d << "\n";
+            }
+
             if (d < best_dist)
             {
                 best_d = vd;
                 best_a = va;
                 best_dist = d;
             }
+        }
+    }
+
+    if (_cfg.verbose)
+    {
+        if (best_d == -1 || best_a == -1)
+        {
+            std::cout << "[ClosestPair] no valid pair selected\n";
+        }
+        else
+        {
+            std::cout << "[ClosestPair] selected vd=" << _nodeLabel(best_d)
+                      << " va=" << _nodeLabel(best_a)
+                      << " dist=" << best_dist << "\n";
         }
     }
     return {best_d, best_a};
@@ -746,13 +860,42 @@ std::pair<int, int> DeepSkillGraph::_closestPair(const std::vector<int> &D,
 // =============================================================================
 void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
 {
+    auto pathToString = [&](const std::vector<int> &path, int from) -> std::string
+    {
+        std::string out = _nodeLabel(from);
+        for (int v : path)
+        {
+            out += " -> ";
+            out += _nodeLabel(v);
+        }
+        return out;
+    };
+
+    auto start_state = _env->getAbstractedState();
+    std::cout << "[Navigate] Start navigateTo from="
+              << start_state.position[0] << ", " << start_state.position[1]
+              << " target=" << _nodeLabel(node_idx)
+              << " max_steps=" << max_steps << "\n";
+
     int step = 0;
     while (step < max_steps)
     {
         auto current_state = _env->getAbstractedState();
         bool env_done = _env->computeReward(current_state).first.data_ptr<float>()[0] > 0.5;
-        if (_nodeCanStart(node_idx, current_state, false) || env_done)
+        bool already_in_target = _nodeCanStart(node_idx, current_state, false);
+        if (already_in_target || env_done)
+        {
+            if (already_in_target)
+            {
+                std::cout << "[Navigate] Already in target " << _nodeLabel(node_idx) << "\n";
+            }
+            else
+            {
+                std::cout << "[Navigate] Reached point "
+                          << current_state.position[0] << ", " << current_state.position[1] << "\n";
+            }
             return;
+        }
 
         // V(s_t): all nodes containing the current state
         auto V_s = _getV(current_state);
@@ -761,6 +904,7 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
         int next_hop_idx = -1;
         AbstractedState best_goal;
         float best_cost = std::numeric_limits<float>::infinity();
+        std::vector<int> best_path;
 
         // Case (a): find least-cost path to node_idx starting from a skill node in V_s
         for (int v : V_s)
@@ -775,6 +919,7 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
                 best_node_idx = v;
                 next_hop_idx = path.front();
                 best_goal = _nodeRepresentativeState(next_hop_idx);
+                best_path = path;
             }
         }
 
@@ -783,6 +928,10 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
         {
             best_node_idx = _global_option_idx; // Use the base class global skill index
             best_goal = _nodeRepresentativeState(node_idx);
+
+            std::cout << "[Navigate] No path found, using global option\n";
+            std::cout << "[Navigate] No graph path from current state. "
+                      << "Executing GlobalOpt toward " << _nodeLabel(node_idx) << "\n";
 
             auto [steps_taken, cum_reward, done, first_poo, last_poo] = // reak if done?
                 _skills[_global_option_idx]->rollout(best_goal);
@@ -798,6 +947,11 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
         }
         else
         {
+            std::cout << "[Navigate] Path selected: "
+                      << pathToString(best_path, best_node_idx)
+                      << " | execute=" << _nodeLabel(best_node_idx)
+                      << " -> next_hop=" << _nodeLabel(next_hop_idx) << "\n";
+
             // Execute the chosen skill
             // Access the skill object directly from the Node to avoid index-mismatch bugs
             if (_nodes[best_node_idx].is_goal_region) continue;
@@ -818,6 +972,10 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
             _updateEdgeWeight(best_node_idx, next_hop_idx, success);
         }
     }
+
+    auto final_state = _env->getAbstractedState();
+    std::cout << "[Navigate] Stopped at step budget with state=("
+              << final_state.position[0] << ", " << final_state.position[1] << ")\n";
 }
 
 AbstractedState DeepSkillGraph::_runMPC(const AbstractedState &target)
@@ -922,6 +1080,7 @@ AbstractedState DeepSkillGraph::_nodeRepresentativeState(int node_idx) const
 
 bool DeepSkillGraph::_graphExpansionPhase()
 {
+    std::cout << "\n[DSG Expansion] Starting graph expansion phase...\n";
     // 1. Sample random reachable state (exploration target)
     AbstractedState s_rand = _env->getRandomValidAbstractedState();
 
@@ -978,7 +1137,7 @@ bool DeepSkillGraph::_graphExpansionPhase()
     int new_node_id = n.id;
     _nodes.push_back(n);
 
-    _updateEdges(new_node_id);
+    _updateEdges();
 
     std::cout << "[DSG Expansion] Added " << _nodeLabel(new_node_id)
               << " linked from " << _nodeLabel(v_nn) << "\n";
@@ -1069,6 +1228,54 @@ float DeepSkillGraph::_dscRollout()
     return total_reward;
 }
 
+void DeepSkillGraph::visualizeInitiationSets()
+{
+    std::vector<std::vector<std::array<float, 3>>> points_per_skill;
+    int max_points = 500;
+    for (const auto &skill : _skills)
+    {
+        std::vector<std::array<float, 3>> points;
+        int point = 0;
+        for (const auto &record : skill->getPositiveGestationRecords())
+        {
+            if (point >= max_points)
+                break;
+            point++;
+            points.push_back(record.state.position);
+        }
+        points_per_skill.push_back(points);
+    }
+
+    std::string temp_file = "/tmp/init_sets.txt";
+    std::ofstream out(temp_file);
+
+    int skill_idx = 0;
+    for (const auto &points : points_per_skill)
+    {
+        for (const auto &p : points)
+        {
+            out << skill_idx << " " << p[0] << " " << p[1] << "\n";
+        }
+        skill_idx++;
+    }
+
+    // Goal-region overlay entries for visualize.py:
+    // GR <id> <x> <y> <eps>
+    for (const auto &node : _nodes)
+    {
+        if (!node.is_goal_region)
+            continue;
+        out << "GR " << node.id << " "
+            << node.goal_region.center.position[0] << " "
+            << node.goal_region.center.position[1] << " "
+            << node.goal_region.epsilon << "\n";
+    }
+    out.close();
+
+    std::string cmd = "python ../../visualize.py " + _scene_file_path + " " + temp_file;
+    system(cmd.c_str());
+}
+
 std::pair<int, AbstractedState> DeepSkillGraph::_pickOption()
 {
     auto goal = _nodeRepresentativeState(_current_dsc_problem->v_a);
@@ -1137,29 +1344,97 @@ std::pair<int, AbstractedState> DeepSkillGraph::_pickOption()
 
 void DeepSkillGraph::_graphConsolidationPhase()
 {
-    bool can_start_new_problem = _current_dsc_problem == nullptr || _containsStart(_current_dsc_problem->v_d, _current_dsc_problem->dsc_chain);
+    std::cout << "\n[DSG Consolidation] Starting graph consolidation phase...\n";
+    auto labelsToString = [&](const std::vector<int> &ids) -> std::string
+    {
+        if (ids.empty())
+            return "[]";
+        std::string out = "[";
+        for (size_t i = 0; i < ids.size(); ++i)
+        {
+            out += _nodeLabel(ids[i]);
+            if (i + 1 < ids.size())
+                out += ", ";
+        }
+        out += "]";
+        return out;
+    };
+
+    bool solved_current_problem = false;
+    if (_current_dsc_problem != nullptr)
+    {
+        solved_current_problem = _containsStart(_current_dsc_problem->v_d, _current_dsc_problem->dsc_chain);
+        if (solved_current_problem)
+        {
+            int v_d = _current_dsc_problem->v_d;
+            AbstractedState vd_state = _nodeRepresentativeState(v_d);
+
+            int bridge_skill_idx = -1;
+            for (int o : _current_dsc_problem->dsc_chain)
+            {
+                if (_skills[o]->getTrainingPhase() == "mature" && _skills[o]->canStart(vd_state))
+                {
+                    bridge_skill_idx = o;
+                    break;
+                }
+            }
+
+            if (bridge_skill_idx != -1)
+            {
+                for (int j = 0; j < (int)_nodes.size(); ++j)
+                {
+                    if (!_nodes[j].is_goal_region && _nodes[j].skill == _skills[bridge_skill_idx])
+                    {
+                        _ensureStructuralEdge(v_d, j, "solve-v_d-to-chain");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    bool can_start_new_problem = _current_dsc_problem == nullptr || solved_current_problem;
 
     if (can_start_new_problem)
     {
+        // Refresh graph connectivity before vertex selection so v_g, D(s_t), and A(v_g)
+        // are computed from current initiation/effect set relationships.
+        _updateEdges();
+
         // 1. Find closest node not reachable from current state
+        auto current_state = _env->getAbstractedState();
+        auto V_s = _getV(current_state);
+        int v_0 = _nearestNodeToState(current_state);
+
         int v_g = _closestDisconnectedNode();
         if (v_g == -1)
         {
             std::cout << "[DSG Consolidation] Graph fully connected, skipping.\n";
+            _updateEdges();
             return;
         }
 
         // 2. D(s_t): descendants of all nodes in V(s_t); A(v_g): ancestors of the target node
-        auto D_s = _getDSt(_env->getAbstractedState());
+        auto D_s = _getDSt(current_state);
         auto A_vg = _getAncestors(v_g);
+
+        std::cout << "[VertexSelect] v0=" << _nodeLabel(v_0)
+                  << " at=(" << current_state.position[0] << ", " << current_state.position[1] << ")\n";
+        std::cout << "[VertexSelect] V(s_t)=" << labelsToString(V_s) << "\n";
+        std::cout << "[VertexSelect] chosen v_g=" << _nodeLabel(v_g) << "\n";
+        std::cout << "[VertexSelect] D(s_t)=" << labelsToString(D_s) << "\n";
+        std::cout << "[VertexSelect] A(v_g)=" << labelsToString(A_vg) << "\n";
 
         // 3. Find closest bridgeable pair (v_d ∈ D_s, v_a ∈ A_vg)
         auto [v_d, v_a] = _closestPair(D_s, A_vg);
         if (v_d == -1 || v_a == -1)
         {
             std::cout << "[DSG Consolidation] No bridgeable pair found.\n";
+            _updateEdges();
             return;
         }
+        std::cout << "[VertexSelect] selected v_d=" << _nodeLabel(v_d)
+                  << " v_a=" << _nodeLabel(v_a) << " v_g=" << _nodeLabel(v_g) << "\n";
         if (!_current_dsc_problem)
             _current_dsc_problem = std::make_unique<DSCProblem>();
 
@@ -1185,6 +1460,8 @@ void DeepSkillGraph::_graphConsolidationPhase()
         }
 
         _makeSkill(false, parent);
+        // Always ensure first chain option links structurally to v_a (GR or option).
+        _pending_structural_target_node[_skills[_unfinished_option_idx].get()] = v_a;
         std::cout << _unfinished_option_idx << " is the new option being trained to bridge " << _nodeLabel(v_d) << " to " << _nodeLabel(v_g) << "\n";
         _current_dsc_problem->dsc_chain.push_back(_unfinished_option_idx);
 
@@ -1200,15 +1477,25 @@ void DeepSkillGraph::_graphConsolidationPhase()
     // 4. Navigate to v_d
     _navigateTo(_current_dsc_problem->v_d, _dsg_cfg.steps_per_episode / 3);
     if (_env->getUnderlyingState().second)
+    {
+        _updateEdges();
         return;
+    }
+
+    auto rollout_start = _env->getAbstractedState();
+    std::cout << "[Consolidation] starting dsc rollout from "
+              << rollout_start.position[0] << ", " << rollout_start.position[1] << "\n";
 
     float reward = _dscRollout();
     _validateOption();
+    // Explicit edge refresh after each consolidation rollout/validation step.
+    _updateEdges();
     if (_env->getUnderlyingState().second)
         return;
 
+    // end consolidation episode when dscRollout() terminates
     // 6. Navigate to v_g
-    _navigateTo(_current_dsc_problem->v_g, _dsg_cfg.steps_per_episode / 3);
+    // _navigateTo(_current_dsc_problem->v_g, _dsg_cfg.steps_per_episode / 3);
 }
 
 // =============================================================================
@@ -1220,9 +1507,9 @@ void DeepSkillGraph::_graphConsolidationPhase()
 #endif
 
 #define SCENE_FILE "../config/scene/test_scene.xml"
-#define OG_ACTOR "../models/actor.pt"
-#define OG_CRITIC1 "../models/critic_1.pt"
-#define OG_CRITIC2 "../models/critic_2.pt"
+#define OG_ACTOR "../models/best_actor.pt"
+#define OG_CRITIC1 "../models/best_critic_1.pt"
+#define OG_CRITIC2 "../models/best_critic_2.pt"
 #define DSG_SAVE_PATH "../dsg_models"
 #define TM_CHECKPOINT "../checkpoints/improved/transition_transformer_delta_latest.pt"
 #define TM_NORMALISER "../checkpoints/improved/normaliser.txt"
@@ -1267,7 +1554,8 @@ int main(int argc, char **argv)
     cfg.max_children_per_node = 3;
     cfg.expansion_freq = 100; // frequency of expansion phase (every N episodes)
     cfg.mpc_steps = 50;
-    cfg.goal_region_epsilon = 0.5f;
+    cfg.goal_region_epsilon = 0.3f;
+    cfg.success_radius = 0.3f;
     cfg.save_path = DSG_SAVE_PATH;
     cfg.training_episodes = 20000;
 
