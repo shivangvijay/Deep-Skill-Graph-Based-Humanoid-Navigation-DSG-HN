@@ -57,6 +57,7 @@ int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout wh
 
     for (int episode = 0; episode < max_episodes; episode++)
     {
+        _env->clearGoal();
         if (_cfg.strict_sampling)
         {
             _env->resetTo(_sampleSpawnState());
@@ -145,7 +146,7 @@ float DeepSkillChaining::execute()
 void DeepSkillChaining::visualizeInitiationSets()
 {
     std::vector<std::vector<std::array<float, 3>>> points_per_skill;
-    int max_points = 500;
+    int max_points = 1000;
     for (const auto &skill : _skills)
     {
         std::vector<std::array<float, 3>> points;
@@ -360,27 +361,6 @@ std::pair<int, AbstractedState> DeepSkillChaining::_pickOption()
     // than picking based on Q values
     best_option = candidates.empty() ? _global_option_idx : candidates[0];
 
-    // float epsilon = 0.1f;
-
-    // std::uniform_real_distribution<float> roll(0.0f, 1.0f);
-    // if (!_eval && roll(_rng) < epsilon && !candidates.empty())
-    // {
-    //     std::uniform_int_distribution<int> dist(0, candidates.size() - 1);
-    //     best_option = candidates[dist(_rng)];
-    // }
-    // else if (!candidates.empty())
-    // {
-    //     float best_q = std::numeric_limits<float>::lowest();
-    //     for (int o : candidates)
-    //     {
-    //         if (q_vals[o].item<float>() > best_q)
-    //         {
-    //             best_q = q_vals[o].item<float>();
-    //             best_option = o;
-    //         }
-    //     }
-    // }
-
     if (best_option == _global_option_idx)
     {
         // TODO: pick closest option as goal
@@ -549,6 +529,7 @@ void DeepSkillChaining::_makeSkill(bool is_global, std::shared_ptr<Skill> parent
         std::cout << "\nMaking New Skill With ID: " << id << " (parent=" << parent->goalHits() << "/" << parent->gestationPeriod() << " id=" << id - 1 << ")\n";
     else
         std::cout << "\nMaking New Skill With ID: " << id << "\n";
+    
     _skills.push_back(new_skill);
     _poo.addOption(0.0f); // Start with optimistic value so it is used
     _poo.hardCopy();
@@ -731,11 +712,11 @@ AbstractedState DeepSkillChaining::_sampleSpawnState()
 
 #ifndef DSG_BUILD
 #define SCENE_FILE "../config/scene/umaze_scene.xml"
-#define OG_ACTOR "../models/actor.pt"
-#define OG_CRITIC1 "../models/critic_1.pt"
-#define OG_CRITIC2 "../models/critic_2.pt"
-#define DSC_SAVE_PATH "../dsc_models"
-#define TEST false // if set to true, will not train, will just load and run testing
+#define OG_ACTOR "../dsc_models_v4/skill_0_actor.pt"
+#define OG_CRITIC1 "../dsc_models_v4/skill_0_critic1.pt"
+#define OG_CRITIC2 "../dsc_models_v4/skill_0_critic2.pt"
+#define DSC_SAVE_PATH "../dsc_models_v4"
+#define TEST true // if set to true, will not train, will just load and run testing
 
 #define X_MIN -7.0f
 #define X_MAX 7.0f
@@ -745,6 +726,7 @@ AbstractedState DeepSkillChaining::_sampleSpawnState()
 int main(int argc, char **argv)
 {
     auto vm = param::helper(argc, argv);
+
     std::string rel_path = param::config["FSM"]["Velocity"]["policy_dir"].as<std::string>();
     auto policy_dir = param::parser_policy_dir(rel_path);
 
@@ -771,16 +753,17 @@ int main(int argc, char **argv)
     cfg.actor_warmup_steps = 0; // gonna keep at zero for testing purposes as well
     cfg.warmup_episodes = 0;    // keep at zero since I am assuming we have done pretraining
     cfg.verbose = true;         // set to true for per-rollout console output
-    cfg.log_interval = 300;     // print skill status table every N episodes
-    cfg.visualize_initiation_sets = false;
+    cfg.log_interval = 50;     // print skill status table every N episodes
+    cfg.visualize_initiation_sets = true;
     cfg.max_skills = 50;
     cfg.val_accuracy_threshold = 0.7f;
+    cfg.strict_sampling = true;
 
     AbstractedState global_goal = {{-4.5, 4.1, 0.}, {0, 0, 0, -1}, {0, 0, 0}, {0, 0, 0}};
-    AbstractedState global_start = {{-5.3, -4.5, 0.}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    AbstractedState global_start = {{5.3, -4.5, 0.}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 
-    // AbstractedState global_goal = {{3.0, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
-    // AbstractedState global_start = {{-3, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    // AbstractedState global_goal = {{1.5, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    // AbstractedState global_start = {{-1.5, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 
     std::string pretrained_actor_path = OG_ACTOR;
     std::string pretrained_critic_1_path = OG_CRITIC1;
@@ -805,13 +788,17 @@ int main(int argc, char **argv)
     // std::cout << "\n=== Evaluation (20 episodes) ===" << std::endl;
     float total = 0.0f;
     robot_bridge->startRender();
-    for (int i = 0; i < 20; ++i)
+    int success = 0;
+    for (int i = 0; i < 50; ++i)
     {
         float r = dsc.execute();
+        auto state = robot_bridge->getRobotState();
+        if (std::sqrt((state.position[0] - global_goal.position[0]) * (state.position[0] - global_goal.position[0]) + (state.position[1] - global_goal.position[1]) * (state.position[1] - global_goal.position[1])) < 0.5)
+            success++;
         total += r;
         std::cout << "  Episode " << i + 1 << ": reward = " << r << std::endl;
     }
-    std::cout << "Mean reward: " << (total / 20.0f) << std::endl;
+    std::cout << "Num Successed: " << success << " / " << 50 << std::endl;
 
     return 0;
 }

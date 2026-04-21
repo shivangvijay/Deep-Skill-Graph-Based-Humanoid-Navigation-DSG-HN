@@ -11,10 +11,10 @@
 #include <iomanip>
 #include <sstream>
 
-#define SCENE_FILE "ai_maker_space_scene.xml"
+// #define SCENE_FILE "umaze_scene.xml"
 static constexpr const char *DEFAULT_OUTPUT = "transitions.csv";
 
-#define SCENE_FILE "umaze_scene.xml"
+#define SCENE_FILE "test_scene_narrow.xml"
 // Match policy training ranges from deploy.yaml
 // commands.base_velocity.ranges: lin_vel_x[-0.5,1.0], lin_vel_y[-0.3,0.3], ang_vel_z[-0.2,0.2]
 #define VX_MAX 1.0f
@@ -147,7 +147,8 @@ int main(int argc, char **argv)
 
     std::cout << "Recording transitions to " << DEFAULT_OUTPUT << "...\n";
 
-    robot_bridge->resetRobot();
+    AbstractedState global_start = {{-1.5, 0, 0.}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    robot_bridge->resetRobot(global_start.position, global_start.orientation);
 
     size_t count = 0;
 

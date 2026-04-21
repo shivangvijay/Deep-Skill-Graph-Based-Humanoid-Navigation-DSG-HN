@@ -9,14 +9,14 @@ PurePursuitBaseline::PurePursuitBaseline(std::shared_ptr<RobotBridgeTrain> robot
     _readScene(robot_radius, discretization);
 }
 
-float PurePursuitBaseline::execute(const AbstractedState &start, const AbstractedState &goal)
+std::pair<float, bool> PurePursuitBaseline::execute(const AbstractedState &start, const AbstractedState &goal)
 {
     _env->resetTo(start);
     _env->setGoal(goal);
     auto waypoints = _generateWaypoint(start, goal);
     float cum_reward = 0.0f;
     bool env_done = false;
-
+    float last_reward = 0.0f;
     // simple pure pursuit controller to follow waypoints
     for (int i = 0; i < waypoints.size(); i++)
     {
@@ -59,9 +59,10 @@ float PurePursuitBaseline::execute(const AbstractedState &start, const Abstracte
             auto [next_state, reward, done] = _env->step(torch::tensor({linear_vel, 0.0f, angular_vel}));
             cum_reward += reward.item<float>();
             env_done = done.item<bool>();
+            last_reward = reward.item<float>();
         }
     }
-    return cum_reward;
+    return {cum_reward, last_reward > 45.0f};
 }
 
 // Private
@@ -238,14 +239,15 @@ TD3Baseline::TD3Baseline(std::shared_ptr<RobotBridgeTrain> robot_bridge, const s
     _agent.toDevice(device);
 }
 
-float TD3Baseline::execute(const AbstractedState &start, const AbstractedState &goal)
+std::pair<float, bool> TD3Baseline::execute(const AbstractedState &start, const AbstractedState &goal)
 {
     _env->setGoal(goal);
     _env->updateGoalMarker(goal);
     auto state = _env->resetTo(start);
+
     float cum_reward = 0.0f;
     bool done = false;
-
+    float last_reward = 0.0f;
     while (!done)
     {
         auto [action, _]  = _agent.getAction(_env->getState(), true);
@@ -253,8 +255,10 @@ float TD3Baseline::execute(const AbstractedState &start, const AbstractedState &
         cum_reward += reward.item<float>();
         done = env_done.item<bool>();
         state = next_state;
+        last_reward = reward.item<float>();
     }
-    return cum_reward;
+    std::cout << last_reward << std::endl;
+    return {cum_reward, last_reward > 45.0f};
 }
 
 #define X_MIN -7.0f
@@ -263,13 +267,13 @@ float TD3Baseline::execute(const AbstractedState &start, const AbstractedState &
 #define Y_MAX 7.0f
 #define SCENE_FILE "../config/scene/umaze_scene.xml"
 
-#define ACTOR_PATH "../models/actor.pt"
-#define CRITIC_1_PATH "../models/critic_1.pt"
-#define CRITIC_2_PATH "../models/critic_2.pt"
+#define ACTOR_PATH "../models/best_actor.pt"
+#define CRITIC_1_PATH "../models/best_critic_1.pt"
+#define CRITIC_2_PATH "../models/best_critic_2.pt"
 #define ACTOR_LAYER_SIZES {256, 256, 256}
 #define CRITIC_LAYER_SIZES {256, 256, 256}
 
-#define BASELINE_TYPE "td3" // "pure_pursuit" or "td3"
+#define BASELINE_TYPE "pure_pursuit" // "pure_pursuit" or "td3"
 
 int main(int argc, char **argv)
 {
@@ -290,7 +294,7 @@ int main(int argc, char **argv)
     }
 
     auto robot_bridge = std::make_shared<RobotBridgeTrain>(
-        SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, true);
+        SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, false);
 
     std::unique_ptr<Baseline> baseline;
     
@@ -312,7 +316,20 @@ int main(int argc, char **argv)
 
     AbstractedState global_goal = {{-4.5, 4.1, 0.}, {0, 0, 0, -1}, {0, 0, 0}, {0, 0, 0}};
     AbstractedState global_start = {{-5.3, -4.5, 0.}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    // AbstractedState global_goal = {{1.5, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    // AbstractedState global_start = {{-1.5, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 
-    float reward = baseline->execute(global_start, global_goal);
-    std::cout << "Total reward: " << reward << std::endl;
+    int successes = 0;
+    for (int i = 0; i < 50; i++)
+    {
+        auto [reward, success] = baseline->execute(global_start, global_goal);
+        if (success)
+        {
+            auto state = robot_bridge->getRobotState();
+            std::cout << state.position[0] << " " << state.position[1] << std::endl;
+            successes++;
+        }
+        std::cout << "Finished. Success: " << success << std::endl;
+    }
+    std::cout << "Total successes: " << successes << "/" << 50 << std::endl;
 }

@@ -3,6 +3,8 @@ import re
 import xml.etree.ElementTree as ET
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+import time
+import os
 
 # Toggle for drawing goal regions (GR circles/labels)
 SHOW_GOAL_REGIONS = True
@@ -90,4 +92,6 @@ ax.set_xlim(-7,7)
 ax.set_ylim(-7,7)
 ax.set_aspect('equal')
 ax.set_title('Initiation Sets Visualization')
-plt.savefig('../initiation_sets_viz.png')
+if not os.path.exists("../results"):
+    os.makedirs("../results")
+plt.savefig(f"../results/initiation_sets_viz_{time.time()}.png")

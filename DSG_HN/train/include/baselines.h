@@ -11,7 +11,7 @@ class Baseline
 {
 public:
     Baseline() {}
-    virtual float execute(const AbstractedState &start, const AbstractedState &goal) = 0;
+    virtual std::pair<float, bool> execute(const AbstractedState &start, const AbstractedState &goal) = 0;
 };
 
 // 2d navigation of discretized space, and then follow with pure pursuit
@@ -20,7 +20,7 @@ class PurePursuitBaseline : public Baseline
 public:
     PurePursuitBaseline(std::shared_ptr<RobotBridgeTrain> robot_bridge, float discretization = 0.1f, float robot_radius = 0.3f, float lookahead_distance = 0.5f);
 
-    float execute(const AbstractedState &start, const AbstractedState &goal) override;
+    std::pair<float, bool> execute(const AbstractedState &start, const AbstractedState &goal) override;
 
 private:
     std::shared_ptr<RobotBridgeTrain> _robot_bridge;
@@ -45,7 +45,7 @@ class TD3Baseline : public Baseline
 public:
     TD3Baseline(std::shared_ptr<RobotBridgeTrain> robot_bridge,
                 const std::string &actor_path, const std::string &critic_1_path, const std::string &critic_2_path, const std::vector<int>& actor_layer_sizes, const std::vector<int>& critic_layer_sizes, torch::Device device);
-    float execute(const AbstractedState &start, const AbstractedState &goal) override;
+    std::pair<float, bool> execute(const AbstractedState &start, const AbstractedState &goal) override;
 
 private:
     std::shared_ptr<RobotBridgeTrain> _robot_bridge;
