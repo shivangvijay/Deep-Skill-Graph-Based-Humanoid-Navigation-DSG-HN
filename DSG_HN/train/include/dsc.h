@@ -69,7 +69,6 @@ public:
         bool verbose = false;                   // per-rollout logging inside each episode
         bool visualize_initiation_sets = false; // if true, periodically render initiation set visualization
         int log_interval = 50;                  // print episode summary + skill status table every N episodes
-        bool strict_sampling = false;           // if true, all rollout spawns come from _sampleSpawnState() near _global_start
     };
 
     struct DSCProblem
@@ -145,7 +144,7 @@ protected:
     AbstractedState _sampleStartNearObstacle();
     AbstractedState _sampleStartInterpolated();
     AbstractedState _sampleStartNearBoundary();
-    virtual AbstractedState _sampleSpawnState(); // used when strict_sampling=true; default returns _global_start
+    virtual AbstractedState _sampleSpawnState(); // default returns _global_start
     virtual void _validateOption();
     virtual bool _shouldCreateNewOption();
 };

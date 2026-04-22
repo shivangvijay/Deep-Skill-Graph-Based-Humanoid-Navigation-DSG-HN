@@ -108,48 +108,75 @@ bool DeepSkillGraph::_shouldCreateNewOption(int v_d, const std::vector<int> &dsc
     return true;
 }
 
+std::vector<AbstractedState> DeepSkillGraph::_nodeCoverageSamples(int node_idx) const
+{
+    std::vector<AbstractedState> samples;
+    const auto &n = _nodes[node_idx];
+
+    if (n.is_goal_region)
+    {
+        const AbstractedState center = n.goal_region.center;
+        const float r = std::max(0.0f, n.goal_region.epsilon);
+        samples.push_back(center);
+        if (r <= 0.0f)
+            return samples;
+
+        // Cover interior + boundary of GR disk using concentric deterministic rings.
+        const int n_theta = std::max(12, _dsg_cfg.gestation_n / 2);
+        const std::array<float, 4> ring_fracs = {0.25f, 0.5f, 0.75f, 1.0f};
+        static constexpr float kTwoPi = 6.28318530718f;
+        for (float rf : ring_fracs)
+        {
+            const float rr = r * rf;
+            for (int k = 0; k < n_theta; ++k)
+            {
+                const float th = kTwoPi * static_cast<float>(k) / static_cast<float>(n_theta);
+                AbstractedState s = center;
+                s.position[0] += rr * std::cos(th);
+                s.position[1] += rr * std::sin(th);
+                samples.push_back(s);
+            }
+        }
+        return samples;
+    }
+
+    // Option node: use full effect set as coverage domain.
+    const auto &effects = n.skill->getEffectSet();
+    if (!effects.empty())
+    {
+        samples.reserve(effects.size());
+        for (const auto &rec : effects)
+            samples.push_back(rec.state);
+        return samples;
+    }
+
+    samples.push_back(_nodeRepresentativeState(node_idx));
+    return samples;
+}
+
+bool DeepSkillGraph::_skillCoversNodeStrict(int skill_idx, int node_idx, bool pessimistic) const
+{
+    if (_skills[skill_idx]->getTrainingPhase() != "mature")
+        return false;
+
+    auto samples = _nodeCoverageSamples(node_idx);
+    for (const auto &s : samples)
+    {
+        bool ok = pessimistic ? _skills[skill_idx]->canStartPessimistic(s)
+                              : _skills[skill_idx]->canStart(s);
+        if (!ok)
+            return false;
+    }
+    return true;
+}
+
 bool DeepSkillGraph::_containsStart(int v_d, const std::vector<int> &dsc_chain)
 {
-    auto sample_vd_state = [&]() -> AbstractedState
-    {
-        const auto &vd = _nodes[v_d];
-
-        // Goal region: sample on the epsilon boundary ("edges").
-        if (vd.is_goal_region)
-        {
-            AbstractedState s = vd.goal_region.center;
-            const float r = std::max(0.0f, vd.goal_region.epsilon);
-            if (r > 0.0f)
-            {
-                static constexpr float kTwoPi = 6.28318530718f;
-                std::uniform_real_distribution<float> angle_dist(0.0f, kTwoPi);
-                const float theta = angle_dist(_rng);
-                s.position[0] += r * std::cos(theta);
-                s.position[1] += r * std::sin(theta);
-            }
-            return s;
-        }
-
-        // Option node: sample from effect set.
-        const auto &effects = vd.skill->getEffectSet();
-        if (!effects.empty())
-        {
-            std::uniform_int_distribution<size_t> pick(0, effects.size() - 1);
-            return effects[pick(_rng)].state;
-        }
-
-        // Fallback for sparse early-training cases.
-        return _nodeRepresentativeState(v_d);
-    };
-
     for (auto o : dsc_chain)
     {
-        int can_start_count = 0;
-        for (int i = 0; i < _dsg_cfg.gestation_n; i++)
-            if (_skills[o]->canStart(sample_vd_state()) && _skills[o]->getTrainingPhase() == "mature")
-                can_start_count++;
-
-        if (static_cast<float>(can_start_count) / static_cast<float>(_dsg_cfg.gestation_n) > 0.5f)
+        // Strict connectivity: option must be startable from the full sampled
+        // coverage of v_d. Use pessimistic classifier for robust chaining.
+        if (_skillCoversNodeStrict(o, v_d, /*pessimistic=*/true))
             return true;
     }
     return false;
@@ -1385,12 +1412,11 @@ void DeepSkillGraph::_graphConsolidationPhase()
         if (solved_current_problem)
         {
             int v_d = _current_dsc_problem->v_d;
-            AbstractedState vd_state = _nodeRepresentativeState(v_d);
 
             int bridge_skill_idx = -1;
             for (int o : _current_dsc_problem->dsc_chain)
             {
-                if (_skills[o]->getTrainingPhase() == "mature" && _skills[o]->canStart(vd_state))
+                if (_skillCoversNodeStrict(o, v_d, /*pessimistic=*/true))
                 {
                     bridge_skill_idx = o;
                     break;
@@ -1581,19 +1607,18 @@ int main(int argc, char **argv)
     // -------------------------------------------------------------------------
     cfg.gestation_train_steps = 5000;
     cfg.gestation_n = 60;
-    cfg.last_k = 15;
-    cfg.refinement_eps = 20;
-    cfg.max_option_steps = 30;
+    cfg.last_k = 30;
+    cfg.refinement_eps = 30;
+    cfg.max_option_steps = 50;
     cfg.max_skills = 6;
     cfg.val_accuracy_threshold = 0.8f;
-    cfg.strict_sampling = false;
 
     // -------------------------------------------------------------------------
     // Classifier / initiation set behaviour
     // -------------------------------------------------------------------------
-    cfg.nu = 0.01; // one-class SVM outlier fraction (pessimistic tightness)
-    cfg.optimistic_svc_c = 1.0;                 // phase-2 optimistic SVC C
-    cfg.optimistic_svc_gamma = 0.5;             // phase-2 optimistic SVC gamma
+    cfg.nu = 0.001; // one-class SVM outlier fraction (pessimistic tightness)
+    cfg.optimistic_svc_c = 1.0;                 // phase-2 optimistic SVC C (inverse regularization strength, lower = wider)
+    cfg.optimistic_svc_gamma = 0.5;             // phase-2 optimistic SVC gamma (kernel coefficient, lower = wider)
     cfg.subgoal_robustness_tolerance = 0.25f;   // neighborhood check around sampled subgoal
     cfg.negative_samples_per_failure = 1;       // failure negatives added per failed rollout
 
@@ -1623,8 +1648,8 @@ int main(int argc, char **argv)
     // DSG graph structure + edge maintenance
     // -------------------------------------------------------------------------
     cfg.graph_update_freq = 10;
-    cfg.max_children_per_node = 3;
-    cfg.expansion_freq = 100;  // every N episodes run expansion, else consolidation
+    cfg.max_children_per_node = 5;
+    cfg.expansion_freq = 200;  // every N episodes run expansion, else consolidation
     cfg.max_expansion_tries = 10;
     cfg.edge_weight_kappa = 0.95f; // learning rate for edge weight updates 
 

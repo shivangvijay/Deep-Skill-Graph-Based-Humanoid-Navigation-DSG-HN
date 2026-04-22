@@ -57,29 +57,22 @@ int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout wh
 
     for (int episode = 0; episode < max_episodes; episode++)
     {
-        if (_cfg.strict_sampling)
+        // TODO: more intelligent sampling. The big thing is not just randomly sampling, but perhaps sampling in the
+        // area of the previously learned skill so that it has a bit of an easier time learning
+        std::uniform_real_distribution<float> dis(0.0f, 1.0f);
+        float p = dis(_rng);
+        if (p < 0.1) // bit of goal biased sampling, may want to do even more intelligent sampling going forward
         {
-            _env->resetTo(_sampleSpawnState());
+            _env->resetTo(_global_start);
+        }
+        else if (p >= 0.1 && p < 0.7)
+        {
+            auto start = _sampleStartNearBoundary();
+            _env->resetTo(start);
         }
         else
         {
-            // TODO: more intelligent sampling. The big thing is not just randomly sampling, but perhaps sampling in the
-            // area of the previously learned skill so that it has a bit of an easier time learning
-            std::uniform_real_distribution<float> dis(0.0f, 1.0f);
-            float p = dis(_rng);
-            if (p < 0.1) // bit of goal biased sampling, may want to do even more intelligent sampling going forward
-            {
-                _env->resetTo(_global_start);
-            }
-            else if (p >= 0.1 && p < 0.7)
-            {
-                auto start = _sampleStartNearBoundary();
-                _env->resetTo(start);
-            }
-            else
-            {
-                _env->reset(); // random start
-            }
+            _env->reset(); // random start
         }
 
         float ep_reward = 0.0f;
