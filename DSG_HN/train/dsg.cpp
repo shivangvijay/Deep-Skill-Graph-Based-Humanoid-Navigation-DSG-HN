@@ -1560,22 +1560,98 @@ int main(int argc, char **argv)
         SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, /*render=*/false);
 
     DeepSkillGraph::Config cfg;
+    // -------------------------------------------------------------------------
+    // Episode / runtime control
+    // -------------------------------------------------------------------------
+    cfg.training_episodes = 20000;
+    cfg.steps_per_episode = 1000;
+    cfg.warmup_episodes = 0; // warm up policy-over-options before DSG expansion/consolidation
+    cfg.save_path = DSG_SAVE_PATH;
+    cfg.save_interval = 100;
+
+    // -------------------------------------------------------------------------
+    // Environment + geometric termination / region thresholds
+    // -------------------------------------------------------------------------
+    cfg.success_radius = 0.2f;      // env local-goal success radius
+    cfg.goal_region_epsilon = 0.2f; // GR epsilon-ball radius
+    cfg.start_noise_radius = 2.0f;
+
+    // -------------------------------------------------------------------------
+    // Skill lifecycle (DSC option learning / validation)
+    // -------------------------------------------------------------------------
+    cfg.gestation_train_steps = 5000;
     cfg.gestation_n = 60;
     cfg.last_k = 15;
+    cfg.refinement_eps = 20;
     cfg.max_option_steps = 30;
-    cfg.nu = 0.01;
-    cfg.actor_warmup_steps = 0;
-    cfg.warmup_episodes = 0; // use to warm up policy over options with global option rollouts before starting expansion/consolidation
+    cfg.max_skills = 6;
+    cfg.val_accuracy_threshold = 0.8f;
+    cfg.strict_sampling = false;
+
+    // -------------------------------------------------------------------------
+    // Classifier / initiation set behaviour
+    // -------------------------------------------------------------------------
+    cfg.nu = 0.01; // one-class SVM outlier fraction (pessimistic tightness)
+    cfg.optimistic_svc_c = 1.0;                 // phase-2 optimistic SVC C
+    cfg.optimistic_svc_gamma = 0.5;             // phase-2 optimistic SVC gamma
+    cfg.subgoal_robustness_tolerance = 0.25f;   // neighborhood check around sampled subgoal
+    cfg.negative_samples_per_failure = 1;       // failure negatives added per failed rollout
+
+    // -------------------------------------------------------------------------
+    // Policy / critic architectures
+    // -------------------------------------------------------------------------
+    cfg.actor_layers = {256, 256, 256};
+    cfg.critic_layers = {256, 256, 256};
+    cfg.poo_layers = {256, 256, 256};
+
+    // -------------------------------------------------------------------------
+    // Learning dynamics (TD3 + policy-over-options)
+    // -------------------------------------------------------------------------
+    cfg.lr_actor = 1e-4f;
+    cfg.lr_critic = 3e-4f;
+    cfg.lr_actor_global = 1e-5f;
+    cfg.lr_critic_global = 3e-5f;
+    cfg.lr_poo = 1e-4f;
+    cfg.actor_warmup_steps = 0; // TBD
+    cfg.tau = 0.005f;
+    cfg.gamma = 0.99f;
+    cfg.batch_size = 256;
+    cfg.poo_batch_size = 16;
+    cfg.actor_update_freq = 2;
+
+    // -------------------------------------------------------------------------
+    // DSG graph structure + edge maintenance
+    // -------------------------------------------------------------------------
+    cfg.graph_update_freq = 10;
+    cfg.max_children_per_node = 3;
+    cfg.expansion_freq = 100;  // every N episodes run expansion, else consolidation
+    cfg.max_expansion_tries = 10;
+    cfg.edge_weight_kappa = 0.95f; // learning rate for edge weight updates 
+
+    // -------------------------------------------------------------------------
+    // Expansion controller (global-option proxy / transition-model MPC)
+    // -------------------------------------------------------------------------
+    cfg.mpc_steps = 200; // real env steps while extending toward s_rand
+    cfg.mpc_horizon = 7;
+    cfg.mpc_candidates = 256;
+    cfg.mpc_cem_rounds = 3;
+    cfg.mpc_cem_elites = 32;
+    cfg.mpc_w_pos = 1.0;
+    cfg.mpc_w_heading = 0.5;
+    cfg.mpc_w_terminal = 3.0;
+    cfg.mpc_w_smooth = 0.1;
+    cfg.mpc_w_backward = 0.3;
+    cfg.mpc_w_collision = 1000.0;
+    cfg.mpc_base_radius = 0.35;
+    cfg.mpc_clearance = 0.05;
+
+    // -------------------------------------------------------------------------
+    // Logging / debug visibility
+    // -------------------------------------------------------------------------
+    cfg.render_training = false;
     cfg.verbose = true;
     cfg.log_interval = 25;
     cfg.visualize_initiation_sets = true;
-    cfg.max_children_per_node = 3;
-    cfg.expansion_freq = 100; // frequency of expansion phase (every N episodes)
-    cfg.mpc_steps = 50;
-    cfg.goal_region_epsilon = 0.3f;
-    cfg.success_radius = 0.3f;
-    cfg.save_path = DSG_SAVE_PATH;
-    cfg.training_episodes = 20000;
 
     AbstractedState global_start = {{0.0, 0.0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 

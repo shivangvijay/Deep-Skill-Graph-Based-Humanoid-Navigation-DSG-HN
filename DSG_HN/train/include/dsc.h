@@ -39,6 +39,10 @@ public:
         int last_k = 10;                  // states collected per successful validation episode
         int refinement_eps = 20;          // eval rollouts from SVM boundary for Phase 3
         double nu = 0.1;                  // one-class SVM outlier fraction
+        double optimistic_svc_c = 1.0;    // phase-2 optimistic SVC C
+        double optimistic_svc_gamma = 0.5; // phase-2 optimistic SVC gamma
+        float subgoal_robustness_tolerance = 0.25f; // neighborhood tolerance in sampleSubgoalState
+        int negative_samples_per_failure = 1; // number of failure states added as negatives per failed rollout
         int max_option_steps = 20;        // how long an option can execute for
         int max_skills = 6;
         float start_noise_radius = 2.0f;

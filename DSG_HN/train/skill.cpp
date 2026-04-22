@@ -12,10 +12,14 @@ Skill::Skill(
     float lr_actor, float lr_critic,
     float tau, float gamma, int actor_warmup_steps,
     int batch_size, int actor_update_freq, int k, int max_steps, double nu,
+    double optimistic_svc_c, double optimistic_svc_gamma, float subgoal_robustness_tolerance, int negative_samples_per_failure,
     std::shared_ptr<Skill> parent, int gestation_period, bool is_global, AbstractedState global_goal, std::shared_ptr<Skill> global_option, bool eval)
     : _id(id), _env(env), _parent(parent), _is_global(is_global), _gestation_period(gestation_period), _k(k), _max_steps(max_steps), _agent(env, actor_layer_sizes, critic_layer_sizes, device,
                                                                                                                                             lr_actor, lr_critic, tau, gamma, batch_size, actor_update_freq, actor_warmup_steps),
-      _rng(std::random_device{}()), _global_goal(global_goal), _nu(nu), _global_option(global_option), _gamma(gamma), _eval(eval), _lr_actor(lr_actor), _lr_critic(lr_critic)
+      _rng(std::random_device{}()), _global_goal(global_goal), _nu(nu), _optimistic_svc_c(optimistic_svc_c),
+      _optimistic_svc_gamma(optimistic_svc_gamma), _subgoal_robustness_tolerance(subgoal_robustness_tolerance),
+      _negative_samples_per_failure(std::max(1, negative_samples_per_failure)), _global_option(global_option),
+      _gamma(gamma), _eval(eval), _lr_actor(lr_actor), _lr_critic(lr_critic)
 {
 }
 
@@ -314,7 +318,7 @@ AbstractedState Skill::sampleSubgoalState() const
 
     // 2. Perform Epsilon-Tolerance Check (The "Landing Pad" logic)
     // Only accept states where a small neighborhood is also considered "Positive"
-    float tolerance = 0.25f; // Matches the Python 'tolerance' logic
+    float tolerance = _subgoal_robustness_tolerance;
     std::vector<size_t> robust_indices;
 
     for (size_t idx : candidate_indices)
@@ -794,8 +798,13 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
     {
         // 3. Negative Examples: If the rollout failed, we mark the start state
         // as a negative example to prevent the classifier from over-expanding here.
-        _gestation_vecs.push_back(visited.front().classifier_vec);
-        _gestation_labels.push_back(-1);
+        const int n_neg = std::max(1, std::min((int)visited.size(), _negative_samples_per_failure));
+        for (int i = 0; i < n_neg; ++i)
+        {
+            int idx = (n_neg == 1) ? 0 : (i * ((int)visited.size() - 1)) / (n_neg - 1);
+            _gestation_vecs.push_back(visited[idx].classifier_vec);
+            _gestation_labels.push_back(-1);
+        }
         _has_negative_gestation = true;
     }
 
@@ -826,7 +835,7 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
         // PHASE 2: Negative data exists. Train a Binary SVC as the Optimistic Classifier.
         // This allows the agent to "learn from mistakes" by carving out negative space.
         _classifier.train(_gestation_vecs, _gestation_labels,
-                          /*C=*/1.0, /*gamma=*/0.5, /*balance_classes=*/true);
+                          _optimistic_svc_c, _optimistic_svc_gamma, /*balance_classes=*/true);
 
         // Filter: Train the Pessimistic One-Class SVM only on states the SVC confirms as Positive.
         std::vector<std::vector<float>> svc_positive_vecs;

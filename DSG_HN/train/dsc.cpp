@@ -510,7 +510,9 @@ void DeepSkillChaining::_makeSkill(bool is_global, std::shared_ptr<Skill> parent
                                                                _cfg.actor_layers, _cfg.critic_layers, _device,
                                                                lr_actor, lr_critic, _cfg.tau, _cfg.gamma, _cfg.actor_warmup_steps,
                                                                _cfg.batch_size, _cfg.actor_update_freq, _cfg.last_k,
-                                                               _cfg.max_option_steps, _cfg.nu, parent, _cfg.gestation_n, is_global, local_goal, global_option, _eval);
+                                                               _cfg.max_option_steps, _cfg.nu, _cfg.optimistic_svc_c, _cfg.optimistic_svc_gamma,
+                                                               _cfg.subgoal_robustness_tolerance, _cfg.negative_samples_per_failure,
+                                                               parent, _cfg.gestation_n, is_global, local_goal, global_option, _eval);
     if (!is_global)
         new_skill->initFromSkill(_skills[_global_option_idx]);
 
@@ -538,7 +540,9 @@ void DeepSkillChaining::_makeSkill(bool is_global, std::shared_ptr<Skill> parent
                                                                _cfg.actor_layers, _cfg.critic_layers, _device,
                                                                lr_actor, lr_critic, _cfg.tau, _cfg.gamma, _cfg.actor_warmup_steps,
                                                                _cfg.batch_size, _cfg.actor_update_freq, _cfg.last_k,
-                                                               _cfg.max_option_steps, _cfg.nu, parent, _cfg.gestation_n, is_global, _global_goal, global_option, _eval);
+                                                               _cfg.max_option_steps, _cfg.nu, _cfg.optimistic_svc_c, _cfg.optimistic_svc_gamma,
+                                                               _cfg.subgoal_robustness_tolerance, _cfg.negative_samples_per_failure,
+                                                               parent, _cfg.gestation_n, is_global, _global_goal, global_option, _eval);
     if (!is_global)
         new_skill->initFromSkill(_skills[_global_option_idx]);
 
