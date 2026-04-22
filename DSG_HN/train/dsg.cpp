@@ -1113,6 +1113,24 @@ bool DeepSkillGraph::_graphExpansionPhase()
     // 4. Extend graph via MPC toward s_rand
     AbstractedState s_mpc = _runMPC(s_rand);
 
+    // 4.5 Safety gate: require the full goal-region epsilon-ball around s_mpc
+    // to be clear of obstacles.
+    {
+        const float required_clearance = _dsg_cfg.goal_region_epsilon;
+        const float obs_dist = _env->distanceToNearestObstacle(s_mpc.position, s_mpc.orientation);
+        if (obs_dist < required_clearance)
+        {
+            if (_cfg.verbose)
+            {
+                std::cout << "[DSG Expansion] Rejected — s_mpc too close to obstacle. "
+                          << "obs_dist=" << obs_dist
+                          << " required>=" << required_clearance
+                          << " (eps=" << _dsg_cfg.goal_region_epsilon << ")\n";
+            }
+            return false;
+        }
+    }
+
     // 5. Rejection sampling: Is s_mpc already covered by an existing node?
     for (int i = 0; i < (int)_nodes.size(); ++i)
     {
