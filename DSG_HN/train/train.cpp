@@ -15,17 +15,17 @@
 #include <random>
 #include <fstream>
 
-#define SCENE_FILE "../config/scene/test_scene.xml"
+#define SCENE_FILE "../config/scene/test_scene_narrow.xml"
 #define POLICY_DIR "config/policy/velocity"
 #define CONFIG_PATH "config/config.yaml"
 
-#define X_MIN -7.0f
-#define X_MAX 7.0f
-#define Y_MIN -7.0f
-#define Y_MAX 7.0f
+#define X_MIN -3.0f
+#define X_MAX 3.0f
+#define Y_MIN -3.0f
+#define Y_MAX 3.0f
 
-#define CRITIC_LR 3e-4 // lowered from 3e-3
-#define ACTOR_LR 1e-4  // lowered from 1e-4 for fine tuning
+#define CRITIC_LR 1e-3 // lowered from 3e-3
+#define ACTOR_LR 5e-4  // lowered from 1e-4 for fine tuning
 #define TAU 0.005
 #define GAMMA 0.99
 #define BATCH_SIZE 256
@@ -33,8 +33,10 @@
 #define CRITIC_LAYER_SIZES {256, 256, 256}
 #define ACTOR_LAYER_SIZES {256, 256, 256}
 #define RENDER false
-#define PRETRAIN false
-#define ACTOR_WARMUP_STEPS 5000
+#define PRETRAIN true
+#define ACTOR_WARMUP_STEPS 000
+
+// TODO: perhaps retrain the UMaze model with the new params
 
 static std::mt19937 her_rng(std::random_device{}());
 
@@ -140,9 +142,9 @@ int main(int argc, char **argv)
         }
         else
         {
-            auto actor_path = model_dir / "best_actor.pt";
-            auto critic1_path = model_dir / "best_critic_1.pt";
-            auto critic2_path = model_dir / "best_critic_2.pt";
+            auto actor_path = model_dir / "best_actor copy.pt";
+            auto critic1_path = model_dir / "best_critic_1 copy.pt";
+            auto critic2_path = model_dir / "best_critic_2 copy.pt";
             if (std::filesystem::exists(actor_path) && std::filesystem::exists(critic1_path) && std::filesystem::exists(critic2_path))
             {
                 torch::load(agent.actor_local, actor_path.string());
@@ -160,12 +162,13 @@ int main(int argc, char **argv)
 
     int num_frames = 0;
     auto start_time = std::chrono::high_resolution_clock::now();
-    int num_steps = 20000;
-    int num_epochs = 60;
+    int num_steps = 10000;
+    int num_epochs = 30;
 
     std::cout << "Starting training for " << num_epochs << " epochs, " << num_steps << " steps per epoch." << std::endl;
     auto state = train_env->reset();
-    if (render) train_env->updateGoalMarker();
+    if (render)
+        train_env->updateGoalMarker();
     auto underlying_state = train_env->getUnderlyingState().first;
 
     std::vector<Transition> her_transitions;
@@ -175,12 +178,20 @@ int main(int argc, char **argv)
     std::ofstream log_file("../models/logs/training_log.csv");
     log_file << "epoch,avg_reward,actor_loss,critic_loss,success_rate,max_goal_dist,noise" << std::endl;
 
+    AbstractedState global_goal = {{2.0, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    AbstractedState global_start = {{-2.0, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+
+    train_env->setGoal(global_goal);
+    train_env->resetTo(global_start);
+    agent.setExplorationNoise(0.2f);
+
     for (int epoch = 0; epoch < num_epochs; epoch++)
     {
         float total_reward = 0.0f;
 
-        torch::Tensor state = train_env->reset();
-        if (render) train_env->updateGoalMarker();
+        torch::Tensor state = train_env->resetTo(global_start);
+        if (render)
+            train_env->updateGoalMarker();
         std::cout << "Epoch " << epoch + 1 << "/" << num_epochs << " " << std::endl;
         int num_success = 0;
         int num_episodes = 0;
@@ -202,12 +213,13 @@ int main(int argc, char **argv)
             if (done.item<float>() > 0.5)
             {
                 num_episodes++;
-                if (reward.data_ptr<float>()[0] > 0)
+                if (reward.data_ptr<float>()[0] > 200.0f)
                     num_success++;
-                train_her(her_transitions, train_env, agent);
+                // train_her(her_transitions, train_env, agent);
                 her_transitions.clear();
-                state = train_env->reset();
-                if (render) train_env->updateGoalMarker();
+                state = train_env->resetTo(global_start);
+                if (render)
+                    train_env->updateGoalMarker();
                 underlying_state = train_env->getUnderlyingState().first;
             }
             else
@@ -215,7 +227,6 @@ int main(int argc, char **argv)
                 state = next_state;
                 underlying_state = next_underlying_state;
             }
-
         }
         std::cout << std::endl;
         float success_rate = (num_episodes > 0) ? (float)num_success / num_episodes * 100.0f : 0.0f;
@@ -225,13 +236,13 @@ int main(int argc, char **argv)
         std::cout << "Success Rate: " << success_rate << "%" << std::endl;
         std::cout << "Max Goal Distance: " << train_env->getMaxGoalDistance() << "m" << std::endl;
 
-        if (success_rate > 65.0f)
-            train_env->increaseGoalDistance(2.0f);
-        else if (success_rate < 10.0f)
-            train_env->decreaseGoalDistance(1.0f);
+        // if (success_rate > 65.0f)
+        //     train_env->increaseGoalDistance(2.0f);
+        // else if (success_rate < 10.0f)
+        //     train_env->decreaseGoalDistance(1.0f);
 
         // Decay exploration noise: 0.3 → 0.05 linearly over all epochs
-        float noise = 0.3f - (0.3f - 0.05f) * ((float)epoch / (float)(num_epochs - 1));
+        float noise = 0.2f - (0.2f - 0.05f) * ((float)epoch / (float)(num_epochs - 1));
         agent.setExplorationNoise(noise);
         std::cout << "Exploration Noise: " << noise << std::endl;
 
@@ -241,7 +252,7 @@ int main(int argc, char **argv)
 
         // Log to CSV
         log_file << epoch + 1 << "," << avg_reward << "," << avg_actor_loss << ","
-                 << avg_critic_loss << "," << success_rate << ","
+                 << avg_critic_loss << "," << success_rate
                  << train_env->getMaxGoalDistance() << "," << noise << std::endl;
 
         // Save checkpoint every epoch
