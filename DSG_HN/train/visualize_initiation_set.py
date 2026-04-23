@@ -17,7 +17,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--models-dir",
-        default="mac/dsg_models",
+        default="mac/models/dsg_models",
         help="Directory containing skill_<id>_classifier.svm files.",
     )
     parser.add_argument(
