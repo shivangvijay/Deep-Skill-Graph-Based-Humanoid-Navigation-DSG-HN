@@ -92,6 +92,6 @@ ax.set_xlim(-7,7)
 ax.set_ylim(-7,7)
 ax.set_aspect('equal')
 ax.set_title('Initiation Sets Visualization')
-if not os.path.exists("../results"):
-    os.makedirs("../results")
-plt.savefig(f"../results/initiation_sets_viz_{time.time()}.png")
+# if not os.path.exists("../results"):
+#     os.makedirs("../results")
+plt.savefig(f"../logs/initiation_sets_viz.png")
