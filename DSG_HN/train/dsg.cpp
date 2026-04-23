@@ -1582,7 +1582,7 @@ void DeepSkillGraph::_graphConsolidationPhase()
 #define OG_ACTOR "../models/best_actor.pt"
 #define OG_CRITIC1 "../models/best_critic_1.pt"
 #define OG_CRITIC2 "../models/best_critic_2.pt"
-#define DSG_SAVE_PATH "../dsg_models"
+#define DSG_SAVE_PATH "../models/dsg_models"
 #define TM_CHECKPOINT "../checkpoints/improved/transition_transformer_delta_latest.pt"
 #define TM_NORMALISER "../checkpoints/improved/normaliser.txt"
 #define TEST false
