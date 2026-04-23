@@ -12,11 +12,20 @@ Skill::Skill(
     float lr_actor, float lr_critic,
     float tau, float gamma, int actor_warmup_steps,
     int batch_size, int actor_update_freq, int k, int max_steps, double nu,
-    std::shared_ptr<Skill> parent, int gestation_period, bool is_global, AbstractedState global_goal, std::shared_ptr<Skill> global_option, bool eval)
-    : _id(id), _env(env), _parent(parent), _is_global(is_global), _gestation_period(gestation_period), _k(k), _max_steps(max_steps), _agent(env, actor_layer_sizes, critic_layer_sizes, device,
-                                                                                                                                            lr_actor, lr_critic, tau, gamma, batch_size, actor_update_freq, actor_warmup_steps),
+    std::shared_ptr<Skill> parent, int gestation_period, bool is_global, AbstractedState global_goal, std::shared_ptr<Skill> global_option, bool eval,
+    float exploration_noise_gestation, float exploration_noise_mature,
+    bool use_human_collected_data, std::string human_collected_data_path, float human_data_percentage)
+    : _id(id), _env(env), _parent(parent), _is_global(is_global), _gestation_period(gestation_period), _k(k), _max_steps(max_steps), _exploration_noise_gestation(exploration_noise_gestation), _exploration_noise_mature(exploration_noise_mature),
+      _agent(env, actor_layer_sizes, critic_layer_sizes, device, lr_actor, lr_critic, tau, gamma, batch_size, actor_update_freq, actor_warmup_steps, use_human_collected_data, human_data_percentage),
       _rng(std::random_device{}()), _global_goal(global_goal), _nu(nu), _global_option(global_option), _gamma(gamma), _eval(eval), _lr_actor(lr_actor), _lr_critic(lr_critic)
 {
+    if (use_human_collected_data)
+    {
+        // just gonna load into buffer and not do the pretraining, as assuming
+        // that is done when training the global option
+        _agent.loadHumanData(env, human_collected_data_path);
+    }
+    _agent.setExplorationNoise(_exploration_noise_gestation);
 }
 
 // TODO: perhaps we need something where instead of just tracking goal hits, we only mark it as ready
@@ -48,7 +57,7 @@ bool Skill::atTermination(const AbstractedState &goal) const
     if (!_parent)
     {
         auto [reward, done] = _env->computeReward(goal);
-        return (done.data_ptr<float>()[0] > 0.5f && reward.data_ptr<float>()[0] > 45);
+        return (done.data_ptr<float>()[0] > 0.5f && reward.data_ptr<float>()[0] > 15);
     }
 
     auto state = _env->getAbstractedState();
@@ -75,11 +84,11 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
     bool train = !_eval && !(getTrainingPhase() == "validation" && !_is_global); // (getTrainingPhase() != "validation") || _is_global; //getTrainingPhase() == "gestation" || _is_global;
     if (_is_global || (getTrainingPhase() != "gestation"))
     {
-        _agent.setExplorationNoise(0.1f);
+        _agent.setExplorationNoise(_exploration_noise_mature);
     }
     else
     {
-        _agent.setExplorationNoise(0.3f);
+        _agent.setExplorationNoise(_exploration_noise_gestation);
     }
 
     std::vector<GestationRecord> visited;
@@ -98,18 +107,17 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
 
         auto [next_underlying_state, collision] = _env->getUnderlyingState();
 
-        // if (!_is_global && _parent)
-        // {
-        //     // Recompute reward without the 0.5m goal radius — termination is
-        //     // determined by the parent's initiation set, not proximity to subgoal.
-        //     std::tie(reward, done) = _env->computeReward(next_underlying_state, collision, goal, false);
-
-        //     if (_parent->canStartPessimistic(_env->getAbstractedState()) && !collision)
-        //     {
-        //         reward = torch::tensor({50.0f}, torch::kFloat32);
-        //         done = torch::tensor({1.0f}, torch::kFloat32);
-        //     }
-        // }
+        if (train && !_is_global && _parent)
+        {
+            if (_inParentChainTarget(next_underlying_state))
+            {
+                reward = _env->computeReward(next_underlying_state, collision, goal, true).first;
+            }
+            else
+            {
+                reward = _env->computeReward(next_underlying_state, collision, goal, false).first;
+            }
+        }
         if (train) // if training instability, perhaps look at putting this outside the while loop like they have it elsewhere
         {
             // her_transitions.push_back({underlying_state, action, next_underlying_state, collision});
@@ -314,7 +322,8 @@ AbstractedState Skill::sampleSubgoalState() const
 
     // 2. Perform Epsilon-Tolerance Check (The "Landing Pad" logic)
     // Only accept states where a small neighborhood is also considered "Positive"
-    float tolerance = 0.25f; // Matches the Python 'tolerance' logic
+    float tolerance = 0.25f;                        // Matches the Python 'tolerance' logic
+    float diag_tolerance = tolerance * 0.70710678f; // tolerance / sqrt 2
     std::vector<size_t> robust_indices;
 
     for (size_t idx : candidate_indices)
@@ -327,7 +336,11 @@ AbstractedState Skill::sampleSubgoalState() const
             {pos[0] + tolerance, pos[1], pos[2]},
             {pos[0] - tolerance, pos[1], pos[2]},
             {pos[0], pos[1] + tolerance, pos[2]},
-            {pos[0], pos[1] - tolerance, pos[2]}};
+            {pos[0], pos[1] - tolerance, pos[2]},
+            {pos[0] + diag_tolerance, pos[1] + diag_tolerance, pos[2]},
+            {pos[0] + diag_tolerance, pos[1] - diag_tolerance, pos[2]},
+            {pos[0] - diag_tolerance, pos[1] + diag_tolerance, pos[2]},
+            {pos[0] - diag_tolerance, pos[1] - diag_tolerance, pos[2]}};
 
         for (const auto &n_pos : neighbors)
         {
@@ -346,10 +359,10 @@ AbstractedState Skill::sampleSubgoalState() const
     }
 
     // 3. Final selection from robust candidates
-    // if (robust_indices.empty())
-    // {
-    //     std::cout << "No robust candidates found, sampling from all positives\n";
-    // }
+    if (robust_indices.empty())
+    {
+        std::cout << "No robust candidates found, sampling from all positives\n";
+    }
     const auto &final_pool = robust_indices.empty() ? candidate_indices : robust_indices;
 
     // Nearest-neighbor filtering to keep the chain tight
@@ -427,15 +440,20 @@ void Skill::save(const std::string &actor_path,
         std::cout << "[Skill " << _id << "] Saved pessimistic classifier to " << classifier_path + "_pessimistic" << "\n";
     }
 
-    auto write_records = [](const std::string &path, const std::vector<GestationRecord> &records) {
+    auto write_records = [](const std::string &path, const std::vector<GestationRecord> &records)
+    {
         std::ofstream out(path);
         out << records.size() << "\n";
         for (const auto &record : records)
         {
-            for (float v : record.state.position)         out << v << " ";
-            for (float v : record.state.orientation)      out << v << " ";
-            for (float v : record.state.velocity)         out << v << " ";
-            for (float v : record.state.angular_velocity) out << v << " ";
+            for (float v : record.state.position)
+                out << v << " ";
+            for (float v : record.state.orientation)
+                out << v << " ";
+            for (float v : record.state.velocity)
+                out << v << " ";
+            for (float v : record.state.angular_velocity)
+                out << v << " ";
             out << "\n";
         }
     };
@@ -504,17 +522,24 @@ void Skill::load(const std::string &actor_path,
         }
     }
 
-    auto load_records = [&](const std::string &path, std::vector<GestationRecord> &records) {
+    auto load_records = [&](const std::string &path, std::vector<GestationRecord> &records)
+    {
         std::ifstream f(path);
-        if (!f.good() || _is_global) return;
-        size_t count = 0; f >> count;
+        if (!f.good() || _is_global)
+            return;
+        size_t count = 0;
+        f >> count;
         for (size_t i = 0; i < count; i++)
         {
             AbstractedState state;
-            for (auto &v : state.position)         f >> v;
-            for (auto &v : state.orientation)      f >> v;
-            for (auto &v : state.velocity)         f >> v;
-            for (auto &v : state.angular_velocity) f >> v;
+            for (auto &v : state.position)
+                f >> v;
+            for (auto &v : state.orientation)
+                f >> v;
+            for (auto &v : state.velocity)
+                f >> v;
+            for (auto &v : state.angular_velocity)
+                f >> v;
             records.push_back({_classifierVec(state), state});
         }
     };
@@ -577,6 +602,19 @@ bool Skill::isValidInitData(const std::vector<GestationRecord> &visited) const
 
     float ratio = sibling_count / static_cast<float>(visited.size());
     return ratio > 0.0f && ratio <= 0.35f;
+}
+
+// In skill.h within the Skill class
+std::pair<double, double> Skill::getDecisionValues(const AbstractedState &state) const
+{
+    if (!_classifier.trained())
+        return {-1.0, -1.0};
+
+    auto vec = _classifierVec(state);
+    double opt = _classifier.decisionValue(vec);
+    double pess = _pessimistic_classifier.trained() ? _pessimistic_classifier.decisionValue(vec) : -1.0;
+
+    return {opt, pess};
 }
 
 /*** Private ***/
@@ -759,8 +797,6 @@ void Skill::_herUpdate(const std::vector<Transition> &trajectory)
 //     }
 // }
 
-
-
 void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool term_success)
 {
     if (term_success)
@@ -826,7 +862,7 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
         // PHASE 2: Negative data exists. Train a Binary SVC as the Optimistic Classifier.
         // This allows the agent to "learn from mistakes" by carving out negative space.
         _classifier.train(_gestation_vecs, _gestation_labels,
-                          /*C=*/1.0, /*gamma=*/0.5, /*balance_classes=*/true);
+                          /*C=*/0.1, /*gamma=*/0.5, /*balance_classes=*/false);
 
         // Filter: Train the Pessimistic One-Class SVM only on states the SVC confirms as Positive.
         std::vector<std::vector<float>> svc_positive_vecs;
@@ -847,8 +883,7 @@ bool Skill::_atLocalGoal(const AbstractedState &goal) const
 {
     auto [underlying_state, collision] = _env->getUnderlyingState();
 
-    bool use_goal_radius = true; //(_parent == nullptr || _is_global); // only use goal radius for global option, not subgoal options
-    auto [reward, done] = _env->computeReward(underlying_state, collision, goal, use_goal_radius);
+    auto [reward, done] = _env->computeReward(underlying_state, collision, goal, true);
     bool env_done = done.data_ptr<float>()[0] > 0.5f;
     float r = reward.data_ptr<float>()[0];
 
@@ -857,18 +892,27 @@ bool Skill::_atLocalGoal(const AbstractedState &goal) const
         return env_done;
     }
 
-    bool at_goal = env_done && (r > 45);
-    bool bad_termination = env_done && (r < 45); // collision, OOB, timeout
+    bool at_goal = env_done && (r > 15);
+    bool bad_termination = env_done && (r < 15); // collision, OOB, timeout
     auto abs_state = _env->getAbstractedState();
     bool in_parent = _inParentChainTarget(abs_state);
     if (at_goal && !in_parent)
     {
+        std::cout << "Current State: " << underlying_state.position[0] << ", " << underlying_state.position[1] << "; Goal: " << goal.position[0] << ", " << goal.position[1] << std::endl;
         std::cout << "Warning: reached goal state outside of parent's pessimistic initiation set.\n";
     }
     return (in_parent && at_goal) || bad_termination;
 }
 
 bool Skill::_inParentChainTarget(const AbstractedState &state) const
+{
+    if (!_parent)
+        return false;
+
+    return _parent->canStartPessimistic(state);
+}
+
+bool Skill::_inParentChainTarget(const RobotState &state) const
 {
     if (!_parent)
         return false;
