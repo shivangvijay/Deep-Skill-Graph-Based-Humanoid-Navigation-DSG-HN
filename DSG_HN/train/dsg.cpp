@@ -170,13 +170,42 @@ bool DeepSkillGraph::_skillCoversNodeStrict(int skill_idx, int node_idx, bool pe
     return true;
 }
 
+bool DeepSkillGraph::_skillCoversNodeLoose(int skill_idx, int node_idx, bool pessimistic) const
+{
+    if (_skills[skill_idx]->getTrainingPhase() != "mature")
+        return false;
+
+    auto samples = _nodeCoverageSamples(node_idx);
+
+    // Loose criterion for goal regions: any sampled point in the GR is enough.
+    if (_nodes[node_idx].is_goal_region)
+    {
+        for (const auto &s : samples)
+        {
+            bool ok = pessimistic ? _skills[skill_idx]->canStartPessimistic(s)
+                                  : _skills[skill_idx]->canStart(s);
+            if (ok)
+                return true;
+        }
+        return false;
+    }
+
+    // Option-node connectivity remains strict over effect-set samples.
+    for (const auto &s : samples)
+    {
+        bool ok = pessimistic ? _skills[skill_idx]->canStartPessimistic(s)
+                              : _skills[skill_idx]->canStart(s);
+        if (!ok)
+            return false;
+    }
+    return true;
+}
+
 bool DeepSkillGraph::_containsStart(int v_d, const std::vector<int> &dsc_chain)
 {
     for (auto o : dsc_chain)
     {
-        // Strict connectivity: option must be startable from the full sampled
-        // coverage of v_d. Use pessimistic classifier for robust chaining.
-        if (_skillCoversNodeStrict(o, v_d, /*pessimistic=*/true))
+        if (_skillCoversNodeLoose(o, v_d, /*pessimistic=*/true))
             return true;
     }
     return false;
@@ -1415,7 +1444,7 @@ void DeepSkillGraph::_graphConsolidationPhase()
             int bridge_skill_idx = -1;
             for (int o : _current_dsc_problem->dsc_chain)
             {
-                if (_skillCoversNodeStrict(o, v_d, /*pessimistic=*/true))
+                if (_skillCoversNodeLoose(o, v_d, /*pessimistic=*/true))
                 {
                     bridge_skill_idx = o;
                     break;
