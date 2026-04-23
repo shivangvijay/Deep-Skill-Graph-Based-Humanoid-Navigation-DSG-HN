@@ -41,6 +41,10 @@ public:
         double nu = 0.1;                  // one-class SVM outlier fraction
         double optimistic_svc_c = 1.0;    // phase-2 optimistic SVC C
         double optimistic_svc_gamma = 0.5; // phase-2 optimistic SVC gamma
+        bool optimistic_svc_balance_classes = true; // phase-2 optimistic SVC class balancing
+        double pessimistic_ocsvm_gamma = 0.5;      // one-class gamma for pessimistic classifier
+        double optimistic_ocsvm_gamma = 0.5;       // one-class gamma for optimistic classifier in phase-1
+        double optimistic_ocsvm_nu_divisor = 10.0; // optimistic phase-1 nu = nu / divisor
         float subgoal_robustness_tolerance = 0.25f; // neighborhood tolerance in sampleSubgoalState
         int negative_samples_per_failure = 1; // number of failure states added as negatives per failed rollout
         int max_option_steps = 20;        // how long an option can execute for

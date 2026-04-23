@@ -12,12 +12,17 @@ Skill::Skill(
     float lr_actor, float lr_critic,
     float tau, float gamma, int actor_warmup_steps,
     int batch_size, int actor_update_freq, int k, int max_steps, double nu,
-    double optimistic_svc_c, double optimistic_svc_gamma, float subgoal_robustness_tolerance, int negative_samples_per_failure,
+    double optimistic_svc_c, double optimistic_svc_gamma, bool optimistic_svc_balance_classes,
+    double pessimistic_ocsvm_gamma, double optimistic_ocsvm_gamma, double optimistic_ocsvm_nu_divisor,
+    float subgoal_robustness_tolerance, int negative_samples_per_failure,
     std::shared_ptr<Skill> parent, int gestation_period, bool is_global, AbstractedState global_goal, std::shared_ptr<Skill> global_option, bool eval)
     : _id(id), _env(env), _parent(parent), _is_global(is_global), _gestation_period(gestation_period), _k(k), _max_steps(max_steps), _agent(env, actor_layer_sizes, critic_layer_sizes, device,
                                                                                                                                             lr_actor, lr_critic, tau, gamma, batch_size, actor_update_freq, actor_warmup_steps),
       _rng(std::random_device{}()), _global_goal(global_goal), _nu(nu), _optimistic_svc_c(optimistic_svc_c),
-      _optimistic_svc_gamma(optimistic_svc_gamma), _subgoal_robustness_tolerance(subgoal_robustness_tolerance),
+      _optimistic_svc_gamma(optimistic_svc_gamma), _optimistic_svc_balance_classes(optimistic_svc_balance_classes),
+      _pessimistic_ocsvm_gamma(pessimistic_ocsvm_gamma), _optimistic_ocsvm_gamma(optimistic_ocsvm_gamma),
+      _optimistic_ocsvm_nu_divisor(std::max(1e-6, optimistic_ocsvm_nu_divisor)),
+      _subgoal_robustness_tolerance(subgoal_robustness_tolerance),
       _negative_samples_per_failure(std::max(1, negative_samples_per_failure)), _global_option(global_option),
       _gamma(gamma), _eval(eval), _lr_actor(lr_actor), _lr_critic(lr_critic)
 {
@@ -826,8 +831,8 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
         if (!pos_vecs.empty())
         {
             // Nu controls tightness; Gamma (now ~1.0) controls localization.
-            _pessimistic_classifier.trainOneClass(pos_vecs, _nu);
-            _classifier.trainOneClass(pos_vecs, _nu / 10.0);
+            _pessimistic_classifier.trainOneClass(pos_vecs, _nu, _pessimistic_ocsvm_gamma);
+            _classifier.trainOneClass(pos_vecs, _nu / _optimistic_ocsvm_nu_divisor, _optimistic_ocsvm_gamma);
         }
     }
     else
@@ -835,7 +840,7 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
         // PHASE 2: Negative data exists. Train a Binary SVC as the Optimistic Classifier.
         // This allows the agent to "learn from mistakes" by carving out negative space.
         _classifier.train(_gestation_vecs, _gestation_labels,
-                          _optimistic_svc_c, _optimistic_svc_gamma, /*balance_classes=*/true);
+                          _optimistic_svc_c, _optimistic_svc_gamma, _optimistic_svc_balance_classes);
 
         // Filter: Train the Pessimistic One-Class SVM only on states the SVC confirms as Positive.
         std::vector<std::vector<float>> svc_positive_vecs;
@@ -847,7 +852,7 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
 
         if (!svc_positive_vecs.empty())
         {
-            _pessimistic_classifier.trainOneClass(svc_positive_vecs, _nu);
+            _pessimistic_classifier.trainOneClass(svc_positive_vecs, _nu, _pessimistic_ocsvm_gamma);
         }
     }
 }

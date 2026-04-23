@@ -1597,8 +1597,8 @@ int main(int argc, char **argv)
     // -------------------------------------------------------------------------
     // Environment + geometric termination / region thresholds
     // -------------------------------------------------------------------------
-    cfg.success_radius = 0.2f;      // env local-goal success radius
-    cfg.goal_region_epsilon = 0.2f; // GR epsilon-ball radius
+    cfg.success_radius = 0.3f;      // env local-goal success radius
+    cfg.goal_region_epsilon = 0.3f; // GR epsilon-ball radius
     cfg.start_noise_radius = 2.0f;
 
     // -------------------------------------------------------------------------
@@ -1606,20 +1606,24 @@ int main(int argc, char **argv)
     // -------------------------------------------------------------------------
     cfg.gestation_train_steps = 5000;
     cfg.gestation_n = 60;
-    cfg.last_k = 30;
+    cfg.last_k = 50;
     cfg.refinement_eps = 30;
-    cfg.max_option_steps = 50;
-    cfg.max_skills = 6;
+    cfg.max_option_steps = 70;
+    cfg.max_skills = 10 ;
     cfg.val_accuracy_threshold = 0.8f;
 
     // -------------------------------------------------------------------------
     // Classifier / initiation set behaviour
     // -------------------------------------------------------------------------
-    cfg.nu = 0.001; // one-class SVM outlier fraction (pessimistic tightness)
+    cfg.nu = 0.1;                               // one-class SVM outlier fraction (pessimistic tightness, lower = tighter)
+    cfg.pessimistic_ocsvm_gamma = 0.5;          // one-class RBF gamma for pessimistic classifier
+    cfg.optimistic_ocsvm_gamma = 0.1;           // one-class RBF gamma for optimistic classifier in phase-1
+    cfg.optimistic_ocsvm_nu_divisor = 10.0;     // optimistic phase-1 nu = nu / divisor
     cfg.optimistic_svc_c = 1.0;                 // phase-2 optimistic SVC C (inverse regularization strength, lower = wider)
-    cfg.optimistic_svc_gamma = 0.5;             // phase-2 optimistic SVC gamma (kernel coefficient, lower = wider)
-    cfg.subgoal_robustness_tolerance = 0.25f;   // neighborhood check around sampled subgoal
-    cfg.negative_samples_per_failure = 1;       // failure negatives added per failed rollout
+    cfg.optimistic_svc_gamma = 0.1;             // phase-2 optimistic SVC gamma (kernel coefficient, lower = wider)
+    cfg.optimistic_svc_balance_classes = true;  // phase-2 class balancing for optimistic SVC
+    cfg.subgoal_robustness_tolerance = 0.1f;    // neighborhood check around sampled subgoal
+    cfg.negative_samples_per_failure = 5;       // failure negatives added per failed rollout
 
     // -------------------------------------------------------------------------
     // Policy / critic architectures

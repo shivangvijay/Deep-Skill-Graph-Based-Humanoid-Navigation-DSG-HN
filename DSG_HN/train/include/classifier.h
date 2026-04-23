@@ -87,7 +87,7 @@ public:
     }
 
     // Train one-class SVM (positive examples only — no labels needed)
-    void trainOneClass(const std::vector<std::vector<float>> &states, double nu = 0.1)
+    void trainOneClass(const std::vector<std::vector<float>> &states, double nu = 0.1, double gamma = 0.5)
     {
         if (states.empty())
             throw std::runtime_error("InitiationSetClassifier: no training data");
@@ -97,7 +97,7 @@ public:
         param.svm_type = ONE_CLASS;
         param.kernel_type = RBF;
         param.nu = nu;
-        param.gamma = 0.5; //0.005 ;//1.0 / states[0].size() / 100.0;
+        param.gamma = (gamma > 0.0) ? gamma : 0.5;
         param.eps = 1e-4;
         param.cache_size = 256;
         param.probability = 0;
