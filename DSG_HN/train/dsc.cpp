@@ -259,6 +259,8 @@ void DeepSkillChaining::setEvalMode(bool eval)
 /*** Private ***/
 void DeepSkillChaining::_validateOption()
 {
+    // Validation phase intentionally disabled.
+    return;
 
     int validate_idx = -1;
     for (int o = _global_option_idx + 1; o < _skills.size(); o++)

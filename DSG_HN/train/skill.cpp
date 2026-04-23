@@ -31,8 +31,8 @@ std::string Skill::getTrainingPhase() const
         return "global";
     if (_goal_hits < _gestation_period || !_classifier.trained())
         return "gestation";
-    if (!_validated)
-        return "validation";
+    // Validation phase intentionally disabled:
+    // once gestation threshold + classifier readiness are reached, treat as mature.
     return "mature";
 }
 

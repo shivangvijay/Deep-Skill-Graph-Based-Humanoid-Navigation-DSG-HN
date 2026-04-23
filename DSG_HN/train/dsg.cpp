@@ -333,7 +333,6 @@ int DeepSkillGraph::train(int max_episodes)
 
             // TODO: update transition model
 
-            // _validateOption(); // run validation phase for newly matured options
         }
 
         if (_dsg_cfg.graph_update_freq > 0 && (episode + 1) % _dsg_cfg.graph_update_freq == 0)
