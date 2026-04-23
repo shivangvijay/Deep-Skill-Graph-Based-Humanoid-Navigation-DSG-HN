@@ -137,14 +137,6 @@ target_link_libraries(sandbox_mpc PRIVATE
   $ENV{CONDA_PREFIX}/lib/libsvm.so
 )
 
-add_executable(test_mpc_obstacles
-  test_mpc_obstacles.cpp
-  sandbox_mpc_torch.cpp
-  ${PROJECT_SOURCE_DIR}/../robot_bridge/robot_bridge.cpp
-)
-target_link_libraries(test_mpc_obstacles PRIVATE
-  ${TORCH_LIBRARIES}
-)
 
 link_libraries(
   unitree_sdk2 ddsc ddscxx rt pthread # dds

@@ -461,25 +461,29 @@ ActionCmd mpc_plan(MpcContext &ctx,
 
     std::vector<std::array<double, 3>> mu(H), sigma(H);
 
+    auto inv_squash = [](double a, double lo, double hi) -> double {
+        double n = std::clamp(2.0 * (a - lo) / (hi - lo) - 1.0, -0.999, 0.999);
+        return std::atanh(n);
+    };
+
     bool warm = (int)ctx.prev_best_actions.size() == H;
     for (int t = 0; t < H; ++t) {
         if (warm && t < H - 1) {
             auto &pa = ctx.prev_best_actions[t + 1];
-            mu[t] = {pa.vx, pa.vy, pa.yaw};
+            mu[t] = {inv_squash(pa.vx,  kVxMin,  kVxMax),
+                     inv_squash(pa.vy,  kVyMin,  kVyMax),
+                     inv_squash(pa.yaw, kYawMin, kYawMax)};
         } else {
-            mu[t] = {(kVxMax + kVxMin) * 0.5,
-                      (kVyMax + kVyMin) * 0.5,
-                      (kYawMax + kYawMin) * 0.5};
+            mu[t] = {0.0, 0.0, 0.0};
         }
-        sigma[t] = {(kVxMax - kVxMin) * 0.5,
-                     (kVyMax - kVyMin) * 0.5,
-                     (kYawMax - kYawMin) * 0.5};
+        sigma[t] = {2.0, 2.0, 2.0};
     }
 
     double best_cost_overall = std::numeric_limits<double>::infinity();
     std::vector<ActionCmd> best_seq(H);
 
     std::vector<std::vector<ActionCmd>> cands(N, std::vector<ActionCmd>(H));
+    std::vector<std::vector<std::array<double, 3>>> raws(N, std::vector<std::array<double, 3>>(H));
     std::vector<double> costs(N);
 
     for (int round = 0; round < cfg.cem_rounds; ++round) {
@@ -488,9 +492,13 @@ ActionCmd mpc_plan(MpcContext &ctx,
                 std::normal_distribution<double> d0(mu[t][0], sigma[t][0]);
                 std::normal_distribution<double> d1(mu[t][1], sigma[t][1]);
                 std::normal_distribution<double> d2(mu[t][2], sigma[t][2]);
-                cands[c][t] = {std::clamp(d0(ctx.rng), kVxMin, kVxMax),
-                               std::clamp(d1(ctx.rng), kVyMin, kVyMax),
-                               std::clamp(d2(ctx.rng), kYawMin, kYawMax)};
+                double r0 = d0(ctx.rng), r1 = d1(ctx.rng), r2 = d2(ctx.rng);
+                raws[c][t] = {r0, r1, r2};
+                cands[c][t] = {
+                    kVxMin  + (kVxMax  - kVxMin)  * (std::tanh(r0) + 1.0) * 0.5,
+                    kVyMin  + (kVyMax  - kVyMin)  * (std::tanh(r1) + 1.0) * 0.5,
+                    kYawMin + (kYawMax - kYawMin) * (std::tanh(r2) + 1.0) * 0.5
+                };
             }
         }
 
@@ -512,17 +520,17 @@ ActionCmd mpc_plan(MpcContext &ctx,
             for (int t = 0; t < H; ++t) {
                 double s0 = 0, s1 = 0, s2 = 0;
                 for (int e = 0; e < E; ++e) {
-                    auto &a = cands[idx[e]][t];
-                    s0 += a.vx; s1 += a.vy; s2 += a.yaw;
+                    s0 += raws[idx[e]][t][0];
+                    s1 += raws[idx[e]][t][1];
+                    s2 += raws[idx[e]][t][2];
                 }
                 mu[t] = {s0 / E, s1 / E, s2 / E};
 
                 double v0 = 0, v1 = 0, v2 = 0;
                 for (int e = 0; e < E; ++e) {
-                    auto &a = cands[idx[e]][t];
-                    v0 += (a.vx  - mu[t][0]) * (a.vx  - mu[t][0]);
-                    v1 += (a.vy  - mu[t][1]) * (a.vy  - mu[t][1]);
-                    v2 += (a.yaw - mu[t][2]) * (a.yaw - mu[t][2]);
+                    v0 += (raws[idx[e]][t][0] - mu[t][0]) * (raws[idx[e]][t][0] - mu[t][0]);
+                    v1 += (raws[idx[e]][t][1] - mu[t][1]) * (raws[idx[e]][t][1] - mu[t][1]);
+                    v2 += (raws[idx[e]][t][2] - mu[t][2]) * (raws[idx[e]][t][2] - mu[t][2]);
                 }
                 sigma[t] = {std::sqrt(v0 / E) + 1e-6,
                             std::sqrt(v1 / E) + 1e-6,
