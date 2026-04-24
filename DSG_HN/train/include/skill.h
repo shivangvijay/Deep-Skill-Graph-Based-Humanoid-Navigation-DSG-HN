@@ -48,6 +48,7 @@ public:
           float tau, float gamma, int actor_warmup_steps,
           int batch_size, int actor_update_freq, int k, int max_steps, double nu,
           double optimistic_svc_c, double optimistic_svc_gamma, bool optimistic_svc_balance_classes,
+          double optimistic_svc_positive_margin_tolerance,
           double pessimistic_ocsvm_gamma, double optimistic_ocsvm_gamma, double optimistic_ocsvm_nu_divisor,
           float subgoal_robustness_tolerance, int negative_samples_per_failure,
           std::shared_ptr<Skill> parent, int gestation_period, bool is_global, AbstractedState global_goal,
@@ -137,6 +138,7 @@ private:
     double _optimistic_svc_c;
     double _optimistic_svc_gamma;
     bool _optimistic_svc_balance_classes;
+    double _optimistic_svc_positive_margin_tolerance;
     double _pessimistic_ocsvm_gamma;
     double _optimistic_ocsvm_gamma;
     double _optimistic_ocsvm_nu_divisor;

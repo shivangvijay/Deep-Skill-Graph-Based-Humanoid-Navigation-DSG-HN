@@ -42,6 +42,7 @@ public:
         double optimistic_svc_c = 1.0;    // phase-2 optimistic SVC C
         double optimistic_svc_gamma = 0.5; // phase-2 optimistic SVC gamma
         bool optimistic_svc_balance_classes = true; // phase-2 optimistic SVC class balancing
+        double optimistic_svc_positive_margin_tolerance = 0.0; // include samples with decisionValue >= -tol as optimistic positives
         double pessimistic_ocsvm_gamma = 0.5;      // one-class gamma for pessimistic classifier
         double optimistic_ocsvm_gamma = 0.5;       // one-class gamma for optimistic classifier in phase-1
         double optimistic_ocsvm_nu_divisor = 10.0; // optimistic phase-1 nu = nu / divisor

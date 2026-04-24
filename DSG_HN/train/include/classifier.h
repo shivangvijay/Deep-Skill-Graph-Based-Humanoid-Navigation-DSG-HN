@@ -123,12 +123,42 @@ public:
         return dec_val;
     }
 
+    // Returns decision value oriented so positive means class +1 for binary C_SVC.
+    // For ONE_CLASS this is identical to decisionValue().
+    double decisionValueForPositiveClass(const std::vector<float> &state) const
+    {
+        double raw = decisionValue(state);
+        const int svm_type = svm_get_svm_type(_model);
+        if (svm_type == ONE_CLASS)
+            return raw;
+
+        // Binary C_SVC: raw sign corresponds to model->label[0], not always +1.
+        if (svm_type == C_SVC && _model->nr_class == 2 && _model->label)
+        {
+            if (_model->label[0] == 1)
+                return raw;
+            if (_model->label[0] == -1)
+                return -raw;
+        }
+        return raw;
+    }
+
     // Returns true if state is in the initiation set
     bool classify(const std::vector<float> &state) const
     {
         _check_model();                  // Ensure model is trained or loaded
         auto nodes = _make_nodes(state); // svm_node array for prediction: libsvm represents feature vectors as sparse arrays of {index, value} pairs terminated by {-1, 0}, _make_nodes() handles this conversion from a plain std::vector<float>
         return svm_predict(_model, nodes.data()) > 0;
+    }
+
+    // Margin-tolerant positive check.
+    // A point is treated as positive if its +1-oriented decision value >= -negative_margin_tolerance.
+    // Example: tolerance=0.05 includes a thin band just outside the SVC boundary.
+    bool classifyWithMargin(const std::vector<float> &state, double negative_margin_tolerance = 0.0) const
+    {
+        if (negative_margin_tolerance <= 0.0)
+            return classify(state);
+        return decisionValueForPositiveClass(state) >= -negative_margin_tolerance;
     }
 
     void save(const std::string &path) const

@@ -13,6 +13,7 @@ Skill::Skill(
     float tau, float gamma, int actor_warmup_steps,
     int batch_size, int actor_update_freq, int k, int max_steps, double nu,
     double optimistic_svc_c, double optimistic_svc_gamma, bool optimistic_svc_balance_classes,
+    double optimistic_svc_positive_margin_tolerance,
     double pessimistic_ocsvm_gamma, double optimistic_ocsvm_gamma, double optimistic_ocsvm_nu_divisor,
     float subgoal_robustness_tolerance, int negative_samples_per_failure,
     std::shared_ptr<Skill> parent, int gestation_period, bool is_global, AbstractedState global_goal, std::shared_ptr<Skill> global_option, bool eval,
@@ -22,6 +23,7 @@ Skill::Skill(
       _agent(env, actor_layer_sizes, critic_layer_sizes, device, lr_actor, lr_critic, tau, gamma, batch_size, actor_update_freq, actor_warmup_steps),
       _rng(std::random_device{}()), _global_goal(global_goal), _nu(nu), _optimistic_svc_c(optimistic_svc_c),
       _optimistic_svc_gamma(optimistic_svc_gamma), _optimistic_svc_balance_classes(optimistic_svc_balance_classes),
+      _optimistic_svc_positive_margin_tolerance(std::max(0.0, optimistic_svc_positive_margin_tolerance)),
       _pessimistic_ocsvm_gamma(pessimistic_ocsvm_gamma), _optimistic_ocsvm_gamma(optimistic_ocsvm_gamma),
       _optimistic_ocsvm_nu_divisor(std::max(1e-6, optimistic_ocsvm_nu_divisor)),
       _subgoal_robustness_tolerance(subgoal_robustness_tolerance),
@@ -876,7 +878,7 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
         std::vector<std::vector<float>> svc_positive_vecs;
         for (const auto &vec : _gestation_vecs)
         {
-            if (_classifier.classify(vec))
+            if (_classifier.classifyWithMargin(vec, _optimistic_svc_positive_margin_tolerance))
                 svc_positive_vecs.push_back(vec);
         }
 

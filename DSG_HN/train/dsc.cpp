@@ -487,6 +487,7 @@ void DeepSkillChaining::_makeSkill(bool is_global, std::shared_ptr<Skill> parent
                                                                _cfg.batch_size, _cfg.actor_update_freq, _cfg.last_k,
                                                                _cfg.max_option_steps, _cfg.nu, _cfg.optimistic_svc_c, _cfg.optimistic_svc_gamma,
                                                                _cfg.optimistic_svc_balance_classes,
+                                                               _cfg.optimistic_svc_positive_margin_tolerance,
                                                                _cfg.pessimistic_ocsvm_gamma, _cfg.optimistic_ocsvm_gamma, _cfg.optimistic_ocsvm_nu_divisor,
                                                                _cfg.subgoal_robustness_tolerance, _cfg.negative_samples_per_failure,
                                                                parent, _cfg.gestation_n, is_global, local_goal, global_option, _eval);
@@ -519,6 +520,7 @@ void DeepSkillChaining::_makeSkill(bool is_global, std::shared_ptr<Skill> parent
                                                                _cfg.batch_size, _cfg.actor_update_freq, _cfg.last_k,
                                                                _cfg.max_option_steps, _cfg.nu, _cfg.optimistic_svc_c, _cfg.optimistic_svc_gamma,
                                                                _cfg.optimistic_svc_balance_classes,
+                                                               _cfg.optimistic_svc_positive_margin_tolerance,
                                                                _cfg.pessimistic_ocsvm_gamma, _cfg.optimistic_ocsvm_gamma, _cfg.optimistic_ocsvm_nu_divisor,
                                                                _cfg.subgoal_robustness_tolerance, _cfg.negative_samples_per_failure,
                                                                parent, _cfg.gestation_n, is_global, _global_goal, global_option, _eval);
