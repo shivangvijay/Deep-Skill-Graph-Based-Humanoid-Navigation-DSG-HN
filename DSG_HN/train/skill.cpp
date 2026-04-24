@@ -19,7 +19,7 @@ Skill::Skill(
     float exploration_noise_gestation, float exploration_noise_mature,
     bool use_human_collected_data, std::string human_collected_data_path, float human_data_percentage)
     : _id(id), _env(env), _parent(parent), _is_global(is_global), _gestation_period(gestation_period), _k(k), _max_steps(max_steps), _exploration_noise_gestation(exploration_noise_gestation), _exploration_noise_mature(exploration_noise_mature),
-      _agent(env, actor_layer_sizes, critic_layer_sizes, device, lr_actor, lr_critic, tau, gamma, batch_size, actor_update_freq, actor_warmup_steps, use_human_collected_data, human_data_percentage),
+      _agent(env, actor_layer_sizes, critic_layer_sizes, device, lr_actor, lr_critic, tau, gamma, batch_size, actor_update_freq, actor_warmup_steps),
       _rng(std::random_device{}()), _global_goal(global_goal), _nu(nu), _optimistic_svc_c(optimistic_svc_c),
       _optimistic_svc_gamma(optimistic_svc_gamma), _optimistic_svc_balance_classes(optimistic_svc_balance_classes),
       _pessimistic_ocsvm_gamma(pessimistic_ocsvm_gamma), _optimistic_ocsvm_gamma(optimistic_ocsvm_gamma),
@@ -28,12 +28,6 @@ Skill::Skill(
       _negative_samples_per_failure(std::max(1, negative_samples_per_failure)), _global_option(global_option),
       _gamma(gamma), _eval(eval), _lr_actor(lr_actor), _lr_critic(lr_critic)
 {
-    if (use_human_collected_data)
-    {
-        // just gonna load into buffer and not do the pretraining, as assuming
-        // that is done when training the global option
-        _agent.loadHumanData(env, human_collected_data_path);
-    }
     _agent.setExplorationNoise(_exploration_noise_gestation);
 }
 
