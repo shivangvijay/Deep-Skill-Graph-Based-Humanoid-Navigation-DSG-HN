@@ -147,6 +147,8 @@ inline po::variables_map helper(int argc, char** argv)
         ("version,v", "show version")
         ("log", "record log file")
         ("network,n", po::value<std::string>()->default_value(""), "dds network interface")
+        ("render-training", po::bool_switch()->default_value(false), "enable rendering during DSG/DSC training")
+        ("render-eval", po::bool_switch()->default_value(false), "enable rendering during post-training evaluation")
         ;
 
     po::variables_map vm;

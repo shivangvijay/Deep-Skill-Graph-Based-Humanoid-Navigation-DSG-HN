@@ -1574,6 +1574,8 @@ void DeepSkillGraph::_graphConsolidationPhase()
 int main(int argc, char **argv)
 {
     auto vm = param::helper(argc, argv);
+    const bool render_training = vm["render-training"].as<bool>();
+    const bool render_eval = vm["render-eval"].as<bool>();
     std::string rel_path = param::config["FSM"]["Velocity"]["policy_dir"].as<std::string>();
     auto policy_dir = param::parser_policy_dir(rel_path);
 
@@ -1614,9 +1616,9 @@ int main(int argc, char **argv)
     // -------------------------------------------------------------------------
     cfg.gestation_train_steps = 5000;
     cfg.gestation_n = 60;
-    cfg.last_k = 50;
+    cfg.last_k = 30;
     cfg.refinement_eps = 30;
-    cfg.max_option_steps = 70;
+    cfg.max_option_steps = 50;
     cfg.max_skills = 10 ;
     cfg.val_accuracy_threshold = 0.8f;
 
@@ -1632,7 +1634,7 @@ int main(int argc, char **argv)
     cfg.optimistic_svc_balance_classes = false;  // phase-2 class balancing for optimistic SVC
     cfg.optimistic_svc_positive_margin_tolerance = 0.0; // include SVC decision margin band: keep points with decisionValue >= -tol
     cfg.subgoal_robustness_tolerance = 0.1f;    // neighborhood check around sampled subgoal
-    cfg.negative_samples_per_failure = 5;       // failure negatives added per failed rollout
+    cfg.negative_samples_per_failure = 1;       // failure negatives added per failed rollout
 
     // -------------------------------------------------------------------------
     // Policy / critic architectures
@@ -1685,10 +1687,12 @@ int main(int argc, char **argv)
     // -------------------------------------------------------------------------
     // Logging / debug visibility
     // -------------------------------------------------------------------------
-    cfg.render_training = false;
+    cfg.render_training = render_training;
     cfg.verbose = true;
     cfg.log_interval = 25;
     cfg.visualize_initiation_sets = true;
+    std::cout << "[RenderConfig] render_training=" << (render_training ? "true" : "false")
+              << ", render_eval=" << (render_eval ? "true" : "false") << "\n";
 
     AbstractedState global_start = {{0.0, 0.0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 
@@ -1714,7 +1718,8 @@ int main(int argc, char **argv)
     }
 
     float total = 0.0f;
-    robot_bridge->startRender();
+    if (render_eval)
+        robot_bridge->startRender();
     for (int i = 0; i < 40; ++i)
     {
         float r = dsg.execute();
