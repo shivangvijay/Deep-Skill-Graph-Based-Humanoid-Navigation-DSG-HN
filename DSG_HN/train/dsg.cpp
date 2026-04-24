@@ -1303,34 +1303,12 @@ float DeepSkillGraph::_dscRollout()
 
 void DeepSkillGraph::visualizeInitiationSets()
 {
-    std::vector<std::vector<std::array<float, 3>>> points_per_skill;
-    int max_points = 500;
-    for (const auto &skill : _skills)
-    {
-        std::vector<std::array<float, 3>> points;
-        int point = 0;
-        for (const auto &record : skill->getPositiveGestationRecords())
-        {
-            if (point >= max_points)
-                break;
-            point++;
-            points.push_back(record.state.position);
-        }
-        points_per_skill.push_back(points);
-    }
+    // Ensure the visualization reads the exact same saved records as
+    // visualize_initiation_set.py (skill_*_classifier.svm_positives.txt).
+    save(_dsg_cfg.save_path);
 
     std::string temp_file = "/tmp/init_sets.txt";
     std::ofstream out(temp_file);
-
-    int skill_idx = 0;
-    for (const auto &points : points_per_skill)
-    {
-        for (const auto &p : points)
-        {
-            out << skill_idx << " " << p[0] << " " << p[1] << "\n";
-        }
-        skill_idx++;
-    }
 
     // Goal-region overlay entries for visualize.py:
     // GR <id> <x> <y> <eps>
@@ -1345,7 +1323,8 @@ void DeepSkillGraph::visualizeInitiationSets()
     }
     out.close();
 
-    std::string cmd = "python ../../visualize.py " + _scene_file_path + " " + temp_file;
+    std::string cmd = "python ../../visualize.py \"" + _scene_file_path + "\" \"" + temp_file +
+                      "\" --models-dir \"" + _dsg_cfg.save_path + "\"";
     system(cmd.c_str());
 }
 

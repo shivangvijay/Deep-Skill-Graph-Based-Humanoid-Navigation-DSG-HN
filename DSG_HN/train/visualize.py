@@ -1,17 +1,82 @@
-import sys
-import re
-import xml.etree.ElementTree as ET
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-import time
+import argparse
 import os
+import re
+import sys
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+import matplotlib.patches as patches
+import matplotlib.pyplot as plt
 
 # Toggle for drawing goal regions (GR circles/labels)
 SHOW_GOAL_REGIONS = True
 
-scene_file = sys.argv[1]
-points_file = sys.argv[2]
-graph_file = sys.argv[3] if len(sys.argv) > 3 else None
+def parse_args():
+    parser = argparse.ArgumentParser(description="Visualize initiation-set records.")
+    parser.add_argument("scene_file", help="Scene XML path.")
+    parser.add_argument("points_file", nargs="?", default=None,
+                        help="Optional points file (legacy format; also supports GR lines).")
+    parser.add_argument("graph_file", nargs="?", default=None,
+                        help="Optional DSG log file for fallback GR parsing.")
+    parser.add_argument("--models-dir", default=None,
+                        help="If provided, plot points from skill_*_classifier.svm_positives.txt "
+                             "(same records used by visualize_initiation_set.py).")
+    return parser.parse_args()
+
+
+def load_points_from_models(models_dir: Path):
+    points = []
+    pat = re.compile(r"skill_(\d+)_classifier\.svm_positives\.txt$")
+    if not models_dir.exists():
+        return points
+
+    for p in sorted(models_dir.glob("skill_*_classifier.svm_positives.txt")):
+        m = pat.match(p.name)
+        if not m:
+            continue
+        skill = int(m.group(1))
+        try:
+            lines = p.read_text().strip().splitlines()
+            if not lines:
+                continue
+            for line in lines[1:]:
+                toks = line.strip().split()
+                if len(toks) < 2:
+                    continue
+                x, y = float(toks[0]), float(toks[1])
+                points.append((skill, x, y))
+        except Exception:
+            continue
+    return points
+
+
+def load_points_and_goal_regions(points_file: str, use_points: bool):
+    points = []
+    goal_regions = []
+    if points_file is None:
+        return points, goal_regions
+
+    with open(points_file, 'r') as f:
+        for line in f:
+            parts = line.strip().split()
+            if len(parts) < 3:
+                continue
+            if parts[0] == "GR" and len(parts) >= 5:
+                gr_id = int(parts[1])
+                x, y, eps = float(parts[2]), float(parts[3]), float(parts[4])
+                goal_regions.append((gr_id, x, y, eps))
+                continue
+            if use_points:
+                skill = int(parts[0])
+                x, y = float(parts[1]), float(parts[2])
+                points.append((skill, x, y))
+    return points, goal_regions
+
+
+args = parse_args()
+scene_file = args.scene_file
+points_file = args.points_file
+graph_file = args.graph_file
 
 tree = ET.parse(scene_file)
 root = tree.getroot()
@@ -39,21 +104,13 @@ for geom in root.iter('geom'):
 colors = ['red', 'green', 'blue', 'orange', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan']
 goal_regions = []
 
-# Optional direct goal-region format in points file:
-# GR <id> <x> <y> <eps>
-with open(points_file, 'r') as f:
-    for line in f:
-        parts = line.strip().split()
-        if len(parts) < 3:
-            continue
-        if parts[0] == "GR" and len(parts) >= 5:
-            gr_id = int(parts[1])
-            x, y, eps = float(parts[2]), float(parts[3]), float(parts[4])
-            goal_regions.append((gr_id, x, y, eps))
-            continue
-        skill = int(parts[0])
-        x, y = float(parts[1]), float(parts[2])
-        ax.scatter(x, y, color=colors[skill % len(colors)], s=5, alpha=0.7)
+use_legacy_points = args.models_dir is None
+all_points, goal_regions = load_points_and_goal_regions(points_file, use_legacy_points)
+if args.models_dir is not None:
+    all_points = load_points_from_models(Path(args.models_dir))
+
+for skill, x, y in all_points:
+    ax.scatter(x, y, color=colors[skill % len(colors)], s=5, alpha=0.7)
 
 # Optional fallback: parse latest Graph Structure block from a DSG log file.
 if graph_file is not None and not goal_regions:

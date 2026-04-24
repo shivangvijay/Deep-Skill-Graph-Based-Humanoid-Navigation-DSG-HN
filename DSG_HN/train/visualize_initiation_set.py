@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import xml.etree.ElementTree as ET
 from matplotlib import patches
+from matplotlib.colors import TwoSlopeNorm
 
 
 def parse_args() -> argparse.Namespace:
@@ -167,6 +168,7 @@ def parse_libsvm_model(path: Path) -> Dict:
     svm_type = header.get("svm_type", "")
     kernel_type = header.get("kernel_type", "")
     nr_class = int(header.get("nr_class", "2"))
+    labels = [int(x) for x in header.get("label", "").split()] if "label" in header else []
 
     if kernel_type != "rbf":
         raise RuntimeError(f"Only RBF kernels are supported for plotting. Found: {kernel_type} in {path}")
@@ -191,6 +193,7 @@ def parse_libsvm_model(path: Path) -> Dict:
         "path": str(path),
         "svm_type": svm_type,
         "nr_class": nr_class,
+        "labels": labels,
         "gamma": gamma,
         "rho": rho,
         "sv": sv_arr,
@@ -287,14 +290,11 @@ def main() -> None:
         if opt_path.exists():
             opt_model = parse_libsvm_model(opt_path)
             opt_dec = decision_function(opt_model, feat_pts).reshape(xx.shape)
-            # negative vs positive regions
-            ax_opt.contourf(
-                xx,
-                yy,
-                opt_dec,
-                levels=[-1e9, 0.0, 1e9],
-                colors=["#f8b4b4", "#9ae6b4"],
-                alpha=0.35,
+            vmax = max(1e-6, float(np.percentile(np.abs(opt_dec), 98)))
+            opt_norm = TwoSlopeNorm(vmin=-vmax, vcenter=0.0, vmax=vmax)
+            cf_opt = ax_opt.contourf(
+                xx, yy, opt_dec,
+                levels=61, cmap="coolwarm", norm=opt_norm, alpha=0.9
             )
             ax_opt.contour(
                 xx,
@@ -305,7 +305,9 @@ def main() -> None:
                 linewidths=1.7,
                 linestyles="--",
             )
-            ax_opt.set_title("Optimistic classifier")
+            ax_opt.set_title("Optimistic decision value")
+            cbar_opt = fig.colorbar(cf_opt, ax=ax_opt, fraction=0.046, pad=0.04)
+            cbar_opt.set_label("decision value")
         else:
             ax_opt.set_title("Optimistic classifier (missing)")
             ax_opt.text(0.5, 0.5, "No optimistic model", transform=ax_opt.transAxes, ha="center", va="center")
@@ -313,14 +315,11 @@ def main() -> None:
         if pess_path.exists():
             pess_model = parse_libsvm_model(pess_path)
             pess_dec = decision_function(pess_model, feat_pts).reshape(xx.shape)
-            # negative vs positive regions
-            ax_pess.contourf(
-                xx,
-                yy,
-                pess_dec,
-                levels=[-1e9, 0.0, 1e9],
-                colors=["#f8b4b4", "#9ae6b4"],
-                alpha=0.35,
+            vmax = max(1e-6, float(np.percentile(np.abs(pess_dec), 98)))
+            pess_norm = TwoSlopeNorm(vmin=-vmax, vcenter=0.0, vmax=vmax)
+            cf_pess = ax_pess.contourf(
+                xx, yy, pess_dec,
+                levels=61, cmap="coolwarm", norm=pess_norm, alpha=0.9
             )
             ax_pess.contour(
                 xx,
@@ -331,7 +330,9 @@ def main() -> None:
                 linewidths=1.8,
                 linestyles="-",
             )
-            ax_pess.set_title("Pessimistic classifier")
+            ax_pess.set_title("Pessimistic decision value")
+            cbar_pess = fig.colorbar(cf_pess, ax=ax_pess, fraction=0.046, pad=0.04)
+            cbar_pess.set_label("decision value")
         else:
             ax_pess.set_title("Pessimistic classifier (missing)")
             ax_pess.text(0.5, 0.5, "No pessimistic model", transform=ax_pess.transAxes, ha="center", va="center")
@@ -350,8 +351,6 @@ def main() -> None:
 
         # stable legend entries
         handles = [
-            plt.Line2D([0], [0], color="#9ae6b4", lw=6, label="positive region"),
-            plt.Line2D([0], [0], color="#f8b4b4", lw=6, label="negative region"),
             plt.Line2D([0], [0], color="tab:blue", linestyle="--", lw=1.7, label="optimistic boundary"),
             plt.Line2D([0], [0], color="tab:red", linestyle="-", lw=1.8, label="pessimistic boundary"),
         ]
@@ -363,7 +362,7 @@ def main() -> None:
                 plt.Line2D([0], [0], marker="o", color="w", markerfacecolor="tab:green", markersize=5, label="effect")
             )
         fig.legend(handles=handles, loc="upper center", ncol=4, fontsize=8, frameon=True)
-        fig.suptitle(f"Skill {sid} initiation-set classifier regions", fontsize=12)
+        fig.suptitle(f"Skill {sid} initiation-set decision-value maps", fontsize=12)
 
         out_path = out_dir / f"skill_{sid}_boundaries.png"
         fig.tight_layout(rect=[0, 0, 1, 0.93])
