@@ -377,9 +377,7 @@ int DeepSkillGraph::train(int max_episodes)
 
                 if (_skills[i]->getTrainingPhase() != "mature")
                 {
-                    std::string label = (i == (size_t)_global_option_idx)       ? "global"
-                                        : (i == (size_t)_global_option_idx + 1) ? "goal"
-                                                                                : "opt-" + std::to_string(i);
+                    std::string label = _optionLabel((int)i);
                     std::string phase = (i == (size_t)_global_option_idx) ? "pre-trained"
                                                                           : _skills[i]->getTrainingPhase();
                     std::cout << "  " << label << "   " << phase;
@@ -734,6 +732,26 @@ std::string DeepSkillGraph::_nodeLabel(int node_idx) const
     if (n.is_goal_region)
         return "GR-" + std::to_string(n.id);
     return (n.id == _global_option_idx) ? "GlobalOpt" : "Opt-" + std::to_string(n.id);
+}
+
+std::string DeepSkillGraph::_optionLabel(int option_idx) const
+{
+    if (option_idx == _global_option_idx)
+        return "global";
+
+    std::string node_part = "pending";
+    if (option_idx >= 0 && option_idx < (int)_skills.size())
+    {
+        for (const auto &node : _nodes)
+        {
+            if (!node.is_goal_region && node.skill == _skills[option_idx])
+            {
+                node_part = "Opt-" + std::to_string(node.id);
+                break;
+            }
+        }
+    }
+    return "option-" + std::to_string(option_idx) + "(node=" + node_part + ")";
 }
 
 // =============================================================================
@@ -1265,7 +1283,8 @@ float DeepSkillGraph::_dscRollout()
         }
 
         auto [option, goal] = _pickOption();
-        std::cout << "Option: " << option << " Goal: (" << goal.position[0] << ", " << goal.position[1] << ")\n";
+        std::cout << "Option: " << _optionLabel(option)
+                  << " Goal: (" << goal.position[0] << ", " << goal.position[1] << ")\n";
 
         if (eng->render_m)
             eng->setGoalMarker(goal.position[0], goal.position[1], 0.5f);
@@ -1292,6 +1311,7 @@ float DeepSkillGraph::_dscRollout()
 
         if (_cfg.verbose)
             std::cout << "  [Rollout] option=" << option
+                      << " (" << _optionLabel(option) << ")"
                       << " phase=" << _skills[option]->getTrainingPhase()
                       << " steps=" << steps_taken
                       << " reward=" << cum_reward
@@ -1513,7 +1533,9 @@ void DeepSkillGraph::_graphConsolidationPhase()
         _makeSkill(false, parent);
         // Always ensure first chain option links structurally to v_a (GR or option).
         _pending_structural_target_node[_skills[_unfinished_option_idx].get()] = v_a;
-        std::cout << _unfinished_option_idx << " is the new option being trained to bridge " << _nodeLabel(v_d) << " to " << _nodeLabel(v_g) << "\n";
+        std::cout << _optionLabel(_unfinished_option_idx)
+                  << " is the new option being trained to bridge "
+                  << _nodeLabel(v_d) << " to " << _nodeLabel(v_g) << "\n";
         _current_dsc_problem->dsc_chain.push_back(_unfinished_option_idx);
 
         std::cout << "[DSG Consolidation] New problem: " << _nodeLabel(v_d) << " → " << _nodeLabel(v_a) << " → " << _nodeLabel(v_g) << "\n";

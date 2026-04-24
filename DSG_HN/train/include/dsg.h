@@ -142,6 +142,7 @@ private:
     float _nodeDistanceToState(int node_idx, const AbstractedState &s) const;
     int _currentNodeIdx() const;
     std::string _nodeLabel(int node_idx) const; // human-readable label for logging
+    std::string _optionLabel(int option_idx) const; // option index + current graph-node mapping
 
     // --- graph queries ---
     std::vector<int> _getV(const AbstractedState &s) const;   // V(s) = O(s) ∪ B(s): all nodes whose region contains s
