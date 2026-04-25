@@ -10,6 +10,13 @@ import matplotlib.pyplot as plt
 
 # Toggle for drawing goal regions (GR circles/labels)
 SHOW_GOAL_REGIONS = True
+# Temporary kill-switch: skip all visualization work to avoid interfering with training.
+SKIP_VISUALIZATION = True
+
+
+def log(msg: str):
+    print(f"[visualize.py] {msg}", flush=True)
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Visualize initiation-set records.")
@@ -77,12 +84,21 @@ args = parse_args()
 scene_file = args.scene_file
 points_file = args.points_file
 graph_file = args.graph_file
+log(f"start scene_file={scene_file} points_file={points_file} graph_file={graph_file} models_dir={args.models_dir}")
 
+if SKIP_VISUALIZATION:
+    log("visualization disabled (SKIP_VISUALIZATION=True); exiting")
+    sys.exit(0)
+
+log("parsing scene XML")
 tree = ET.parse(scene_file)
 root = tree.getroot()
+log("scene XML parsed")
 
 fig, ax = plt.subplots()
+log("matplotlib figure created")
 
+obs_count = 0
 for geom in root.iter('geom'):
     name = geom.get('name', '')
     if 'obs' in name.lower() or 'c' in name.lower() or 'wall' in name.lower():
@@ -96,24 +112,32 @@ for geom in root.iter('geom'):
             sx, sy = size[0], size[1]
             rect = patches.Rectangle((x-sx, y-sy), 2*sx, 2*sy, linewidth=1, edgecolor='black', facecolor='gray', alpha=0.5)
             ax.add_patch(rect)
+            obs_count += 1
         elif type_ == 'cylinder':
             r = size[0]
             circle = patches.Circle((x, y), r, linewidth=1, edgecolor='black', facecolor='gray', alpha=0.5)
             ax.add_patch(circle)
+            obs_count += 1
+log(f"obstacles drawn count={obs_count}")
 
 colors = ['red', 'green', 'blue', 'orange', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan']
 goal_regions = []
 
 use_legacy_points = args.models_dir is None
+log(f"loading points use_legacy_points={use_legacy_points}")
 all_points, goal_regions = load_points_and_goal_regions(points_file, use_legacy_points)
 if args.models_dir is not None:
+    log(f"loading model points from {args.models_dir}")
     all_points = load_points_from_models(Path(args.models_dir))
+log(f"loaded points={len(all_points)} goal_regions_from_points={len(goal_regions)}")
 
 for skill, x, y in all_points:
     ax.scatter(x, y, color=colors[skill % len(colors)], s=5, alpha=0.7)
+log("plotted points")
 
 # Optional fallback: parse latest Graph Structure block from a DSG log file.
 if graph_file is not None and not goal_regions:
+    log("parsing fallback goal regions from graph log")
     gr_re = re.compile(r"GR-(\d+).*\| center=\(x=([\-0-9.eE+]+), y=([\-0-9.eE+]+)\) eps=([\-0-9.eE+]+)")
     latest_block = []
     in_graph_block = False
@@ -138,12 +162,14 @@ if graph_file is not None and not goal_regions:
                     latest_block.append((gr_id, x, y, eps))
 
     goal_regions = latest_block
+    log(f"fallback goal regions parsed={len(goal_regions)}")
 
 if SHOW_GOAL_REGIONS:
     for gr_id, x, y, eps in goal_regions:
         circle = patches.Circle((x, y), eps, linewidth=1.5, edgecolor='magenta', facecolor='none', alpha=0.9)
         ax.add_patch(circle)
         ax.text(x, y, f"GR-{gr_id}", color='magenta', fontsize=7, ha='center', va='center')
+log(f"goal regions drawn count={len(goal_regions)} enabled={SHOW_GOAL_REGIONS}")
 
 ax.set_xlim(-7,7)
 ax.set_ylim(-7,7)
@@ -151,4 +177,7 @@ ax.set_aspect('equal')
 ax.set_title('Initiation Sets Visualization')
 # if not os.path.exists("../results"):
 #     os.makedirs("../results")
-plt.savefig(f"../logs/initiation_sets_viz.png")
+out_path = "../logs/initiation_sets_viz.png"
+log(f"saving figure to {out_path}")
+plt.savefig(out_path)
+log("done")
