@@ -176,9 +176,6 @@ void DeepSkillChaining::visualizeInitiationSets()
     }
     out.close();
 
-    std::string cmd = "python ../visualize.py " + _scene_file_path + " " + temp_file;
-    system(cmd.c_str());
-
     std::string surface_file = "/tmp/init_surfaces.txt";
     std::ofstream out_surf(surface_file);
     int resolution = 80; // 80x80 grid
@@ -205,8 +202,7 @@ void DeepSkillChaining::visualizeInitiationSets()
     }
     out_surf.close();
 
-    // 3. Launch the NEW separate script
-    cmd = "python3 ../visualize_classifier_surface.py " + _scene_file_path + " " + temp_file + " " + surface_file;
+    std::string cmd = "python3 ../visualize_classifier_surface.py " + _scene_file_path + " " + temp_file + " " + surface_file;
     std::cout << "[DSC] Visualizing decision surfaces..." << std::endl;
     system(cmd.c_str());
 }
@@ -525,10 +521,9 @@ void DeepSkillChaining::_makeSkill(bool is_global, std::shared_ptr<Skill> parent
                                                                _cfg.batch_size, _cfg.actor_update_freq, _cfg.last_k,
                                                                _cfg.max_option_steps, _cfg.nu, _cfg.optimistic_svc_c, _cfg.optimistic_svc_gamma,
                                                                _cfg.subgoal_robustness_tolerance, _cfg.negative_samples_per_failure,
-                                                               parent, _cfg.gestation_n, is_global, local_goal, global_option, _eval);
-                                                               _cfg.max_option_steps, _cfg.nu, parent, _cfg.gestation_n, is_global, local_goal, global_option, _eval,
+                                                               parent, _cfg.gestation_n, is_global, local_goal, global_option, _eval,
                                                                _cfg.exploration_noise_gestation, _cfg.exploration_noise_mature,
-                                                               _cfg.use_human_collected_data, _cfg.human_collected_data_path, _cfg.human_data_percentage);
+                                                               _cfg.use_human_collected_data, _cfg.human_collected_data_path, _cfg.human_data_percentage, _cfg.updates_per_step);
     if (!is_global)
         new_skill->initFromSkill(_skills[_global_option_idx]);
 
@@ -552,14 +547,13 @@ void DeepSkillChaining::_makeSkill(bool is_global, std::shared_ptr<Skill> parent
     float lr_actor = (is_global) ? _cfg.lr_actor_global : _cfg.lr_actor;
     float lr_critic = (is_global) ? _cfg.lr_critic_global : _cfg.lr_critic;
     std::shared_ptr<Skill> global_option = (is_global) ? nullptr : _skills[_global_option_idx];
-    std::shared_ptr<Skill> new_skill = std::make_shared<Skill>(id, _env,
+        std::shared_ptr<Skill> new_skill = std::make_shared<Skill>(id, _env,
                                                                _cfg.actor_layers, _cfg.critic_layers, _device,
                                                                lr_actor, lr_critic, _cfg.tau, _cfg.gamma, _cfg.actor_warmup_steps,
                                                                _cfg.batch_size, _cfg.actor_update_freq, _cfg.last_k,
                                                                _cfg.max_option_steps, _cfg.nu, _cfg.optimistic_svc_c, _cfg.optimistic_svc_gamma,
                                                                _cfg.subgoal_robustness_tolerance, _cfg.negative_samples_per_failure,
-                                                               parent, _cfg.gestation_n, is_global, _global_goal, global_option, _eval);
-                                                               _cfg.max_option_steps, _cfg.nu, parent, _cfg.gestation_n, is_global, _global_goal, global_option, _eval,
+                                                               parent, _cfg.gestation_n, is_global, _global_goal, global_option, _eval,
                                                                _cfg.exploration_noise_gestation, _cfg.exploration_noise_mature,
                                                                _cfg.use_human_collected_data, _cfg.human_collected_data_path, _cfg.human_data_percentage, _cfg.updates_per_step);
     if (!is_global)
@@ -755,9 +749,9 @@ AbstractedState DeepSkillChaining::_sampleSpawnState()
 
 #ifndef DSG_BUILD
 #define SCENE_FILE "../config/scene/umaze_scene.xml"
-#define OG_ACTOR "../models/epoch20/actor.pt"
-#define OG_CRITIC1 "../models/epoch20/critic_1.pt"
-#define OG_CRITIC2 "../models/epoch20/critic_2.pt"
+#define OG_ACTOR "../models/pretrain_actor_umaze.pt"
+#define OG_CRITIC1 "../models/pretrain_critic_1_umaze.pt"
+#define OG_CRITIC2 "../models/pretrain_critic_2_umaze.pt"
 #define DSC_SAVE_PATH "../dsc_models_umaze"
 #define TEST true // if set to true, will not train, will just load and run testing
 
@@ -801,6 +795,8 @@ int main(int argc, char **argv)
     // cfg.exploration_noise_gestation = 0.15;
     // cfg.exploration_noise_mature = 0.1;
     // cfg.nu = 0.01;
+    // cfg.optimistic_svc_c = 1.0
+    // cfg.optimistic_svc_gamma = 0.5;
 
     // configs for umaze
     cfg.gestation_n = 120;
@@ -811,6 +807,8 @@ int main(int argc, char **argv)
     cfg.exploration_noise_gestation = 0.3;
     cfg.exploration_noise_mature = 0.1;
     cfg.nu = 0.05;
+    cfg.optimistic_svc_c = 1.0;
+    cfg.optimistic_svc_gamma = 0.5;
 
     // shared params
     cfg.actor_warmup_steps = 0; // gonna keep at zero for testing purposes as well
@@ -822,6 +820,8 @@ int main(int argc, char **argv)
     cfg.val_accuracy_threshold = 0.0f;
     cfg.success_radius = 0.5f;
     cfg.updates_per_step = 2;
+    cfg.subgoal_robustness_tolerance = 0.25;
+    cfg.negative_samples_per_failure = 1;
 
     // goal for UMaze
     AbstractedState global_goal = {{-4.5, 4.1, 0.}, {0, 0, 0, -1}, {0, 0, 0}, {0, 0, 0}};

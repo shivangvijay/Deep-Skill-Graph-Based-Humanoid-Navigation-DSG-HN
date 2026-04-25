@@ -13,3 +13,4 @@ dsc_models*/
 **/dsg_models/*
 *.log
 **/references/*
+*.csv

@@ -50,6 +50,7 @@ public:
         float success_radius = 0.5f;      // environment goal termination radius (meters)
         bool narrow_map = false; // set to true if you want the reward and state to be that of the narrow env. Note that the models need to be pretrained with the correct reward/state info
         int updates_per_step = 1;
+        bool strict_sampling = false;
 
         std::vector<int> actor_layers = {256, 256, 256};
         std::vector<int> critic_layers = {256, 256, 256};

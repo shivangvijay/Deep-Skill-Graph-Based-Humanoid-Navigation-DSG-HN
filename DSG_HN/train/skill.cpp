@@ -13,19 +13,14 @@ Skill::Skill(
     float tau, float gamma, int actor_warmup_steps,
     int batch_size, int actor_update_freq, int k, int max_steps, double nu,
     double optimistic_svc_c, double optimistic_svc_gamma, float subgoal_robustness_tolerance, int negative_samples_per_failure,
-    std::shared_ptr<Skill> parent, int gestation_period, bool is_global, AbstractedState global_goal, std::shared_ptr<Skill> global_option, bool eval)
-    : _id(id), _env(env), _parent(parent), _is_global(is_global), _gestation_period(gestation_period), _k(k), _max_steps(max_steps), _agent(env, actor_layer_sizes, critic_layer_sizes, device,
-                                                                                                                                            lr_actor, lr_critic, tau, gamma, batch_size, actor_update_freq, actor_warmup_steps),
-      _rng(std::random_device{}()), _global_goal(global_goal), _nu(nu), _optimistic_svc_c(optimistic_svc_c),
-      _optimistic_svc_gamma(optimistic_svc_gamma), _subgoal_robustness_tolerance(subgoal_robustness_tolerance),
-      _negative_samples_per_failure(std::max(1, negative_samples_per_failure)), _global_option(global_option),
-      _gamma(gamma), _eval(eval), _lr_actor(lr_actor), _lr_critic(lr_critic)
     std::shared_ptr<Skill> parent, int gestation_period, bool is_global, AbstractedState global_goal, std::shared_ptr<Skill> global_option, bool eval,
     float exploration_noise_gestation, float exploration_noise_mature,
     bool use_human_collected_data, std::string human_collected_data_path, float human_data_percentage, int updates_per_step)
     : _id(id), _env(env), _parent(parent), _is_global(is_global), _gestation_period(gestation_period), _k(k), _max_steps(max_steps), _exploration_noise_gestation(exploration_noise_gestation), _exploration_noise_mature(exploration_noise_mature),
       _updates_per_step(updates_per_step), _agent(env, actor_layer_sizes, critic_layer_sizes, device, lr_actor, lr_critic, tau, gamma, batch_size, actor_update_freq, actor_warmup_steps, use_human_collected_data, human_data_percentage),
-      _rng(std::random_device{}()), _global_goal(global_goal), _nu(nu), _global_option(global_option), _gamma(gamma), _eval(eval), _lr_actor(lr_actor), _lr_critic(lr_critic)
+      _rng(std::random_device{}()), _global_goal(global_goal), _nu(nu), _global_option(global_option), _gamma(gamma), _eval(eval), _lr_actor(lr_actor), _lr_critic(lr_critic),
+      _optimistic_svc_c(optimistic_svc_c), _optimistic_svc_gamma(optimistic_svc_gamma), _subgoal_robustness_tolerance(subgoal_robustness_tolerance),
+      _negative_samples_per_failure(std::max(1, negative_samples_per_failure))
 {
     if (use_human_collected_data)
     {
@@ -696,118 +691,6 @@ void Skill::_herUpdate(const std::vector<Transition> &trajectory)
     }
 }
 
-// void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool term_success)
-// {
-
-//     if (term_success)
-//     {
-//         // Include the start state as a positive example for chained options —
-//         // it's a valid point the agent can reach the parent's set from.
-//         // Skip for the goal option (_parent == nullptr) — its initiation set
-//         // should tightly cover the goal region, not the scattered start positions.
-//         if (_parent != nullptr)
-//         {
-//             _positive_gestation_records.push_back(visited.front());
-//             _gestation_vecs.push_back(visited.front().classifier_vec);
-//             _gestation_labels.push_back(1);
-//         }
-
-//         // add the last k states to the positive set
-//         for (int t = visited.size() - 1; t >= std::max(0, (int)visited.size() - _k); t--)
-//         {
-//             _positive_gestation_records.push_back(visited[t]);
-//             _gestation_vecs.push_back(visited[t].classifier_vec);
-//             _gestation_labels.push_back(1);
-//         }
-//     }
-//     else
-//     {
-//         _gestation_vecs.push_back(visited.front().classifier_vec);
-//         _gestation_labels.push_back(-1);
-//         _has_negative_gestation = true;
-//     }
-
-//     // trim positives and negatives independently so rare negatives aren't evicted
-//     // int max_pos = _k * _gestation_period;
-//     // int max_neg = _gestation_period;  // at most 1 negative per rollout
-
-//     // int pos_count = std::count(_gestation_labels.begin(), _gestation_labels.end(), 1);
-//     // int neg_count = std::count(_gestation_labels.begin(), _gestation_labels.end(), -1);
-//     // int pos_excess = std::max(0, pos_count - max_pos);
-//     // int neg_excess = std::max(0, neg_count - max_neg);
-
-//     // if (pos_excess > 0 || neg_excess > 0)
-//     // {
-//     //     int pos_removed = 0, neg_removed = 0;
-//     //     std::vector<std::vector<float>> new_vecs;
-//     //     std::vector<int> new_labels;
-//     //     new_vecs.reserve(_gestation_vecs.size() - pos_excess - neg_excess);
-//     //     new_labels.reserve(new_vecs.capacity());
-//     //     for (size_t i = 0; i < _gestation_vecs.size(); i++)
-//     //     {
-//     //         if (_gestation_labels[i] == 1 && pos_removed < pos_excess) { pos_removed++; continue; }
-//     //         if (_gestation_labels[i] == -1 && neg_removed < neg_excess) { neg_removed++; continue; }
-//     //         new_vecs.push_back(std::move(_gestation_vecs[i]));
-//     //         new_labels.push_back(_gestation_labels[i]);
-//     //     }
-//     //     _gestation_vecs = std::move(new_vecs);
-//     //     _gestation_labels = std::move(new_labels);
-
-//     //     _has_negative_gestation = std::find(_gestation_labels.begin(), _gestation_labels.end(), -1)
-//     //                               != _gestation_labels.end();
-//     // }
-//     // if ((int)_positive_gestation_records.size() > max_pos)
-//     // {
-//     //     int excess = _positive_gestation_records.size() - max_pos;
-//     //     _positive_gestation_records.erase(_positive_gestation_records.begin(),
-//     //                                       _positive_gestation_records.begin() + excess);
-//     // }
-
-//     // always attempt to fit after every rollout
-//     if (_positive_gestation_records.empty())
-//         return;
-
-//     if (!_has_negative_gestation)
-//     {
-//         // only positive data available — use one-class SVMs on positive vecs only.
-//         std::vector<std::vector<float>> pos_vecs;
-//         for (size_t i = 0; i < _gestation_vecs.size(); i++)
-//             if (_gestation_labels[i] == 1)
-//                 pos_vecs.push_back(_gestation_vecs[i]);
-
-//         if (!pos_vecs.empty())
-//         {
-//             bool first_phase1 = !_classifier.trained();
-//             _pessimistic_classifier.trainOneClass(pos_vecs, _nu); // tight
-//             _classifier.trainOneClass(pos_vecs, _nu / 10.0);      // loose / optimistic
-//             if (first_phase1)
-//                 std::cout << "\n[Skill " << _id << "] Classifier Phase 1: OneClass init. Pos=" << pos_vecs.size() << "\n";
-//         }
-//     }
-//     else
-//     {
-//         // binary SVC as optimistic, then one-class re-fit on SVC-positive predictions as pessimistic.
-//         int neg_count = std::count(_gestation_labels.begin(), _gestation_labels.end(), -1);
-//         _classifier.train(_gestation_vecs, _gestation_labels,
-//                           /*C=*/1.0, /*gamma=*/1.0, /*balance_classes=*/true);
-
-//         // Re-fit pessimistic on only the states the optimistic SVC predicts as positive
-//         std::vector<std::vector<float>> svc_positive_vecs;
-//         for (const auto &vec : _gestation_vecs)
-//             if (_classifier.classify(vec))
-//                 svc_positive_vecs.push_back(vec);
-
-//         if (!svc_positive_vecs.empty())
-//             _pessimistic_classifier.trainOneClass(svc_positive_vecs, _nu);
-
-//         if (neg_count == 1) // first failure — log Phase 1→2 transition
-//         {
-//             int pos_count = std::count(_gestation_labels.begin(), _gestation_labels.end(), 1);
-//             std::cout << "\n[Skill " << _id << "] Classifier Phase 1→2: binary SVC. Pos=" << pos_count << " Neg=1\n";
-//         }
-//     }
-// }
-
 void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool term_success)
 {
     if (term_success)
@@ -879,7 +762,7 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
         // This allows the agent to "learn from mistakes" by carving out negative space.
         // for narrow map: C = 0.1, gamma = 0.5
         _classifier.train(_gestation_vecs, _gestation_labels,
-                          _optimistic_svc_c, _optimistic_svc_gamma, /*balance_classes=*/true);
+                          _optimistic_svc_c, _optimistic_svc_gamma, /*balance_classes=*/false);
 
         // Filter: Train the Pessimistic One-Class SVM only on states the SVC confirms as Positive.
         std::vector<std::vector<float>> svc_positive_vecs;
