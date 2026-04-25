@@ -136,6 +136,8 @@ private:
     // --- unified node dispatch ---
     int _totalNodes() const;
     bool _nodeCanStart(int node_idx, const AbstractedState &s, bool pessimistic) const;
+    std::vector<AbstractedState> _nodeCoverageSamples(int node_idx) const;
+    bool _skillCoversNodeStrict(int skill_idx, int node_idx, bool pessimistic) const;
     float _nodeDistanceToState(int node_idx, const AbstractedState &s) const;
     int _currentNodeIdx() const;
     std::string _nodeLabel(int node_idx) const; // human-readable label for logging

@@ -58,7 +58,11 @@ int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout wh
     for (int episode = 0; episode < max_episodes; episode++)
     {
         _env->clearGoal();
-        if (_cfg.strict_sampling)
+        // TODO: more intelligent sampling. The big thing is not just randomly sampling, but perhaps sampling in the
+        // area of the previously learned skill so that it has a bit of an easier time learning
+        std::uniform_real_distribution<float> dis(0.0f, 1.0f);
+        float p = dis(_rng);
+        if (_cfg.strict_sampling) // bit of goal biased sampling, may want to do even more intelligent sampling going forward
         {
             _env->resetTo(_sampleSpawnState());
         }
@@ -519,6 +523,9 @@ void DeepSkillChaining::_makeSkill(bool is_global, std::shared_ptr<Skill> parent
                                                                _cfg.actor_layers, _cfg.critic_layers, _device,
                                                                lr_actor, lr_critic, _cfg.tau, _cfg.gamma, _cfg.actor_warmup_steps,
                                                                _cfg.batch_size, _cfg.actor_update_freq, _cfg.last_k,
+                                                               _cfg.max_option_steps, _cfg.nu, _cfg.optimistic_svc_c, _cfg.optimistic_svc_gamma,
+                                                               _cfg.subgoal_robustness_tolerance, _cfg.negative_samples_per_failure,
+                                                               parent, _cfg.gestation_n, is_global, local_goal, global_option, _eval);
                                                                _cfg.max_option_steps, _cfg.nu, parent, _cfg.gestation_n, is_global, local_goal, global_option, _eval,
                                                                _cfg.exploration_noise_gestation, _cfg.exploration_noise_mature,
                                                                _cfg.use_human_collected_data, _cfg.human_collected_data_path, _cfg.human_data_percentage);
@@ -549,6 +556,9 @@ void DeepSkillChaining::_makeSkill(bool is_global, std::shared_ptr<Skill> parent
                                                                _cfg.actor_layers, _cfg.critic_layers, _device,
                                                                lr_actor, lr_critic, _cfg.tau, _cfg.gamma, _cfg.actor_warmup_steps,
                                                                _cfg.batch_size, _cfg.actor_update_freq, _cfg.last_k,
+                                                               _cfg.max_option_steps, _cfg.nu, _cfg.optimistic_svc_c, _cfg.optimistic_svc_gamma,
+                                                               _cfg.subgoal_robustness_tolerance, _cfg.negative_samples_per_failure,
+                                                               parent, _cfg.gestation_n, is_global, _global_goal, global_option, _eval);
                                                                _cfg.max_option_steps, _cfg.nu, parent, _cfg.gestation_n, is_global, _global_goal, global_option, _eval,
                                                                _cfg.exploration_noise_gestation, _cfg.exploration_noise_mature,
                                                                _cfg.use_human_collected_data, _cfg.human_collected_data_path, _cfg.human_data_percentage, _cfg.updates_per_step);

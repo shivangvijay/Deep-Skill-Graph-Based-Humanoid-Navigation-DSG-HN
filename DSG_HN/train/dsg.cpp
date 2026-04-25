@@ -108,48 +108,75 @@ bool DeepSkillGraph::_shouldCreateNewOption(int v_d, const std::vector<int> &dsc
     return true;
 }
 
+std::vector<AbstractedState> DeepSkillGraph::_nodeCoverageSamples(int node_idx) const
+{
+    std::vector<AbstractedState> samples;
+    const auto &n = _nodes[node_idx];
+
+    if (n.is_goal_region)
+    {
+        const AbstractedState center = n.goal_region.center;
+        const float r = std::max(0.0f, n.goal_region.epsilon);
+        samples.push_back(center);
+        if (r <= 0.0f)
+            return samples;
+
+        // Cover interior + boundary of GR disk using concentric deterministic rings.
+        const int n_theta = std::max(12, _dsg_cfg.gestation_n / 2);
+        const std::array<float, 4> ring_fracs = {0.25f, 0.5f, 0.75f, 1.0f};
+        static constexpr float kTwoPi = 6.28318530718f;
+        for (float rf : ring_fracs)
+        {
+            const float rr = r * rf;
+            for (int k = 0; k < n_theta; ++k)
+            {
+                const float th = kTwoPi * static_cast<float>(k) / static_cast<float>(n_theta);
+                AbstractedState s = center;
+                s.position[0] += rr * std::cos(th);
+                s.position[1] += rr * std::sin(th);
+                samples.push_back(s);
+            }
+        }
+        return samples;
+    }
+
+    // Option node: use full effect set as coverage domain.
+    const auto &effects = n.skill->getEffectSet();
+    if (!effects.empty())
+    {
+        samples.reserve(effects.size());
+        for (const auto &rec : effects)
+            samples.push_back(rec.state);
+        return samples;
+    }
+
+    samples.push_back(_nodeRepresentativeState(node_idx));
+    return samples;
+}
+
+bool DeepSkillGraph::_skillCoversNodeStrict(int skill_idx, int node_idx, bool pessimistic) const
+{
+    if (_skills[skill_idx]->getTrainingPhase() != "mature")
+        return false;
+
+    auto samples = _nodeCoverageSamples(node_idx);
+    for (const auto &s : samples)
+    {
+        bool ok = pessimistic ? _skills[skill_idx]->canStartPessimistic(s)
+                              : _skills[skill_idx]->canStart(s);
+        if (!ok)
+            return false;
+    }
+    return true;
+}
+
 bool DeepSkillGraph::_containsStart(int v_d, const std::vector<int> &dsc_chain)
 {
-    auto sample_vd_state = [&]() -> AbstractedState
-    {
-        const auto &vd = _nodes[v_d];
-
-        // Goal region: sample on the epsilon boundary ("edges").
-        if (vd.is_goal_region)
-        {
-            AbstractedState s = vd.goal_region.center;
-            const float r = std::max(0.0f, vd.goal_region.epsilon);
-            if (r > 0.0f)
-            {
-                static constexpr float kTwoPi = 6.28318530718f;
-                std::uniform_real_distribution<float> angle_dist(0.0f, kTwoPi);
-                const float theta = angle_dist(_rng);
-                s.position[0] += r * std::cos(theta);
-                s.position[1] += r * std::sin(theta);
-            }
-            return s;
-        }
-
-        // Option node: sample from effect set.
-        const auto &effects = vd.skill->getEffectSet();
-        if (!effects.empty())
-        {
-            std::uniform_int_distribution<size_t> pick(0, effects.size() - 1);
-            return effects[pick(_rng)].state;
-        }
-
-        // Fallback for sparse early-training cases.
-        return _nodeRepresentativeState(v_d);
-    };
-
     for (auto o : dsc_chain)
     {
-        int can_start_count = 0;
-        for (int i = 0; i < _dsg_cfg.gestation_n; i++)
-            if (_skills[o]->canStart(sample_vd_state()) && _skills[o]->getTrainingPhase() == "mature")
-                can_start_count++;
-
-        if (static_cast<float>(can_start_count) / static_cast<float>(_dsg_cfg.gestation_n) > 0.5f)
+        // Strict connectivity: option must be startable from the full sampled
+        // coverage of v_d. Use pessimistic classifier for robust chaining.
+        if (_skillCoversNodeStrict(o, v_d, /*pessimistic=*/true))
             return true;
     }
     return false;
@@ -1113,6 +1140,24 @@ bool DeepSkillGraph::_graphExpansionPhase()
     // 4. Extend graph via MPC toward s_rand
     AbstractedState s_mpc = _runMPC(s_rand);
 
+    // 4.5 Safety gate: require the full goal-region epsilon-ball around s_mpc
+    // to be clear of obstacles.
+    {
+        const float required_clearance = _dsg_cfg.goal_region_epsilon;
+        const float obs_dist = _env->distanceToNearestObstacle(s_mpc.position, s_mpc.orientation);
+        if (obs_dist < required_clearance)
+        {
+            if (_cfg.verbose)
+            {
+                std::cout << "[DSG Expansion] Rejected — s_mpc too close to obstacle. "
+                          << "obs_dist=" << obs_dist
+                          << " required>=" << required_clearance
+                          << " (eps=" << _dsg_cfg.goal_region_epsilon << ")\n";
+            }
+            return false;
+        }
+    }
+
     // 5. Rejection sampling: Is s_mpc already covered by an existing node?
     for (int i = 0; i < (int)_nodes.size(); ++i)
     {
@@ -1367,12 +1412,11 @@ void DeepSkillGraph::_graphConsolidationPhase()
         if (solved_current_problem)
         {
             int v_d = _current_dsc_problem->v_d;
-            AbstractedState vd_state = _nodeRepresentativeState(v_d);
 
             int bridge_skill_idx = -1;
             for (int o : _current_dsc_problem->dsc_chain)
             {
-                if (_skills[o]->getTrainingPhase() == "mature" && _skills[o]->canStart(vd_state))
+                if (_skillCoversNodeStrict(o, v_d, /*pessimistic=*/true))
                 {
                     bridge_skill_idx = o;
                     break;
@@ -1542,22 +1586,97 @@ int main(int argc, char **argv)
         SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, /*render=*/false);
 
     DeepSkillGraph::Config cfg;
+    // -------------------------------------------------------------------------
+    // Episode / runtime control
+    // -------------------------------------------------------------------------
+    cfg.training_episodes = 20000;
+    cfg.steps_per_episode = 1000;
+    cfg.warmup_episodes = 0; // warm up policy-over-options before DSG expansion/consolidation
+    cfg.save_path = DSG_SAVE_PATH;
+    cfg.save_interval = 100;
+
+    // -------------------------------------------------------------------------
+    // Environment + geometric termination / region thresholds
+    // -------------------------------------------------------------------------
+    cfg.success_radius = 0.2f;      // env local-goal success radius
+    cfg.goal_region_epsilon = 0.2f; // GR epsilon-ball radius
+    cfg.start_noise_radius = 2.0f;
+
+    // -------------------------------------------------------------------------
+    // Skill lifecycle (DSC option learning / validation)
+    // -------------------------------------------------------------------------
+    cfg.gestation_train_steps = 5000;
     cfg.gestation_n = 60;
-    cfg.last_k = 15;
-    cfg.max_option_steps = 30;
-    cfg.nu = 0.01;
-    cfg.actor_warmup_steps = 0;
-    cfg.warmup_episodes = 0; // use to warm up policy over options with global option rollouts before starting expansion/consolidation
+    cfg.last_k = 30;
+    cfg.refinement_eps = 30;
+    cfg.max_option_steps = 50;
+    cfg.max_skills = 6;
+    cfg.val_accuracy_threshold = 0.8f;
+
+    // -------------------------------------------------------------------------
+    // Classifier / initiation set behaviour
+    // -------------------------------------------------------------------------
+    cfg.nu = 0.001; // one-class SVM outlier fraction (pessimistic tightness)
+    cfg.optimistic_svc_c = 1.0;                 // phase-2 optimistic SVC C (inverse regularization strength, lower = wider)
+    cfg.optimistic_svc_gamma = 0.5;             // phase-2 optimistic SVC gamma (kernel coefficient, lower = wider)
+    cfg.subgoal_robustness_tolerance = 0.25f;   // neighborhood check around sampled subgoal
+    cfg.negative_samples_per_failure = 1;       // failure negatives added per failed rollout
+
+    // -------------------------------------------------------------------------
+    // Policy / critic architectures
+    // -------------------------------------------------------------------------
+    cfg.actor_layers = {256, 256, 256};
+    cfg.critic_layers = {256, 256, 256};
+    cfg.poo_layers = {256, 256, 256};
+
+    // -------------------------------------------------------------------------
+    // Learning dynamics (TD3 + policy-over-options)
+    // -------------------------------------------------------------------------
+    cfg.lr_actor = 1e-4f;
+    cfg.lr_critic = 3e-4f;
+    cfg.lr_actor_global = 1e-5f;
+    cfg.lr_critic_global = 3e-5f;
+    cfg.lr_poo = 1e-4f;
+    cfg.actor_warmup_steps = 0; // TBD
+    cfg.tau = 0.005f;
+    cfg.gamma = 0.99f;
+    cfg.batch_size = 256;
+    cfg.poo_batch_size = 16;
+    cfg.actor_update_freq = 2;
+
+    // -------------------------------------------------------------------------
+    // DSG graph structure + edge maintenance
+    // -------------------------------------------------------------------------
+    cfg.graph_update_freq = 10;
+    cfg.max_children_per_node = 5;
+    cfg.expansion_freq = 200;  // every N episodes run expansion, else consolidation
+    cfg.max_expansion_tries = 10;
+    cfg.edge_weight_kappa = 0.95f; // learning rate for edge weight updates 
+
+    // -------------------------------------------------------------------------
+    // Expansion controller (global-option proxy / transition-model MPC)
+    // -------------------------------------------------------------------------
+    cfg.mpc_steps = 200; // real env steps while extending toward s_rand
+    cfg.mpc_horizon = 7;
+    cfg.mpc_candidates = 256;
+    cfg.mpc_cem_rounds = 3;
+    cfg.mpc_cem_elites = 32;
+    cfg.mpc_w_pos = 1.0;
+    cfg.mpc_w_heading = 0.5;
+    cfg.mpc_w_terminal = 3.0;
+    cfg.mpc_w_smooth = 0.1;
+    cfg.mpc_w_backward = 0.3;
+    cfg.mpc_w_collision = 1000.0;
+    cfg.mpc_base_radius = 0.35;
+    cfg.mpc_clearance = 0.05;
+
+    // -------------------------------------------------------------------------
+    // Logging / debug visibility
+    // -------------------------------------------------------------------------
+    cfg.render_training = false;
     cfg.verbose = true;
     cfg.log_interval = 25;
     cfg.visualize_initiation_sets = true;
-    cfg.max_children_per_node = 3;
-    cfg.expansion_freq = 100; // frequency of expansion phase (every N episodes)
-    cfg.mpc_steps = 50;
-    cfg.goal_region_epsilon = 0.3f;
-    cfg.success_radius = 0.3f;
-    cfg.save_path = DSG_SAVE_PATH;
-    cfg.training_episodes = 20000;
 
     AbstractedState global_start = {{0.0, 0.0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 
