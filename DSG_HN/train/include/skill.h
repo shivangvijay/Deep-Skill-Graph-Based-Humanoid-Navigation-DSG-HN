@@ -49,7 +49,9 @@ public:
           int batch_size, int actor_update_freq, int k, int max_steps, double nu,
           double optimistic_svc_c, double optimistic_svc_gamma, float subgoal_robustness_tolerance, int negative_samples_per_failure,
           std::shared_ptr<Skill> parent, int gestation_period, bool is_global, AbstractedState global_goal,
-          std::shared_ptr<Skill> global_option, bool eval = false);
+          std::shared_ptr<Skill> global_option, bool eval = false, 
+        float exploration_noise_gestation =0.3, float exploration_noise_mature=0.1, bool use_human_collected_data = false, 
+          std::string human_collected_data_path = "", float human_data_percentage=0.25, int updates_per_step=2);
 
     AbstractedState getLocalGoal();
 
@@ -103,6 +105,7 @@ public:
     // Returns true if the visited trajectory covers a region not already saturated by mature siblings.
     // Used to gate positive data acceptance in DSG — prevents redundant children under one parent.
     bool isValidInitData(const std::vector<GestationRecord> &visited) const;
+    std::pair<double, double> getDecisionValues(const AbstractedState& state) const;
 
 private:
     std::shared_ptr<TrainEnvironment> _env;
@@ -136,6 +139,9 @@ private:
     float _gamma;
     float _lr_critic;
     float _lr_actor;
+    float _exploration_noise_gestation;
+    float _exploration_noise_mature;
+    int _updates_per_step;
 
     int _id;
 
@@ -146,6 +152,8 @@ private:
     // Unified termination check for gestation and refinement rollouts.
     bool _atLocalGoal(const AbstractedState &goal) const;
     bool _inParentChainTarget(const AbstractedState &state) const;
+    bool _inParentChainTarget(const RobotState &state) const;
+
 
     void _fitClassifier(const std::vector<GestationRecord> &states, bool term_success);
 

@@ -7,6 +7,21 @@
 using namespace torch;
 using Experience = std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>;
 
+class OUNoise
+{
+public:
+    OUNoise(int size, float mu = 0.0f, float theta = 0.15f, float sigma = 0.3f);
+    void reset();
+    void setSigma(float s);
+
+    torch::Tensor sample();
+
+private:
+    int size;
+    float mu, theta, sigma;
+    torch::Tensor state;
+};
+
 class TD3Agent
 {
 public:
@@ -20,43 +35,45 @@ public:
         float gamma,
         int batch_size,
         int actor_update_freq,
-        int actor_warmup_steps);
+        int actor_warmup_steps,
+        bool use_human_buffer = false,
+        float human_data_percentage=0.25);
 
     std::pair<torch::Tensor, torch::Tensor> getAction(torch::Tensor state, bool eval = false);
     void addExperience(torch::Tensor state, torch::Tensor action, torch::Tensor reward, torch::Tensor next_state, torch::Tensor done);
 
+    void loadHumanData(std::shared_ptr<TrainEnvironment> env, const std::string &filepath);
+    void pretrainFromHumanData(int iterations);
     void learn();
     void hardCopy();
     void toDevice(torch::Device d);
+    void resetNoise();
 
     double total_actor_loss = 0.0;
     double total_critic_loss = 0.0;
     int learn_step = 0;
-    float exploration_noise = 0.3f;
 
-    void setExplorationNoise(float noise) { exploration_noise = noise; }
-    void setLearningRates(float lr_actor, float lr_critic) {
-        for (auto& param_group : actor_optimizer.param_groups()) {
-            static_cast<torch::optim::AdamOptions&>(param_group.options()).lr(lr_actor);
-        }
-        for (auto& param_group : critic_optimizer_1.param_groups()) {
-            static_cast<torch::optim::AdamOptions&>(param_group.options()).lr(lr_critic);
-        }
-        for (auto& param_group : critic_optimizer_2.param_groups()) {
-            static_cast<torch::optim::AdamOptions&>(param_group.options()).lr(lr_critic);
-        }
-    }
+    void setExplorationNoise(float noise);
+    void setLearningRates(float lr_actor, float lr_critic);
 
     Actor actor_local;
     Critic critic_local_1;
     Critic critic_local_2;
-    ReplayBuffer replay_buffer;
     int actor_update_freq;
 
 private:
+
+    std::unique_ptr<OUNoise> ou_noise;
+    float exploration_noise = 0.3f;
+    float human_data_percentage;
+
     Actor actor_target;
     Critic critic_target_1;
     Critic critic_target_2;
+    bool use_human_buffer;
+
+    ReplayBuffer replay_buffer;
+    ReplayBuffer human_replay_buffer; // replay buffer for human collected data
 
     torch::optim::Adam actor_optimizer;
     torch::optim::Adam critic_optimizer_1;

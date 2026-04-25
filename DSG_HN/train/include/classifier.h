@@ -97,7 +97,7 @@ public:
         param.svm_type = ONE_CLASS;
         param.kernel_type = RBF;
         param.nu = nu;
-        param.gamma = 0.5; //0.005 ;//1.0 / states[0].size() / 100.0;
+        param.gamma = 0.5; //0.0005; // gamma determines how far the influence of a single point is. Lower gamma, further influence
         param.eps = 1e-4;
         param.cache_size = 256;
         param.probability = 0;

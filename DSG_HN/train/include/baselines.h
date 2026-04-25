@@ -44,7 +44,9 @@ class TD3Baseline : public Baseline
 {
 public:
     TD3Baseline(std::shared_ptr<RobotBridgeTrain> robot_bridge,
-                const std::string &actor_path, const std::string &critic_1_path, const std::string &critic_2_path, const std::vector<int>& actor_layer_sizes, const std::vector<int>& critic_layer_sizes, torch::Device device);
+                const std::string &actor_path, const std::string &critic_1_path, const std::string &critic_2_path, 
+                const std::vector<int>& actor_layer_sizes, const std::vector<int>& critic_layer_sizes, 
+                torch::Device device, bool narrow_map=false);
     std::pair<float, bool> execute(const AbstractedState &start, const AbstractedState &goal) override;
 
 private:
