@@ -961,48 +961,67 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
         auto current_state = _env->getAbstractedState();
         bool env_done = _env->computeReward(current_state).first.data_ptr<float>()[0] > 0.5;
         bool already_in_target = _nodeCanStart(node_idx, current_state, false);
-        if (already_in_target || env_done)
-        {
-            if (already_in_target)
-            {
-                std::cout << "[Navigate] Already in target " << _nodeLabel(node_idx) << "\n";
-            }
-            else
-            {
-                std::cout << "[Navigate] Reached point "
-                          << current_state.position[0] << ", " << current_state.position[1] << "\n";
-            }
-            return;
-        }
-
-        // V(s_t): all nodes containing the current state
-        auto V_s = _getV(current_state);
 
         int best_node_idx = -1;
         int next_hop_idx = -1;
         AbstractedState best_goal;
         float best_cost = std::numeric_limits<float>::infinity();
         std::vector<int> best_path;
+        bool force_self_hop = false;
+
+        if (already_in_target || env_done)
+        {
+            if (already_in_target)
+            {
+                std::cout << "[Navigate] Already in target " << _nodeLabel(node_idx) << "\n";
+                // If target is an option and we're already in its initiation set,
+                // synthesize a self-hop so the normal execution block runs it once.
+                if (!_nodes[node_idx].is_goal_region && node_idx != _global_option_idx)
+                {
+                    force_self_hop = true;
+                    best_node_idx = node_idx;
+                    next_hop_idx = node_idx;
+                    best_goal = _nodeRepresentativeState(node_idx);
+                    best_path = {node_idx};
+                }
+                else
+                {
+                    return;
+                }
+            }
+            else
+            {
+                std::cout << "[Navigate] Reached point "
+                          << current_state.position[0] << ", " << current_state.position[1] << "\n";
+                return;
+            }
+        }
+
+        // V(s_t): all nodes containing the current state
+        auto V_s = _getV(current_state);
 
         // Case (a): find least-cost path to node_idx starting from a skill node in V_s
-        for (int v : V_s)
+        if (!force_self_hop)
         {
-            // if (_nodes[v].is_goal_region)
-            //     continue; // Only skills have policies we can execute
-
-            auto [cost, path] = _dijkstraPath(v, node_idx);
-            if (!path.empty() && cost < best_cost)
+            for (int v : V_s)
             {
-                best_cost = cost;
-                best_node_idx = v;
-                next_hop_idx = path.front();
-                best_goal = _nodeRepresentativeState(next_hop_idx);
-                best_path = path;
+                // if (_nodes[v].is_goal_region)
+                //     continue; // Only skills have policies we can execute
+
+                auto [cost, path] = _dijkstraPath(v, node_idx);
+                if (!path.empty() && cost < best_cost)
+                {
+                    best_cost = cost;
+                    best_node_idx = v;
+                    next_hop_idx = path.front();
+                    best_goal = _nodeRepresentativeState(next_hop_idx);
+                    best_path = path;
+                }
             }
         }
 
         // Case (b): Recovery — use Global Option to steer toward target if no graph path exists
-        if (best_node_idx == -1)
+        if (!force_self_hop && best_node_idx == -1)
         {
             best_node_idx = _global_option_idx; // Use the base class global skill index
             best_goal = _nodeRepresentativeState(node_idx);
@@ -1691,7 +1710,7 @@ int main(int argc, char **argv)
     // -------------------------------------------------------------------------
     cfg.graph_update_freq = 10;
     cfg.max_children_per_node = 5;
-    cfg.expansion_freq = 200;  // every N episodes run expansion, else consolidation
+    cfg.expansion_freq = 100;  // every N episodes run expansion, else consolidation
     cfg.max_expansion_tries = 10;
     cfg.edge_weight_kappa = 0.95f; // learning rate for edge weight updates 
 
