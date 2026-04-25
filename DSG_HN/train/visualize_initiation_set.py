@@ -60,6 +60,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Overlay positive gestation records if available.",
     )
+    parser.add_argument(
+        "--save-combined-pessimistic",
+        action="store_true",
+        help="Also save one image with all skills' pessimistic boundaries overlaid.",
+    )
     return parser.parse_args()
 
 
@@ -369,6 +374,52 @@ def main() -> None:
         fig.savefig(out_path, dpi=160)
         plt.close(fig)
         print(f"[saved] {out_path}")
+
+    if args.save_combined_pessimistic:
+        fig_all, ax_all = plt.subplots(figsize=(8, 8))
+        draw_obstacles(ax_all, scene_path)
+        ax_all.set_xlim(args.xmin, args.xmax)
+        ax_all.set_ylim(args.ymin, args.ymax)
+        ax_all.set_aspect("equal")
+        ax_all.set_xlabel("x")
+        ax_all.set_ylabel("y")
+        ax_all.set_title("All Skills: Pessimistic Boundaries")
+
+        cmap = plt.get_cmap("tab20")
+        legend_handles = []
+        drawn_count = 0
+
+        for i, sid in enumerate(skills):
+            pess_path = models_dir / f"skill_{sid}_classifier.svm_pessimistic"
+            if not pess_path.exists():
+                continue
+            try:
+                pess_model = parse_libsvm_model(pess_path)
+                pess_dec = decision_function(pess_model, feat_pts).reshape(xx.shape)
+                color = cmap(i % 20)
+                ax_all.contour(
+                    xx,
+                    yy,
+                    pess_dec,
+                    levels=[0.0],
+                    colors=[color],
+                    linewidths=1.6,
+                )
+                legend_handles.append(
+                    plt.Line2D([0], [0], color=color, lw=1.8, label=f"skill {sid}")
+                )
+                drawn_count += 1
+            except Exception as ex:
+                print(f"[warn] skipping skill {sid} in combined pessimistic plot: {ex}")
+
+        if legend_handles:
+            ax_all.legend(handles=legend_handles, loc="upper right", fontsize=7, frameon=True)
+
+        out_all = out_dir / "all_skills_pessimistic_boundaries.png"
+        fig_all.tight_layout()
+        fig_all.savefig(out_all, dpi=170)
+        plt.close(fig_all)
+        print(f"[saved] {out_all} (boundaries={drawn_count})")
 
     print(f"Done. Output directory: {out_dir}")
 
