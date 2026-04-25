@@ -52,9 +52,9 @@ public:
           double pessimistic_ocsvm_gamma, double optimistic_ocsvm_gamma, double optimistic_ocsvm_nu_divisor,
           float subgoal_robustness_tolerance, int negative_samples_per_failure,
           std::shared_ptr<Skill> parent, int gestation_period, bool is_global, AbstractedState global_goal,
-          std::shared_ptr<Skill> global_option, bool eval = false, 
-        float exploration_noise_gestation =0.3, float exploration_noise_mature=0.1, bool use_human_collected_data = false, 
-          std::string human_collected_data_path = "", float human_data_percentage=0.25);
+          std::shared_ptr<Skill> global_option, bool eval = false,
+          float exploration_noise_gestation = 0.3, float exploration_noise_mature = 0.1, bool use_human_collected_data = false,
+          std::string human_collected_data_path = "", float human_data_percentage = 0.25, int updates_per_step = 2);
 
     AbstractedState getLocalGoal();
 
@@ -95,8 +95,8 @@ public:
     int goalHits() const { return _goal_hits; }
     int gestationPeriod() const { return _gestation_period; }
     double getDecisionValue(const AbstractedState &state) const;
-    const std::vector<GestationRecord>& getPositiveGestationRecords() const { return _positive_gestation_records; }
-    const std::vector<GestationRecord>& getEffectSet() const { return _effect_records; }
+    const std::vector<GestationRecord> &getPositiveGestationRecords() const { return _positive_gestation_records; }
+    const std::vector<GestationRecord> &getEffectSet() const { return _effect_records; }
     std::shared_ptr<Skill> getParent() const { return _parent; }
     void setEvalMode(bool eval) { _eval = eval; }
     void setGlobalGoal(const AbstractedState &g) { _global_goal = g; }
@@ -108,7 +108,7 @@ public:
     // Returns true if the visited trajectory covers a region not already saturated by mature siblings.
     // Used to gate positive data acceptance in DSG — prevents redundant children under one parent.
     bool isValidInitData(const std::vector<GestationRecord> &visited) const;
-    std::pair<double, double> getDecisionValues(const AbstractedState& state) const;
+    std::pair<double, double> getDecisionValues(const AbstractedState &state) const;
 
 private:
     std::shared_ptr<TrainEnvironment> _env;
@@ -117,8 +117,8 @@ private:
 
     bool _is_global;
     TD3Agent _agent;
-    InitiationSetClassifier _classifier;             // optimistic boundary: loose OneClassSVM or balanced SVC
-    InitiationSetClassifier _pessimistic_classifier; // tight boundary: OneClassSVM(nu) or OneClassSVM re-fit on SVC-positives
+    InitiationSetClassifier _classifier;                      // optimistic boundary: loose OneClassSVM or balanced SVC
+    InitiationSetClassifier _pessimistic_classifier;          // tight boundary: OneClassSVM(nu) or OneClassSVM re-fit on SVC-positives
     std::vector<GestationRecord> _positive_gestation_records; // initiation set proxy: spawn + termination states
     std::vector<GestationRecord> _effect_records;             // effect set E_o: termination states only (no spawn)
     std::vector<std::vector<float>> _gestation_vecs;
@@ -149,6 +149,7 @@ private:
     float _lr_actor;
     float _exploration_noise_gestation;
     float _exploration_noise_mature;
+    int _updates_per_step;
 
     int _id;
 
@@ -161,14 +162,13 @@ private:
     bool _inParentChainTarget(const AbstractedState &state) const;
     bool _inParentChainTarget(const RobotState &state) const;
 
-
     void _fitClassifier(const std::vector<GestationRecord> &states, bool term_success);
 
     float _euclideanDistance(const std::array<float, 3> &a, const std::array<float, 3> &b, bool sqrt) const;
     float _euclideanDistance2D(const std::array<float, 3> &a, const std::array<float, 3> &b, bool sqrt) const;
     float _euclideanDistance(const std::array<float, 4> &a, const std::array<float, 4> &b, bool sqrt) const;
-    
-    void _herUpdate(const std::vector<Transition>& trajectory);
+
+    void _herUpdate(const std::vector<Transition> &trajectory);
 
     // Returns true if the 2D line segment from a to b intersects any cylindrical obstacle.
     bool _segmentIntersectsObstacle(const std::array<float, 3> &a, const std::array<float, 3> &b) const;

@@ -229,8 +229,8 @@ void PurePursuitBaseline::_readScene(float robot_radius, float discretization)
     }
 }
 
-TD3Baseline::TD3Baseline(std::shared_ptr<RobotBridgeTrain> robot_bridge, const std::string& actor_path, const std::string& critic_1_path, const std::string& critic_2_path, const std::vector<int>& actor_layer_sizes, const std::vector<int>& critic_layer_sizes, const torch::Device device)
-    : _robot_bridge(robot_bridge), _env(std::make_shared<TrainEnvironment>(robot_bridge, 1000)),
+TD3Baseline::TD3Baseline(std::shared_ptr<RobotBridgeTrain> robot_bridge, const std::string& actor_path, const std::string& critic_1_path, const std::string& critic_2_path, const std::vector<int>& actor_layer_sizes, const std::vector<int>& critic_layer_sizes, const torch::Device device, bool narrow_map)
+    : _robot_bridge(robot_bridge), _env(std::make_shared<TrainEnvironment>(robot_bridge, 1000, narrow_map)),
      _agent(_env, actor_layer_sizes, critic_layer_sizes, device, 0, 0, 0, 0, 0, 0, 0)
 {
     torch::load(_agent.actor_local, actor_path);
@@ -257,23 +257,23 @@ std::pair<float, bool> TD3Baseline::execute(const AbstractedState &start, const 
         state = next_state;
         last_reward = reward.item<float>();
     }
-    std::cout << last_reward << std::endl;
-    return {cum_reward, last_reward > 45.0f};
+    return {cum_reward, last_reward > _env->narrow_map};
 }
 
-#define X_MIN -7.0f
-#define X_MAX 7.0f
-#define Y_MIN -7.0f
-#define Y_MAX 7.0f
-#define SCENE_FILE "../config/scene/umaze_scene.xml"
+#define X_MIN -3.0f
+#define X_MAX 3.0f
+#define Y_MIN -3.0f
+#define Y_MAX 3.0f
+#define SCENE_FILE "../config/scene/test_scene_narrow.xml"
+#define NARROW_MAP true
 
-#define ACTOR_PATH "../models/best_actor.pt"
-#define CRITIC_1_PATH "../models/best_critic_1.pt"
-#define CRITIC_2_PATH "../models/best_critic_2.pt"
+#define ACTOR_PATH "../models/pretrain_actor_narrow.pt"
+#define CRITIC_1_PATH "../models/pretrain_critic_1_narrow.pt"
+#define CRITIC_2_PATH "../models/pretrain_critic_2_narrow.pt"
 #define ACTOR_LAYER_SIZES {256, 256, 256}
 #define CRITIC_LAYER_SIZES {256, 256, 256}
 
-#define BASELINE_TYPE "pure_pursuit" // "pure_pursuit" or "td3"
+#define BASELINE_TYPE "td3" // "pure_pursuit" or "td3"
 
 int main(int argc, char **argv)
 {
@@ -306,7 +306,7 @@ int main(int argc, char **argv)
     {
         std::vector<int> actor_layer_sizes = ACTOR_LAYER_SIZES;
         std::vector<int> critic_layer_sizes = CRITIC_LAYER_SIZES;
-        baseline = std::make_unique<TD3Baseline>(robot_bridge, ACTOR_PATH, CRITIC_1_PATH, CRITIC_2_PATH, actor_layer_sizes, critic_layer_sizes, device);
+        baseline = std::make_unique<TD3Baseline>(robot_bridge, ACTOR_PATH, CRITIC_1_PATH, CRITIC_2_PATH, actor_layer_sizes, critic_layer_sizes, device, NARROW_MAP);
     }
     else
     {
@@ -314,10 +314,10 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    AbstractedState global_goal = {{-4.5, 4.1, 0.}, {0, 0, 0, -1}, {0, 0, 0}, {0, 0, 0}};
-    AbstractedState global_start = {{-5.3, -4.5, 0.}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
-    // AbstractedState global_goal = {{1.5, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
-    // AbstractedState global_start = {{-1.5, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    // AbstractedState global_goal = {{-4.5, 4.1, 0.}, {0, 0, 0, -1}, {0, 0, 0}, {0, 0, 0}};
+    // AbstractedState global_start = {{-5.3, -4.5, 0.}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    AbstractedState global_goal = {{2.0, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    AbstractedState global_start = {{-2.0, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 
     int successes = 0;
     for (int i = 0; i < 50; i++)

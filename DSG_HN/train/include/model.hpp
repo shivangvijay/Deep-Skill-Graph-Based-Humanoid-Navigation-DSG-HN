@@ -13,8 +13,23 @@
 using namespace torch;
 using Experience = std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>; // this is how we are going to save expirience in buffer
 
-inline void xavier_init_weights(torch::nn::Module &module);
+inline void he_init_weights(torch::nn::Module &module)
+{
+    torch::NoGradGuard noGrad;
 
+    if (auto *linear = module.as<torch::nn::LinearImpl>())
+    {
+        torch::nn::init::kaiming_normal_(linear->weight, 0, torch::kFanIn, torch::kReLU);
+        
+        if (linear->bias.defined())
+            torch::nn::init::constant_(linear->bias, 0.0);
+    }
+
+    for (const auto &child : module.children())
+    {
+        he_init_weights(*child);
+    }
+}
 struct ObstacleAttentionEncoderImpl : nn::Module
 {
     ObstacleAttentionEncoderImpl(int base_state_size_, int obstacle_feature_size_, int attention_dim_, torch::Device device_)
@@ -25,7 +40,7 @@ struct ObstacleAttentionEncoderImpl : nn::Module
         key_proj = register_module("key_proj", nn::Linear(attention_dim, attention_dim));
         value_proj = register_module("value_proj", nn::Linear(attention_dim, attention_dim));
         this->to(device);
-        xavier_init_weights(*this);
+        he_init_weights(*this);
     }
 
     torch::Tensor forward(torch::Tensor state)
@@ -78,26 +93,9 @@ struct ObstacleAttentionEncoderImpl : nn::Module
 
 TORCH_MODULE(ObstacleAttentionEncoder);
 
-inline void xavier_init_weights(torch::nn::Module &module)
-{
-    torch::NoGradGuard noGrad;
-
-    if (auto *linear = module.as<torch::nn::LinearImpl>())
-    {
-        torch::nn::init::xavier_normal_(linear->weight);
-        if (linear->bias.defined())
-            torch::nn::init::constant_(linear->bias, 0.01);
-    }
-
-    for (const auto &child : module.children())
-    {
-        xavier_init_weights(*child);
-    }
-}
-
 struct CriticImpl : nn::Module
 {
-    CriticImpl(int base_state_size, int obstacle_feature_size, int action_size, const std::vector<int> &layer_sizes, torch::Device device_, int attention_dim = 32)
+    CriticImpl(int base_state_size, int obstacle_feature_size, int action_size, const std::vector<int> &layer_sizes, torch::Device device_, int attention_dim = 64)
         : device(device_)
     {
         encoder = register_module("encoder", ObstacleAttentionEncoder(base_state_size, obstacle_feature_size, attention_dim, device_));
@@ -107,12 +105,14 @@ struct CriticImpl : nn::Module
             int input_size = (i == 0) ? (encoder->outputDim() + action_size) : layer_sizes[i - 1];
             int output_size = layer_sizes[i];
             hidden_layers->push_back(nn::Linear(input_size, output_size));
+            auto ln = nn::LayerNorm(nn::LayerNormOptions({output_size}));
+            hidden_layers->push_back(ln);
             hidden_layers->push_back(nn::ReLU());
         }
         output_layer = register_module("output_layer", nn::Linear(layer_sizes.back(), 1));
 
         this->to(device);
-        xavier_init_weights(*this);
+        he_init_weights(*this);
     }
 
     torch::Tensor forward(torch::Tensor state, torch::Tensor action)
@@ -135,7 +135,7 @@ struct CriticImpl : nn::Module
 
 struct ActorImpl : nn::Module
 {
-    ActorImpl(int base_state_size, int obstacle_feature_size, int action_size, const std::vector<int> &layer_sizes, torch::Device device_, int attention_dim = 32)
+    ActorImpl(int base_state_size, int obstacle_feature_size, int action_size, const std::vector<int> &layer_sizes, torch::Device device_, int attention_dim = 64)
         : device(device_)
     {
         encoder = register_module("encoder", ObstacleAttentionEncoder(base_state_size, obstacle_feature_size, attention_dim, device_));
@@ -145,13 +145,17 @@ struct ActorImpl : nn::Module
             int input_size = (i == 0) ? encoder->outputDim() : layer_sizes[i - 1];
             int output_size = layer_sizes[i];
             hidden_layers->push_back(nn::Linear(input_size, output_size));
+            // adding LN here seemed to weaken performance. The normalization may smooth out 
+            // information needed for high precision actions
+            // auto ln = nn::LayerNorm(nn::LayerNormOptions({output_size}));
+            // hidden_layers->push_back(ln);
             hidden_layers->push_back(nn::ReLU());
         }
         output_layer = register_module("output_layer", nn::Linear(layer_sizes.back(), action_size));
 
         this->to(device);
 
-        xavier_init_weights(*this);
+        he_init_weights(*this);
     }
 
     torch::Tensor forward(torch::Tensor state)
@@ -181,11 +185,13 @@ struct PolicyOverOptionsImpl : nn::Module
             int input_size = (i == 0) ? encoder->outputDim() : layer_sizes[i - 1];
             int output_size = layer_sizes[i];
             hidden_layers->push_back(nn::Linear(input_size, output_size));
+            auto ln = nn::LayerNorm(nn::LayerNormOptions({output_size}));
+            hidden_layers->push_back(ln);
             hidden_layers->push_back(nn::ReLU());
         }
         output_layer = register_module("output_layer", nn::Linear(layer_sizes.back(), 1)); // start with just one option
         this->to(device);
-        xavier_init_weights(*this);
+        he_init_weights(*this);
     }
 
     void addOption(float initial_bias) // note: need to reset optimizer when calling this function
