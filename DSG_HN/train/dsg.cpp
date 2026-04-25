@@ -1,4 +1,5 @@
 #include "dsg.h"
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <queue>
@@ -190,15 +191,19 @@ bool DeepSkillGraph::_skillCoversNodeLoose(int skill_idx, int node_idx, bool pes
         return false;
     }
 
-    // Option-node connectivity remains strict over effect-set samples.
+    // Option-node connectivity: require configurable coverage ratio over effect-set samples.
+    // threshold=1.0 reproduces strict full containment.
+    const float threshold = std::clamp(_dsg_cfg.option_node_cover_threshold, 0.0f, 1.0f);
+    int covered = 0;
     for (const auto &s : samples)
     {
         bool ok = pessimistic ? _skills[skill_idx]->canStartPessimistic(s)
                               : _skills[skill_idx]->canStart(s);
-        if (!ok)
-            return false;
+        if (ok)
+            ++covered;
     }
-    return true;
+    const float ratio = samples.empty() ? 0.0f : static_cast<float>(covered) / static_cast<float>(samples.size());
+    return ratio >= threshold;
 }
 
 bool DeepSkillGraph::_containsStart(int v_d, const std::vector<int> &dsc_chain)
@@ -1657,6 +1662,7 @@ int main(int argc, char **argv)
     cfg.optimistic_svc_positive_margin_tolerance = 0.0; // include SVC decision margin band: keep points with decisionValue >= -tol
     cfg.subgoal_robustness_tolerance = 0.1f;    // neighborhood check around sampled subgoal
     cfg.negative_samples_per_failure = 1;       // failure negatives added per failed rollout
+    cfg.option_node_cover_threshold = 0.8f;     // chain-closure criterion for option-node v_d coverage
 
     // -------------------------------------------------------------------------
     // Policy / critic architectures
