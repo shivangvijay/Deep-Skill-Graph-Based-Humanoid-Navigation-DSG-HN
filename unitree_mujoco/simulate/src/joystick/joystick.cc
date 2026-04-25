@@ -61,7 +61,7 @@ bool Joystick::isFound()
 
 void Joystick::getState()
 {
-  if (sample(&event_))
+  while (sample(&event_)) // change if to while to drain entire buffer
   {
     if (event_.isButton())
     {

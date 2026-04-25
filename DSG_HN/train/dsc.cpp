@@ -14,7 +14,7 @@ DeepSkillChaining::DeepSkillChaining(
     const std::string &scene_file,
     Config cfg, bool eval, bool make_goal_option)
     : _robot_bridge(robot_bridge), _device(device), _global_goal(global_goal), _global_start(global_start), _scene_file_path(scene_file), _cfg(std::move(cfg)), _eval(eval),
-      _env(std::make_shared<TrainEnvironment>(_robot_bridge, cfg.steps_per_episode)),
+      _env(std::make_shared<TrainEnvironment>(_robot_bridge, cfg.steps_per_episode, cfg.narrow_map)),
       _poo(_env, _cfg.poo_layers, device, _cfg.lr_poo, _cfg.tau, _cfg.gamma, _cfg.poo_batch_size), _rng(std::random_device{}())
 {
     _env->setSuccessRadius(_cfg.success_radius);
@@ -64,8 +64,6 @@ int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout wh
         }
         else
         {
-            // TODO: more intelligent sampling. The big thing is not just randomly sampling, but perhaps sampling in the
-            // area of the previously learned skill so that it has a bit of an easier time learning
             std::uniform_real_distribution<float> dis(0.0f, 1.0f);
             float p = dis(_rng);
             if (p < 0.1) // bit of goal biased sampling, may want to do even more intelligent sampling going forward
@@ -174,7 +172,38 @@ void DeepSkillChaining::visualizeInitiationSets()
     }
     out.close();
 
-    std::string cmd = "python ../../visualize.py " + _scene_file_path + " " + temp_file;
+    std::string cmd = "python ../visualize.py " + _scene_file_path + " " + temp_file;
+    system(cmd.c_str());
+
+    std::string surface_file = "/tmp/init_surfaces.txt";
+    std::ofstream out_surf(surface_file);
+    int resolution = 80; // 80x80 grid
+
+    for (int i = 0; i < resolution; ++i)
+    {
+        for (int j = 0; j < resolution; ++j)
+        {
+            float x = _robot_bridge->x_min + (float)i * (_robot_bridge->x_max - _robot_bridge->x_min) / (resolution - 1);
+            float y = _robot_bridge->y_min + (float)j * (_robot_bridge->y_max - _robot_bridge->y_min) / (resolution - 1);
+
+            AbstractedState dummy_state;
+            dummy_state.position = {x, y, 0.0f};
+
+            out_surf << x << " " << y;
+            // Append every skill's scores to the same line
+            for (const auto &skill : _skills)
+            {
+                auto [opt, pess] = skill->getDecisionValues(dummy_state);
+                out_surf << " " << opt << " " << pess;
+            }
+            out_surf << "\n";
+        }
+    }
+    out_surf.close();
+
+    // 3. Launch the NEW separate script
+    cmd = "python3 ../visualize_classifier_surface.py " + _scene_file_path + " " + temp_file + " " + surface_file;
+    std::cout << "[DSC] Visualizing decision surfaces..." << std::endl;
     system(cmd.c_str());
 }
 
@@ -472,9 +501,9 @@ bool DeepSkillChaining::_containsGlobalStartState()
     bool start_in_init = false;
     for (int o = _global_option_idx + 1; o < _skills.size(); o++)
     {
-        if (_skills[o]->getTrainingPhase() != "mature")
-            return false;
-        else if (_skills[o]->canStart(_global_start))
+        // if (_skills[o]->getTrainingPhase() != "mature")
+        //     return false;
+        if (_skills[o]->canStart(_global_start) && _skills[o]->getTrainingPhase() == "mature")
             start_in_init = true;
     }
     return start_in_init;
@@ -490,7 +519,9 @@ void DeepSkillChaining::_makeSkill(bool is_global, std::shared_ptr<Skill> parent
                                                                _cfg.actor_layers, _cfg.critic_layers, _device,
                                                                lr_actor, lr_critic, _cfg.tau, _cfg.gamma, _cfg.actor_warmup_steps,
                                                                _cfg.batch_size, _cfg.actor_update_freq, _cfg.last_k,
-                                                               _cfg.max_option_steps, _cfg.nu, parent, _cfg.gestation_n, is_global, local_goal, global_option, _eval);
+                                                               _cfg.max_option_steps, _cfg.nu, parent, _cfg.gestation_n, is_global, local_goal, global_option, _eval,
+                                                               _cfg.exploration_noise_gestation, _cfg.exploration_noise_mature,
+                                                               _cfg.use_human_collected_data, _cfg.human_collected_data_path, _cfg.human_data_percentage);
     if (!is_global)
         new_skill->initFromSkill(_skills[_global_option_idx]);
 
@@ -518,7 +549,9 @@ void DeepSkillChaining::_makeSkill(bool is_global, std::shared_ptr<Skill> parent
                                                                _cfg.actor_layers, _cfg.critic_layers, _device,
                                                                lr_actor, lr_critic, _cfg.tau, _cfg.gamma, _cfg.actor_warmup_steps,
                                                                _cfg.batch_size, _cfg.actor_update_freq, _cfg.last_k,
-                                                               _cfg.max_option_steps, _cfg.nu, parent, _cfg.gestation_n, is_global, _global_goal, global_option, _eval);
+                                                               _cfg.max_option_steps, _cfg.nu, parent, _cfg.gestation_n, is_global, _global_goal, global_option, _eval,
+                                                               _cfg.exploration_noise_gestation, _cfg.exploration_noise_mature,
+                                                               _cfg.use_human_collected_data, _cfg.human_collected_data_path, _cfg.human_data_percentage, _cfg.updates_per_step);
     if (!is_global)
         new_skill->initFromSkill(_skills[_global_option_idx]);
 
@@ -529,7 +562,7 @@ void DeepSkillChaining::_makeSkill(bool is_global, std::shared_ptr<Skill> parent
         std::cout << "\nMaking New Skill With ID: " << id << " (parent=" << parent->goalHits() << "/" << parent->gestationPeriod() << " id=" << id - 1 << ")\n";
     else
         std::cout << "\nMaking New Skill With ID: " << id << "\n";
-    
+
     _skills.push_back(new_skill);
     _poo.addOption(0.0f); // Start with optimistic value so it is used
     _poo.hardCopy();
@@ -712,10 +745,10 @@ AbstractedState DeepSkillChaining::_sampleSpawnState()
 
 #ifndef DSG_BUILD
 #define SCENE_FILE "../config/scene/umaze_scene.xml"
-#define OG_ACTOR "../dsc_models_v4/skill_0_actor.pt"
-#define OG_CRITIC1 "../dsc_models_v4/skill_0_critic1.pt"
-#define OG_CRITIC2 "../dsc_models_v4/skill_0_critic2.pt"
-#define DSC_SAVE_PATH "../dsc_models_v4"
+#define OG_ACTOR "../models/epoch20/actor.pt"
+#define OG_CRITIC1 "../models/epoch20/critic_1.pt"
+#define OG_CRITIC2 "../models/epoch20/critic_2.pt"
+#define DSC_SAVE_PATH "../dsc_models_umaze"
 #define TEST true // if set to true, will not train, will just load and run testing
 
 #define X_MIN -7.0f
@@ -746,24 +779,47 @@ int main(int argc, char **argv)
         SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, /*render=*/false);
 
     DeepSkillChaining::Config cfg;
-    cfg.gestation_n = 60; // number of total successes that should be collected during gestation phase. Perhaps use a percentage for the option being currently learnt?
+    // configs for narrow map
+    // cfg.gestation_n = 120; // number of total successes that should be collected during gestation phase. Perhaps use a percentage for the option being currently learnt?
+    // cfg.last_k = 50;
+    // cfg.max_option_steps = 100; // each option should be meaningful enough. 5Hz and 20 steps means each option can run for up to 4 seconds
+    // cfg.narrow_map = true;
+    // cfg.strict_sampling = true;
+    // cfg.human_collected_data_path = "../../sandbox/transitions_narrow_point_to_point.csv";
+    // cfg.use_human_collected_data = true;
+    // cfg.human_data_percentage = 0.2;
+    // cfg.exploration_noise_gestation = 0.15;
+    // cfg.exploration_noise_mature = 0.1;
+    // cfg.nu = 0.01;
+
+    // configs for umaze
+    cfg.gestation_n = 120;
     cfg.last_k = 15;
-    cfg.max_option_steps = 30; // each option should be meaningful enough. 5Hz and 20 steps means each option can run for up to 4 seconds
-    cfg.nu = 0.01;
+    cfg.max_option_steps = 30;
+    cfg.narrow_map = false;
+    cfg.strict_sampling = false;
+    cfg.exploration_noise_gestation = 0.3;
+    cfg.exploration_noise_mature = 0.1;
+    cfg.nu = 0.05;
+
+    // shared params
     cfg.actor_warmup_steps = 0; // gonna keep at zero for testing purposes as well
     cfg.warmup_episodes = 0;    // keep at zero since I am assuming we have done pretraining
     cfg.verbose = true;         // set to true for per-rollout console output
-    cfg.log_interval = 50;     // print skill status table every N episodes
-    cfg.visualize_initiation_sets = true;
+    cfg.log_interval = 10;      // print skill status table every N episodes
+    cfg.visualize_initiation_sets = false;
     cfg.max_skills = 50;
-    cfg.val_accuracy_threshold = 0.7f;
-    cfg.strict_sampling = true;
+    cfg.val_accuracy_threshold = 0.0f;
+    cfg.success_radius = 0.5f;
+    cfg.updates_per_step = 2;
 
+    // goal for UMaze
     AbstractedState global_goal = {{-4.5, 4.1, 0.}, {0, 0, 0, -1}, {0, 0, 0}, {0, 0, 0}};
-    AbstractedState global_start = {{5.3, -4.5, 0.}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    AbstractedState global_start = {{-5.3, -4.5, 0.}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 
-    // AbstractedState global_goal = {{1.5, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
-    // AbstractedState global_start = {{-1.5, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    // goal for narrow map
+    // AbstractedState global_goal = {{2.0, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    // AbstractedState global_start = {{-2.0, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 
     std::string pretrained_actor_path = OG_ACTOR;
     std::string pretrained_critic_1_path = OG_CRITIC1;
@@ -773,7 +829,7 @@ int main(int argc, char **argv)
 
     if (!TEST)
     {
-        int n = dsc.train(20000);
+        int n = dsc.train(40000);
         std::cout << "\nTraining complete: " << n << " skill(s) in chain." << std::endl;
         dsc.save(DSC_SAVE_PATH);
         dsc.visualizeInitiationSets();
@@ -786,17 +842,21 @@ int main(int argc, char **argv)
 
     dsc.setEvalMode(true);
     // std::cout << "\n=== Evaluation (20 episodes) ===" << std::endl;
-    float total = 0.0f;
-    robot_bridge->startRender();
+    // robot_bridge->startRender();
     int success = 0;
     for (int i = 0; i < 50; ++i)
     {
+        float total = 0.0f;
         float r = dsc.execute();
         auto state = robot_bridge->getRobotState();
+        bool episode_success = false;
         if (std::sqrt((state.position[0] - global_goal.position[0]) * (state.position[0] - global_goal.position[0]) + (state.position[1] - global_goal.position[1]) * (state.position[1] - global_goal.position[1])) < 0.5)
-            success++;
+            {
+        success++;
+                episode_success = true;
+            }
         total += r;
-        std::cout << "  Episode " << i + 1 << ": reward = " << r << std::endl;
+        std::cout << "  Episode " << i + 1 << ": reward = " << r << " Success: " << episode_success << std::endl;
     }
     std::cout << "Num Successed: " << success << " / " << 50 << std::endl;
 

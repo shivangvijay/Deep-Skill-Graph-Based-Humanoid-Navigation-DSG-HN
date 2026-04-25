@@ -14,9 +14,9 @@ Skill::Skill(
     int batch_size, int actor_update_freq, int k, int max_steps, double nu,
     std::shared_ptr<Skill> parent, int gestation_period, bool is_global, AbstractedState global_goal, std::shared_ptr<Skill> global_option, bool eval,
     float exploration_noise_gestation, float exploration_noise_mature,
-    bool use_human_collected_data, std::string human_collected_data_path, float human_data_percentage)
+    bool use_human_collected_data, std::string human_collected_data_path, float human_data_percentage, int updates_per_step)
     : _id(id), _env(env), _parent(parent), _is_global(is_global), _gestation_period(gestation_period), _k(k), _max_steps(max_steps), _exploration_noise_gestation(exploration_noise_gestation), _exploration_noise_mature(exploration_noise_mature),
-      _agent(env, actor_layer_sizes, critic_layer_sizes, device, lr_actor, lr_critic, tau, gamma, batch_size, actor_update_freq, actor_warmup_steps, use_human_collected_data, human_data_percentage),
+      _updates_per_step(updates_per_step), _agent(env, actor_layer_sizes, critic_layer_sizes, device, lr_actor, lr_critic, tau, gamma, batch_size, actor_update_freq, actor_warmup_steps, use_human_collected_data, human_data_percentage),
       _rng(std::random_device{}()), _global_goal(global_goal), _nu(nu), _global_option(global_option), _gamma(gamma), _eval(eval), _lr_actor(lr_actor), _lr_critic(lr_critic)
 {
     if (use_human_collected_data)
@@ -57,7 +57,7 @@ bool Skill::atTermination(const AbstractedState &goal) const
     if (!_parent)
     {
         auto [reward, done] = _env->computeReward(goal);
-        return (done.data_ptr<float>()[0] > 0.5f && reward.data_ptr<float>()[0] > 15);
+        return (done.data_ptr<float>()[0] > 0.5f && reward.data_ptr<float>()[0] > _env->success_val);
     }
 
     auto state = _env->getAbstractedState();
@@ -121,14 +121,17 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
         if (train) // if training instability, perhaps look at putting this outside the while loop like they have it elsewhere
         {
             // her_transitions.push_back({underlying_state, action, next_underlying_state, collision});
+
             _agent.addExperience(state, action, reward, next_state, done);
-            _agent.learn();
+            for (int i = 0; i < _updates_per_step; i++)
+                _agent.learn();
         }
         if (!_is_global && train) // replicating global agent logic
         {
             auto &global_agent = _global_option->agent();
             global_agent.addExperience(state, action, reward, next_state, done);
-            global_agent.learn();
+            for (int i = 0; i < _updates_per_step; i++)
+                global_agent.learn();
         }
 
         state = next_state;
@@ -861,8 +864,9 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
     {
         // PHASE 2: Negative data exists. Train a Binary SVC as the Optimistic Classifier.
         // This allows the agent to "learn from mistakes" by carving out negative space.
+        // for narrow map: C = 0.1, gamma = 0.5
         _classifier.train(_gestation_vecs, _gestation_labels,
-                          /*C=*/0.1, /*gamma=*/0.5, /*balance_classes=*/false);
+                          /*C=*/1.0, /*gamma=*/0.5, /*balance_classes=*/false);
 
         // Filter: Train the Pessimistic One-Class SVM only on states the SVC confirms as Positive.
         std::vector<std::vector<float>> svc_positive_vecs;
@@ -892,8 +896,8 @@ bool Skill::_atLocalGoal(const AbstractedState &goal) const
         return env_done;
     }
 
-    bool at_goal = env_done && (r > 15);
-    bool bad_termination = env_done && (r < 15); // collision, OOB, timeout
+    bool at_goal = env_done && (r > _env->success_val);
+    bool bad_termination = env_done && (r < _env->success_val); // collision, OOB, timeout
     auto abs_state = _env->getAbstractedState();
     bool in_parent = _inParentChainTarget(abs_state);
     if (at_goal && !in_parent)

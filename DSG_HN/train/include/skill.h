@@ -50,7 +50,7 @@ public:
           std::shared_ptr<Skill> parent, int gestation_period, bool is_global, AbstractedState global_goal,
           std::shared_ptr<Skill> global_option, bool eval = false, 
         float exploration_noise_gestation =0.3, float exploration_noise_mature=0.1, bool use_human_collected_data = false, 
-          std::string human_collected_data_path = "", float human_data_percentage=0.25);
+          std::string human_collected_data_path = "", float human_data_percentage=0.25, int updates_per_step=2);
 
     AbstractedState getLocalGoal();
 
@@ -136,6 +136,7 @@ private:
     float _lr_actor;
     float _exploration_noise_gestation;
     float _exploration_noise_mature;
+    int _updates_per_step;
 
     int _id;
 

@@ -10,6 +10,15 @@ set(MUJOCO_DIR     "${PROJECT_SOURCE_DIR}/../../unitree_mujoco/simulate/mujoco")
 set(POLICY_CONFIG_DIR "${PROJECT_SOURCE_DIR}/../deploy/robots/g1_29dof/config")
 set(SCENE_XML_DIR  "${CMAKE_CURRENT_SOURCE_DIR}/../../unitree_mujoco/unitree_robots/g1")
 set(JOYSTICK_SRC   "${PROJECT_SOURCE_DIR}/../../unitree_mujoco/simulate/src")
+set(LIBTORCH_PATH "${PROJECT_SOURCE_DIR}/../train/thirdparty/libtorch")
+
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES STREQUAL "")
+  set(CMAKE_CUDA_ARCHITECTURES "70;75;80;86")
+endif()
+
+list(APPEND CMAKE_PREFIX_PATH "${LIBTORCH_PATH}")
+
+find_package(Torch REQUIRED)
 
 include_directories(
   /usr/include/eigen3
@@ -22,6 +31,7 @@ include_directories(
   ${PROJECT_SOURCE_DIR}/../../unitree_sdk2/include
   ${PROJECT_SOURCE_DIR}/../robot_bridge/include
   ${JOYSTICK_SRC}
+  ${PROJECT_SOURCE_DIR}/../train/include
 )
 
 # Copy scene XML files and policy config alongside the binary
@@ -34,6 +44,7 @@ link_libraries(
   ${PROJECT_SOURCE_DIR}/../deploy/thirdparty/onnxruntime-linux-x64-1.22.0/lib/libonnxruntime.so.1.22.0
   ${MUJOCO_DIR}/lib/libmujoco.so
   glfw
+  ${TORCH_LIBRARIES}
 )
 
 file(GLOB SIMULATE_SOURCES

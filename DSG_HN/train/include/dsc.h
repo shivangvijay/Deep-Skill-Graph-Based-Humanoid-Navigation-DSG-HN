@@ -44,6 +44,8 @@ public:
         float start_noise_radius = 2.0f;
         float val_accuracy_threshold = 0.8f;
         float success_radius = 0.5f;      // environment goal termination radius (meters)
+        bool narrow_map = false; // set to true if you want the reward and state to be that of the narrow env. Note that the models need to be pretrained with the correct reward/state info
+        int updates_per_step = 1;
 
         std::vector<int> actor_layers = {256, 256, 256};
         std::vector<int> critic_layers = {256, 256, 256};
@@ -60,6 +62,11 @@ public:
         int batch_size = 256;
         int poo_batch_size = 16;
         int actor_update_freq = 2;
+        bool use_human_collected_data = false;
+        std::string human_collected_data_path = "";
+        float human_data_percentage = 0.25f; // percentage of sampled data that will come from expert data
+        float exploration_noise_gestation = 0.3f;
+        float exploration_noise_mature = 0.1f;
 
         bool render_training = false;           // if true, startRender() is called before the training loop (slows training)
         bool verbose = false;                   // per-rollout logging inside each episode
