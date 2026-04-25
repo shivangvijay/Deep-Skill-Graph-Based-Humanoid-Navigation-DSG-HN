@@ -65,6 +65,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Also save one image with all skills' pessimistic boundaries overlaid.",
     )
+    parser.add_argument(
+        "--points-file",
+        default="/tmp/init_sets.txt",
+        help="Optional GR overlay file (same format as visualize.py): 'GR <id> <x> <y> <eps>'.",
+    )
     return parser.parse_args()
 
 
@@ -254,6 +259,38 @@ def discover_skills(models_dir: Path) -> List[int]:
     return sorted(set(out))
 
 
+def parse_goal_regions_from_points(points_file: Optional[Path]) -> List[Tuple[int, float, float, float]]:
+    if points_file is None or not points_file.exists():
+        return []
+    goal_regions: List[Tuple[int, float, float, float]] = []
+    with points_file.open("r") as f:
+        for line in f:
+            parts = line.strip().split()
+            if len(parts) >= 5 and parts[0] == "GR":
+                try:
+                    gr_id = int(parts[1])
+                    x, y, eps = float(parts[2]), float(parts[3]), float(parts[4])
+                    goal_regions.append((gr_id, x, y, eps))
+                except ValueError:
+                    continue
+    return goal_regions
+
+
+def draw_goal_regions(ax, goal_regions: List[Tuple[int, float, float, float]]) -> None:
+    for gr_id, x, y, eps in goal_regions:
+        ax.add_patch(
+            patches.Circle(
+                (x, y),
+                eps,
+                linewidth=1.5,
+                edgecolor="magenta",
+                facecolor="none",
+                alpha=0.9,
+            )
+        )
+        ax.text(x, y, f"GR-{gr_id}", color="magenta", fontsize=7, ha="center", va="center")
+
+
 def main() -> None:
     args = parse_args()
     models_dir = Path(args.models_dir).resolve()
@@ -261,6 +298,8 @@ def main() -> None:
         raise FileNotFoundError(f"models dir not found: {models_dir}")
 
     scene_path = parse_scene_path(models_dir, args.scene)
+    points_file = Path(args.points_file).resolve() if args.points_file else None
+    goal_regions = parse_goal_regions_from_points(points_file)
     skills = sorted(set(args.skills)) if args.skills else discover_skills(models_dir)
     if not skills:
         print(f"No classifier files found in {models_dir}")
@@ -378,6 +417,7 @@ def main() -> None:
     if args.save_combined_pessimistic:
         fig_all, ax_all = plt.subplots(figsize=(8, 8))
         draw_obstacles(ax_all, scene_path)
+        draw_goal_regions(ax_all, goal_regions)
         ax_all.set_xlim(args.xmin, args.xmax)
         ax_all.set_ylim(args.ymin, args.ymax)
         ax_all.set_aspect("equal")
