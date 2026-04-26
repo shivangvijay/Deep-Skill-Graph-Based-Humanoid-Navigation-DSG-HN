@@ -20,7 +20,7 @@ Skill::Skill(
     float exploration_noise_gestation, float exploration_noise_mature,
     bool use_human_collected_data, std::string human_collected_data_path, float human_data_percentage, int updates_per_step)
     : _id(id), _env(env), _parent(parent), _is_global(is_global), _gestation_period(gestation_period), _k(k), _max_steps(max_steps), _exploration_noise_gestation(exploration_noise_gestation), _exploration_noise_mature(exploration_noise_mature),
-      _agent(env, actor_layer_sizes, critic_layer_sizes, device, lr_actor, lr_critic, tau, gamma, batch_size, actor_update_freq, actor_warmup_steps),
+      _agent(env, actor_layer_sizes, critic_layer_sizes, device, lr_actor, lr_critic, tau, gamma, batch_size, actor_update_freq, actor_warmup_steps, use_human_collected_data, human_data_percentage),
       _rng(std::random_device{}()), _global_goal(global_goal), _nu(nu), _optimistic_svc_c(optimistic_svc_c),
       _optimistic_svc_gamma(optimistic_svc_gamma), _optimistic_svc_balance_classes(optimistic_svc_balance_classes),
       _optimistic_svc_positive_margin_tolerance(std::max(0.0, optimistic_svc_positive_margin_tolerance)),
@@ -28,21 +28,25 @@ Skill::Skill(
       _optimistic_ocsvm_nu_divisor(std::max(1e-6, optimistic_ocsvm_nu_divisor)),
       _subgoal_robustness_tolerance(subgoal_robustness_tolerance),
       _negative_samples_per_failure(std::max(1, negative_samples_per_failure)), _global_option(global_option),
-      _gamma(gamma), _eval(eval), _lr_actor(lr_actor), _lr_critic(lr_critic)
+      _gamma(gamma), _eval(eval), _lr_actor(lr_actor), _lr_critic(lr_critic), _updates_per_step(updates_per_step)
 {
+    if (use_human_collected_data)
+    {
+        _agent.loadHumanData(env, human_collected_data_path);
+    }
     _agent.setExplorationNoise(_exploration_noise_gestation);
 }
 
-// TODO: perhaps we need something where instead of just tracking goal hits, we only mark it as ready
-// when it meets a certain success percentage
+
 std::string Skill::getTrainingPhase() const
 {
     if (_is_global)
         return "global";
     if (_goal_hits < _gestation_period || !_classifier.trained())
         return "gestation";
-    // Validation phase intentionally disabled:
-    // once gestation threshold + classifier readiness are reached, treat as mature.
+    if (!_validated)
+        return "validation";
+
     return "mature";
 }
 
@@ -180,7 +184,6 @@ void Skill::validateSkill(bool success)
 
     if (success)
     {
-        // _agent.setLearningRates(_lr_actor / 5, _lr_critic / 5);
         _validated = true;
     }
     else

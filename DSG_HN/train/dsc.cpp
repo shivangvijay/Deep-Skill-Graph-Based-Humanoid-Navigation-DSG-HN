@@ -295,8 +295,6 @@ void DeepSkillChaining::setEvalMode(bool eval)
 /*** Private ***/
 void DeepSkillChaining::_validateOption()
 {
-    // Validation phase intentionally disabled.
-    return;
 
     int validate_idx = -1;
     for (int o = _global_option_idx + 1; o < _skills.size(); o++)
@@ -756,12 +754,12 @@ AbstractedState DeepSkillChaining::_sampleSpawnState()
 /************************************** main **************************************/
 
 #ifndef DSG_BUILD
-#define SCENE_FILE "../config/scene/umaze_scene.xml"
-#define OG_ACTOR "../models/pretrain_actor_umaze.pt"
-#define OG_CRITIC1 "../models/pretrain_critic_1_umaze.pt"
-#define OG_CRITIC2 "../models/pretrain_critic_2_umaze.pt"
-#define DSC_SAVE_PATH "../dsc_models_umaze"
-#define TEST true // if set to true, will not train, will just load and run testing
+#define SCENE_FILE "../config/scene/test_scene.xml"
+#define OG_ACTOR "../models/pretrain_actor_test_scene.pt"
+#define OG_CRITIC1 "../models/pretrain_critic_1_test_scene.pt"
+#define OG_CRITIC2 "../models/pretrain_critic_2_test_scene.pt"
+#define DSC_SAVE_PATH "../dsc_models_test_scene"
+#define TEST false // if set to true, will not train, will just load and run testing
 
 #define X_MIN -7.0f
 #define X_MAX 7.0f
@@ -803,11 +801,11 @@ int main(int argc, char **argv)
     // cfg.exploration_noise_gestation = 0.15;
     // cfg.exploration_noise_mature = 0.1;
     // cfg.nu = 0.01;
-    // cfg.optimistic_svc_c = 1.0
+    // cfg.optimistic_svc_c = 0.1
     // cfg.optimistic_svc_gamma = 0.5;
 
     // configs for umaze
-    cfg.gestation_n = 120;
+    cfg.gestation_n = 60;
     cfg.last_k = 15;
     cfg.max_option_steps = 30;
     cfg.narrow_map = false;
@@ -830,14 +828,18 @@ int main(int argc, char **argv)
     cfg.updates_per_step = 2;
     cfg.subgoal_robustness_tolerance = 0.25;
     cfg.negative_samples_per_failure = 1;
+    cfg.pessimistic_ocsvm_gamma = 0.5;
 
     // goal for UMaze
-    AbstractedState global_goal = {{-4.5, 4.1, 0.}, {0, 0, 0, -1}, {0, 0, 0}, {0, 0, 0}};
-    AbstractedState global_start = {{-5.3, -4.5, 0.}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    // AbstractedState global_goal = {{-4.5, 4.1, 0.}, {0, 0, 0, -1}, {0, 0, 0}, {0, 0, 0}};
+    // AbstractedState global_start = {{-5.3, -4.5, 0.}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 
     // goal for narrow map
     // AbstractedState global_goal = {{2.0, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
     // AbstractedState global_start = {{-2.0, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+
+    AbstractedState global_goal = {{4.0, 4.0, 0.}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    AbstractedState global_start = {{0.0, 0.0, 0.}, {0, 0, 0, -1}, {0, 0, 0}, {0, 0, 0}};
 
     std::string pretrained_actor_path = OG_ACTOR;
     std::string pretrained_critic_1_path = OG_CRITIC1;

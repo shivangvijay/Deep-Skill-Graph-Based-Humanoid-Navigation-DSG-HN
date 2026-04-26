@@ -51,7 +51,7 @@ public:
         int max_option_steps = 20;        // how long an option can execute for
         int max_skills = 6;
         float start_noise_radius = 2.0f;
-        float val_accuracy_threshold = 0.8f;
+        float val_accuracy_threshold = 0.0f;
         float success_radius = 0.5f;      // environment goal termination radius (meters)
         bool narrow_map = false; // set to true if you want the reward and state to be that of the narrow env. Note that the models need to be pretrained with the correct reward/state info
         int updates_per_step = 1;
