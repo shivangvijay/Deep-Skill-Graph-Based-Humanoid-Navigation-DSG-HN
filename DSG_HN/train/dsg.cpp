@@ -1665,7 +1665,7 @@ int main(int argc, char **argv)
     cfg.refinement_eps = 30;
     cfg.max_option_steps = 50;
     cfg.max_skills = 10 ;
-    cfg.val_accuracy_threshold = 0.8f;
+    cfg.val_accuracy_threshold = 0.1f;
 
     // -------------------------------------------------------------------------
     // Classifier / initiation set behaviour
