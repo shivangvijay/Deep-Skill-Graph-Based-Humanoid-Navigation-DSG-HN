@@ -1655,7 +1655,6 @@ int main(int argc, char **argv)
     // -------------------------------------------------------------------------
     cfg.success_radius = 0.3f;      // env local-goal success radius
     cfg.goal_region_epsilon = 0.3f; // GR epsilon-ball radius
-    cfg.start_noise_radius = 2.0f;
 
     // -------------------------------------------------------------------------
     // Skill lifecycle (DSC option learning / validation)
