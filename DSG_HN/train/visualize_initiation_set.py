@@ -46,14 +46,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--scale-x",
         type=float,
-        default=7.0,
-        help="World-to-classifier scaling for x feature (feature_x = world_x / scale_x).",
+        default=None,
+        help="World-to-classifier x scaling. If omitted, auto-load from <models-dir>/classifier_scale.txt.",
     )
     parser.add_argument(
         "--scale-y",
         type=float,
-        default=7.0,
-        help="World-to-classifier scaling for y feature (feature_y = world_y / scale_y).",
+        default=None,
+        help="World-to-classifier y scaling. If omitted, auto-load from <models-dir>/classifier_scale.txt.",
     )
     parser.add_argument(
         "--show-points",
@@ -259,6 +259,27 @@ def discover_skills(models_dir: Path) -> List[int]:
     return sorted(set(out))
 
 
+def resolve_feature_scales(models_dir: Path, user_scale_x: Optional[float], user_scale_y: Optional[float]) -> Tuple[float, float]:
+    # Explicit CLI values always win.
+    if user_scale_x is not None and user_scale_y is not None:
+        return float(user_scale_x), float(user_scale_y)
+
+    scale_path = models_dir / "classifier_scale.txt"
+    if scale_path.exists():
+        toks = scale_path.read_text().strip().split()
+        if len(toks) >= 2:
+            sx = float(toks[0])
+            sy = float(toks[1])
+            if sx > 0.0 and sy > 0.0:
+                return (float(user_scale_x) if user_scale_x is not None else sx,
+                        float(user_scale_y) if user_scale_y is not None else sy)
+
+    # Backward-compatible fallback for older runs without persisted scaling metadata.
+    fallback_x = 7.0 if user_scale_x is None else float(user_scale_x)
+    fallback_y = 7.0 if user_scale_y is None else float(user_scale_y)
+    return fallback_x, fallback_y
+
+
 def parse_goal_regions_from_points(points_file: Optional[Path]) -> List[Tuple[int, float, float, float]]:
     if points_file is None or not points_file.exists():
         return []
@@ -305,6 +326,16 @@ def main() -> None:
         print(f"No classifier files found in {models_dir}")
         return
 
+    scale_x, scale_y = resolve_feature_scales(models_dir, args.scale_x, args.scale_y)
+    scale_meta_path = models_dir / "classifier_scale.txt"
+    if args.scale_x is not None and args.scale_y is not None:
+        scale_source = "cli"
+    elif scale_meta_path.exists():
+        scale_source = str(scale_meta_path)
+    else:
+        scale_source = "fallback-default(7,7)"
+    print(f"[scale] source={scale_source} scale_x={scale_x:.6g} scale_y={scale_y:.6g}")
+
     out_dir = models_dir / "initiation_set_viz"
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -312,7 +343,7 @@ def main() -> None:
     ys = np.linspace(args.ymin, args.ymax, args.grid)
     xx, yy = np.meshgrid(xs, ys)
     world_pts = np.stack([xx.ravel(), yy.ravel()], axis=1)
-    feat_pts = np.stack([world_pts[:, 0] / args.scale_x, world_pts[:, 1] / args.scale_y], axis=1)
+    feat_pts = np.stack([world_pts[:, 0] / scale_x, world_pts[:, 1] / scale_y], axis=1)
 
     for sid in skills:
         opt_path = models_dir / f"skill_{sid}_classifier.svm"

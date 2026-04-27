@@ -229,6 +229,13 @@ void DeepSkillChaining::save(const std::string &dir) const
     meta << _skills.size();
     std::ofstream scene_meta(dir + "/scene_file.txt");
     scene_meta << std::filesystem::path(_scene_file_path).filename().string();
+    // Persist classifier feature scaling so offline visualizations can match runtime
+    // canStart/canStartPessimistic checks exactly.
+    {
+        const auto &sf = _env->env_scaling_factors;
+        std::ofstream scale_meta(dir + "/classifier_scale.txt");
+        scale_meta << sf.position[0] << " " << sf.position[1] << " " << sf.position[2] << "\n";
+    }
     torch::save(_poo.q, dir + "/poo_q.pt");
     torch::save(_poo.target_q, dir + "/poo_target_q.pt");
     std::cout << "Saved " << _skills.size() << " skills and policy-over-options to " << dir << std::endl;
