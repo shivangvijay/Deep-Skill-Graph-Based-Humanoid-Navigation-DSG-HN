@@ -24,6 +24,9 @@ public:
     bool inCollision();
 
     void startRender(); // lets you start rendering even after you activated robot bridge (useful for cases when you want to train without rendering, but validate with it)
+    // If true, sleep to approximate wall-clock playback while rendering.
+    // If false, render as fast as simulation allows.
+    void setRenderRealtime(bool enabled) { render_realtime = enabled; }
     std::shared_ptr<MuJoCoEngine> getEngine() const { return eng; }
 
     AbstractedState generateRandomValidConfiguration();
@@ -45,6 +48,7 @@ private:
     int imu_accel_adr;
     int frame_pos_adr;
     int frame_vel_adr;
+    bool render_realtime = false;
 
     void initSensorAddresses();
 };

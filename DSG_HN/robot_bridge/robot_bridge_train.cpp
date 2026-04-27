@@ -78,7 +78,8 @@ void RobotBridgeTrain::update()
         if (render)
         {
             eng->render();
-            std::this_thread::sleep_for(std::chrono::milliseconds(int(LOCMOTION_POLICY_DT * 1000)));
+            if (render_realtime)
+                std::this_thread::sleep_for(std::chrono::milliseconds(int(LOCMOTION_POLICY_DT * 1000)));
         }
     }
 }
@@ -292,5 +293,7 @@ void RobotBridgeTrain::startRender()
     if (render)
         return;
     render = true;
+    // Keep MuJoCoEngine render state in sync when rendering is enabled after construction.
+    eng->render_m = true;
     eng->initViz();
 }

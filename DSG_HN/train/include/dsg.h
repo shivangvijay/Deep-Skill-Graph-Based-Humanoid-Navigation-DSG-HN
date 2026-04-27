@@ -174,6 +174,9 @@ private:
     // --- phase methods ---
     bool _graphExpansionPhase(); // returns true if a goal region was accepted (not rejected)
     void _graphConsolidationPhase();
+    // Fast pre-check used by train() to avoid respawn/render on consolidation
+    // episodes that would be skipped as no-ops.
+    bool _canRunConsolidationEpisode();
 
     Config _dsg_cfg; // full DSG config (superset of _cfg, which is sliced to DSC fields)
 };

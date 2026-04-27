@@ -14,6 +14,29 @@ THIS FILE CONTAINS UTILITIES FOR USE WITH THE DEEP LEARNING AGENT
 class TrainEnvironment
 {
 public:
+    enum class TerminationCause
+    {
+        None,
+        GoalReached,
+        CollisionOrOutOfBounds,
+        Timeout
+    };
+
+    static const char *terminationCauseToString(TerminationCause cause)
+    {
+        switch (cause)
+        {
+        case TerminationCause::GoalReached:
+            return "goal_reached";
+        case TerminationCause::CollisionOrOutOfBounds:
+            return "collision_or_oob";
+        case TerminationCause::Timeout:
+            return "timeout";
+        default:
+            return "none";
+        }
+    }
+
     TrainEnvironment(std::shared_ptr<RobotBridgeTrain> robot_bridge_, int max_steps_, bool narrow_map_ = false) : robot_bridge(robot_bridge_), max_steps(max_steps_), narrow_map(narrow_map_)
     {
         RobotState state = robot_bridge->getRobotState();
@@ -91,6 +114,7 @@ public:
         prev_obs_dist = robot_bridge->distanceToNearestObstacle(start.position, start.orientation);
 
         _collision = false;
+        _last_termination_cause = TerminationCause::None;
         return transformState(robot_bridge->getRobotState());
     }
 
@@ -177,6 +201,7 @@ public:
         prev_dist_to_goal = _euclidean2D(clamped_pos, goal.position);
         prev_obs_dist = robot_bridge->distanceToNearestObstacle(clamped_pos, quat);
         _collision = false;
+        _last_termination_cause = TerminationCause::None;
         return transformState(robot_bridge->getRobotState());
     }
 
@@ -187,6 +212,8 @@ public:
         RobotState s = robot_bridge->getRobotState();
         return {s.position, s.orientation};
     }
+
+    TerminationCause getLastTerminationCause() const { return _last_termination_cause; }
 
     // Fix goal_position to a specific point (e.g. next skill's subgoal).
     // reset() and resetTo() will not randomize goal_position while fixed.
@@ -273,6 +300,7 @@ public:
     // use this compute reward if going with the tight map
     std::pair<torch::Tensor, torch::Tensor> computeReward(const RobotState &state, bool collision, const AbstractedState &goal_, bool use_goal_radius = true)
     {
+        _last_termination_cause = TerminationCause::None;
         if (narrow_map)
         {
             auto goal_position = goal_.position;
@@ -300,11 +328,13 @@ public:
                 reward -= 100;
                 _collision = true;
                 terminated = true;
+                _last_termination_cause = TerminationCause::CollisionOrOutOfBounds;
             }
             else if (use_goal_radius && pos_error < success_radius)
             {
                 reward += 250;
                 terminated = true;
+                _last_termination_cause = TerminationCause::GoalReached;
             }
             else
             {
@@ -319,10 +349,11 @@ public:
                 reward -= 0.5f * action_jerk;
             }
 
-            if (current_step >= max_steps)
+            if (!terminated && current_step >= max_steps)
             {
                 reward -= 10;
                 terminated = true;
+                _last_termination_cause = TerminationCause::Timeout;
             }
 
             prev_dist_to_goal = pos_error;
@@ -359,11 +390,13 @@ public:
                 reward -= 30;
                 _collision = true;
                 terminated = true;
+                _last_termination_cause = TerminationCause::CollisionOrOutOfBounds;
             }
             else if (use_goal_radius && pos_error < success_radius)
             {
                 reward += 50;
                 terminated = true;
+                _last_termination_cause = TerminationCause::GoalReached;
             }
             else
             {
@@ -378,10 +411,11 @@ public:
                 reward -= 0.5f * action_jerk;
             }
 
-            if (current_step >= max_steps)
+            if (!terminated && current_step >= max_steps)
             {
                 reward -= 10;
                 terminated = true;
+                _last_termination_cause = TerminationCause::Timeout;
             }
 
             prev_dist_to_goal = pos_error;
@@ -540,6 +574,7 @@ private:
     float prev_dist_to_goal = 0.0f;
     float prev_obs_dist = 10.0f;
     bool _collision = false;
+    TerminationCause _last_termination_cause = TerminationCause::None;
 
     float _euclidean2D(const std::array<float, 3> &a, const std::array<float, 3> &b) const
     {

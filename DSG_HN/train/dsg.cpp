@@ -372,8 +372,6 @@ int DeepSkillGraph::train(int max_episodes)
         if (episode > 0)
             std::cout << "------\n";
 
-        _env->resetTo(_sampleStartStateFromGlobalStartRegion());
-
         // Per-episode header: episode, phase, and current graph size
         {
             std::string phase_label;
@@ -394,12 +392,14 @@ int DeepSkillGraph::train(int max_episodes)
         // Determine phase
         if (episode < _dsg_cfg.warmup_episodes)
         {
+            _env->resetTo(_sampleStartStateFromGlobalStartRegion());
             _warmupRollout(); // this only warms up the polict over options by rolling out the global option - maybe remove?
         }
         else
         {
             if (episode % _dsg_cfg.expansion_freq == 0) // expand every _dsg_cfg.expansion_freq episodes, otherwise consolidate
             {
+                _env->resetTo(_sampleStartStateFromGlobalStartRegion());
                 // first episode will be expansion
                 bool expanded = false;
                 for (int attempt = 0; attempt < _dsg_cfg.max_expansion_tries && !expanded; attempt++)
@@ -412,7 +412,18 @@ int DeepSkillGraph::train(int max_episodes)
                 }
             }
             else
+            {
+                // Important: skip no-op consolidation episodes before reset so we do
+                // not render unnecessary respawns when --render-training is enabled.
+                if (!_canRunConsolidationEpisode())
+                {
+                    if (_dsg_cfg.verbose)
+                        std::cout << "[DSG Consolidation] Precheck: no actionable bridge yet; skipping episode without respawn.\n";
+                    continue;
+                }
+                _env->resetTo(_sampleStartStateFromGlobalStartRegion());
                 _graphConsolidationPhase();
+            }
 
             // TODO: update transition model
 
@@ -465,6 +476,41 @@ int DeepSkillGraph::train(int max_episodes)
         }
     }
     return (int)_skills.size() - 1;
+}
+
+bool DeepSkillGraph::_canRunConsolidationEpisode()
+{
+    if (_nodes.empty())
+        return false;
+
+    // Keep graph connectivity fresh for the same selector logic used by consolidation.
+    _updateEdges();
+
+    // If there is an active unresolved problem, consolidation should run.
+    if (_current_dsc_problem)
+    {
+        const bool solved = _containsStart(_current_dsc_problem->v_d, _current_dsc_problem->dsc_chain);
+        if (!solved)
+            return true;
+    }
+
+    // Otherwise check whether a new (v_d, v_a, v_g) problem is currently bridgeable.
+    int v_g = _closestDisconnectedNode();
+    if (v_g == -1)
+        return false;
+
+    auto current_state = _env->getAbstractedState();
+    auto D_s = _getDSt(current_state);
+    auto A_vg = _getAncestors(v_g);
+
+    std::vector<int> A_vg_unsaturated;
+    A_vg_unsaturated.reserve(A_vg.size());
+    for (int a : A_vg)
+        if (!_targetAtBranchLimit(a))
+            A_vg_unsaturated.push_back(a);
+
+    auto [v_d, v_a] = _closestPair(D_s, A_vg_unsaturated);
+    return v_d != -1 && v_a != -1;
 }
 
 // =============================================================================
@@ -1334,8 +1380,24 @@ AbstractedState DeepSkillGraph::_nodeRepresentativeState(int node_idx) const
 bool DeepSkillGraph::_graphExpansionPhase()
 {
     std::cout << "\n[DSG Expansion] Starting graph expansion phase...\n";
+    auto eng = _robot_bridge->getEngine();
+
+    // s_0: state at the beginning of this expansion episode.
+    const AbstractedState s_0 = _env->getAbstractedState();
+
     // 1. Sample random reachable state (exploration target)
     AbstractedState s_rand = _env->getRandomValidAbstractedState();
+
+    // Debug markers for expansion:
+    //   cyan  = s_0
+    //   magenta = s_rand
+    if (eng && eng->render_m)
+    {
+        eng->setDebugSpheres({
+            {s_0.position[0], s_0.position[1], 0.20f, 0.10f, {0.0f, 1.0f, 1.0f, 0.95f}},
+            {s_rand.position[0], s_rand.position[1], 0.20f, 0.10f, {1.0f, 0.0f, 1.0f, 0.95f}},
+        });
+    }
 
     // 2. Find nearest node to s_rand within D(s_t)
     // D(s_t) provides a list of unified indices reachable from current state
@@ -1523,7 +1585,7 @@ void DeepSkillGraph::visualizeInitiationSets()
     }
     out.close();
 
-    std::string cmd = "python ../visualize.py \"" + _scene_file_path + "\" \"" + temp_file +
+    std::string cmd = "python ../../visualize.py \"" + _scene_file_path + "\" \"" + temp_file +
                       "\" --models-dir \"" + _dsg_cfg.save_path + "\"";
     system(cmd.c_str());
 }
@@ -1597,6 +1659,23 @@ std::pair<int, AbstractedState> DeepSkillGraph::_pickOption()
 void DeepSkillGraph::_graphConsolidationPhase()
 {
     std::cout << "\n[DSG Consolidation] Starting graph consolidation phase...\n";
+    auto eng = _robot_bridge->getEngine();
+
+    auto setConsolidationMarkers = [&](int v_d, int v_a)
+    {
+        if (!(eng && eng->render_m))
+            return;
+        const auto s_d = _nodeRepresentativeState(v_d);
+        const auto s_a = _nodeRepresentativeState(v_a);
+
+        // Debug markers for consolidation:
+        //   yellow = v_d
+        //   green  = v_a
+        eng->setDebugSpheres({
+            {s_d.position[0], s_d.position[1], 0.20f, 0.10f, {1.0f, 1.0f, 0.0f, 0.95f}},
+            {s_a.position[0], s_a.position[1], 0.20f, 0.10f, {0.0f, 1.0f, 0.0f, 0.95f}},
+        });
+    };
     auto labelsToString = [&](const std::vector<int> &ids) -> std::string
     {
         if (ids.empty())
@@ -1615,6 +1694,7 @@ void DeepSkillGraph::_graphConsolidationPhase()
     bool solved_current_problem = false;
     if (_current_dsc_problem != nullptr)
     {
+        setConsolidationMarkers(_current_dsc_problem->v_d, _current_dsc_problem->v_a);
         solved_current_problem = _containsStart(_current_dsc_problem->v_d, _current_dsc_problem->dsc_chain);
         if (solved_current_problem)
         {
@@ -1693,6 +1773,7 @@ void DeepSkillGraph::_graphConsolidationPhase()
         _current_dsc_problem->v_d = v_d;
         _current_dsc_problem->v_g = v_g;
         _current_dsc_problem->dsc_chain = {};
+        setConsolidationMarkers(v_d, v_a);
 
         std::shared_ptr<Skill> parent = nullptr;
 
@@ -1778,6 +1859,7 @@ int main(int argc, char **argv)
     auto vm = param::helper(argc, argv);
     const bool render_training = vm["render-training"].as<bool>();
     const bool render_eval = vm["render-eval"].as<bool>();
+    const bool render_realtime = vm["render-realtime"].as<bool>();
     std::string rel_path = param::config["FSM"]["Velocity"]["policy_dir"].as<std::string>();
     auto policy_dir = param::parser_policy_dir(rel_path);
 
@@ -1795,6 +1877,7 @@ int main(int argc, char **argv)
 
     auto robot_bridge = std::make_shared<RobotBridgeTrain>(
         SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, /*render=*/false);
+    robot_bridge->setRenderRealtime(render_realtime);
 
     DeepSkillGraph::Config cfg;
     // -------------------------------------------------------------------------
@@ -1894,7 +1977,8 @@ int main(int argc, char **argv)
     cfg.log_interval = 25;
     cfg.visualize_initiation_sets = true;
     std::cout << "[RenderConfig] render_training=" << (render_training ? "true" : "false")
-              << ", render_eval=" << (render_eval ? "true" : "false") << "\n";
+              << ", render_eval=" << (render_eval ? "true" : "false")
+              << ", render_realtime=" << (render_realtime ? "true" : "false") << "\n";
 
     AbstractedState global_start = {{0.0, 0.0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 

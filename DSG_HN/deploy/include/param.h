@@ -149,6 +149,7 @@ inline po::variables_map helper(int argc, char** argv)
         ("network,n", po::value<std::string>()->default_value(""), "dds network interface")
         ("render-training", po::bool_switch()->default_value(false), "enable rendering during DSG/DSC training")
         ("render-eval", po::bool_switch()->default_value(false), "enable rendering during post-training evaluation")
+        ("render-realtime", po::bool_switch()->default_value(false), "throttle rendering to wall-clock time (slower but real-time playback)")
         ;
 
     po::variables_map vm;
