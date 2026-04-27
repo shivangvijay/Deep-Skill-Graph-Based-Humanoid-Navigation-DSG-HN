@@ -26,7 +26,7 @@ static RolloutState robotStateToRolloutState(const RobotState &rs)
     out.vy = rs.velocity[1];
     out.oz = rs.angular_velocity[2];
 
-    out.joint_pos.assign(rs.q.begin(),  rs.q.end());
+    out.joint_pos.assign(rs.q.begin(), rs.q.end());
     out.joint_vel.assign(rs.dq.begin(), rs.dq.end());
     return out;
 }
@@ -37,15 +37,15 @@ static AbstractedState rolloutStateToAbstractedState(const RolloutState &rs)
 {
     AbstractedState as;
     // RolloutState has no z; use 0 (navigation planning is 2-D)
-    as.position    = { static_cast<float>(rs.x),
-                       static_cast<float>(rs.y),
-                       0.0f };
+    as.position = {static_cast<float>(rs.x),
+                   static_cast<float>(rs.y),
+                   0.0f};
     const float qw = static_cast<float>(std::cos(rs.yaw * 0.5));
     const float qz = static_cast<float>(std::sin(rs.yaw * 0.5));
-    as.orientation = { qw, 0.0f, 0.0f, qz };
-    as.velocity    = { static_cast<float>(rs.vx),
-                       static_cast<float>(rs.vy), 0.0f };
-    as.angular_velocity = { 0.0f, 0.0f, static_cast<float>(rs.oz) };
+    as.orientation = {qw, 0.0f, 0.0f, qz};
+    as.velocity = {static_cast<float>(rs.vx),
+                   static_cast<float>(rs.vy), 0.0f};
+    as.angular_velocity = {0.0f, 0.0f, static_cast<float>(rs.oz)};
     return as;
 }
 
@@ -54,21 +54,21 @@ static AbstractedState rolloutStateToAbstractedState(const RolloutState &rs)
 // =============================================================================
 
 void DeepSkillGraph::loadTransitionModel(const std::string &model_path,
-                                          const std::string &normaliser_path)
+                                         const std::string &normaliser_path)
 {
     MpcConfig mpc_cfg;
-    mpc_cfg.horizon    = _dsg_cfg.mpc_horizon;
+    mpc_cfg.horizon = _dsg_cfg.mpc_horizon;
     mpc_cfg.candidates = _dsg_cfg.mpc_candidates;
     mpc_cfg.cem_rounds = _dsg_cfg.mpc_cem_rounds;
     mpc_cfg.cem_elites = _dsg_cfg.mpc_cem_elites;
-    mpc_cfg.w_pos       = _dsg_cfg.mpc_w_pos;
-    mpc_cfg.w_heading   = _dsg_cfg.mpc_w_heading;
-    mpc_cfg.w_terminal  = _dsg_cfg.mpc_w_terminal;
-    mpc_cfg.w_smooth    = _dsg_cfg.mpc_w_smooth;
-    mpc_cfg.w_backward  = _dsg_cfg.mpc_w_backward;
+    mpc_cfg.w_pos = _dsg_cfg.mpc_w_pos;
+    mpc_cfg.w_heading = _dsg_cfg.mpc_w_heading;
+    mpc_cfg.w_terminal = _dsg_cfg.mpc_w_terminal;
+    mpc_cfg.w_smooth = _dsg_cfg.mpc_w_smooth;
+    mpc_cfg.w_backward = _dsg_cfg.mpc_w_backward;
     mpc_cfg.w_collision = _dsg_cfg.mpc_w_collision;
     mpc_cfg.base_radius = _dsg_cfg.mpc_base_radius;
-    mpc_cfg.clearance   = _dsg_cfg.mpc_clearance;
+    mpc_cfg.clearance = _dsg_cfg.mpc_clearance;
 
     // Transformer architecture: seq_len=10, d_model=128, n_heads=4, n_layers=4
     // (must match the checkpoint produced by farnaz/transition training script)
@@ -85,46 +85,110 @@ void DeepSkillGraph::loadTransitionModel(const std::string &model_path,
 
 void DeepSkillGraph::_makeSkill(bool is_global, std::shared_ptr<Skill> parent)
 {
-    DeepSkillChaining::_makeSkill(is_global, parent);
-    if (parent)
-        parent->children.push_back(_skills.back());
+
+    AbstractedState global_goal = _nodeRepresentativeState(_current_dsc_problem->v_a);
+    DeepSkillChaining::_makeSkill(is_global, parent, global_goal);
+
+    if (!_dsg_cfg.save_path.empty())
+    {
+        std::filesystem::create_directories(_dsg_cfg.save_path);
+        save(_dsg_cfg.save_path);
+    }
 }
 
-bool DeepSkillGraph::_shouldCreateNewOption()
+bool DeepSkillGraph::_shouldCreateNewOption(int v_d, const std::vector<int> &dsc_chain)
 {
-    for (int o = _global_option_idx + 1; o < (int)_skills.size(); o++)
-        if (_skills[o]->getTrainingPhase() != "mature") return false;
+    for (auto o : dsc_chain)
+        if (_skills[o]->getTrainingPhase() != "mature")
+            return false;
 
-    if (_containsGlobalStartState()) return false;
-
-    // DSG: respect max_children_per_node on the frontier parent
-    if ((int)_skills[_unfinished_option_idx]->children.size() >= _dsg_cfg.max_children_per_node)
+    if (_containsStart(v_d, dsc_chain))
         return false;
 
     return true;
 }
 
+bool DeepSkillGraph::_containsStart(int v_d, const std::vector<int> &dsc_chain)
+{
+    // for (auto o : dsc_chain)
+    //     if (_skills[o]->getTrainingPhase() != "mature")
+    //         return false;
+
+    for (auto o : dsc_chain)
+    {
+        int can_start_count = 0;
+        for (int i = 0; i < _dsg_cfg.gestation_n; i++)
+            if (_skills[o]->canStart(_nodeRepresentativeState(v_d)) && _skills[o]->getTrainingPhase() == "mature")
+                can_start_count++;
+
+        if (static_cast<float>(can_start_count) / static_cast<float>(_dsg_cfg.gestation_n) > 0.5f)
+        {
+            _updateEdges(o);
+            return true;
+        }
+    }
+    return false;
+}
+
 void DeepSkillGraph::_validateOption()
 {
     DeepSkillChaining::_validateOption();
-    _updateEdges();
+
+    for (int i = 0; i < (int)_skills.size(); ++i)
+    {
+        if (_skills[i]->getTrainingPhase() == "mature")
+        {
+            // Check if already in graph
+            bool in_graph = false;
+            for (const auto &node : _nodes)
+            {
+                if (!node.is_goal_region && node.skill == _skills[i])
+                {
+                    in_graph = true;
+                    break;
+                }
+            }
+
+            if (!in_graph)
+            {
+                Node n;
+                n.is_goal_region = false;
+                n.skill = _skills[i];
+                n.id = (int)_nodes.size();
+                int new_id = n.id;
+                _nodes.push_back(n);
+
+                // --- STRUCTURAL EDGE TO PARENT ---
+                auto parent_skill = _skills[i]->getParent();
+                if (parent_skill)
+                {
+                    for (int j = 0; j < (int)_nodes.size(); ++j)
+                    {
+                        if (!_nodes[j].is_goal_region && _nodes[j].skill == parent_skill)
+                        {
+                            _nodes[new_id].children.push_back({j, 1.0f});
+                            _nodes[j].parents.push_back({new_id, 1.0f});
+                            break;
+                        }
+                    }
+                }
+                _updateEdges(new_id); // Force recalculation of shortcuts
+            }
+        }
+    }
 }
-
-
 
 float DeepSkillGraph::execute()
 {
     _env->resetTo(_global_start);
 
-    // Navigate toward the most recently added goal region (current frontier).
-    // Falls back to the first chained skill node if no goal regions exist yet.
-    int target_node = (_goal_regions.empty())
-        ? _global_option_idx + 1
-        : (int)_skills.size() + (int)_goal_regions.size() - 1;
+    // Target the most recently added node (the current frontier)
+    if (_nodes.empty())
+        return -1.0f;
+    int target_node = (int)_nodes.size() - 1;
 
     _navigateTo(target_node, _dsg_cfg.steps_per_episode);
 
-    // Return negative distance to target as a proxy reward
     auto s = _env->getAbstractedState();
     return -_nodeDistanceToState(target_node, s);
 }
@@ -145,6 +209,20 @@ int DeepSkillGraph::train(int max_episodes)
     if (_dsg_cfg.render_training)
         _robot_bridge->startRender();
 
+    // Seed the graph with the start state as the first GoalRegion (G = (V, E, W)).
+    // This makes _getV(s_t) return a non-empty set when the robot is at s_0, so
+    // D(s_t) is non-empty from episode 0 and consolidation can find (v_d, v_a) pairs.
+    if (_nodes.empty())
+    {
+        Node n;
+        n.is_goal_region = true;
+        n.goal_region = {_global_start, _dsg_cfg.goal_region_epsilon};
+        n.id = 0;
+        _nodes.push_back(n);
+        _updateEdges(0);
+        std::cout << "[DSG] Seeded graph with Node 0 at (" << _global_start.position[0] << ", " << _global_start.position[1] << ")\n";
+    }
+
     for (int episode = 0; episode < max_episodes; episode++)
     {
         _env->resetTo(_global_start); // this can either be a fixed position or come from a small set of states.
@@ -159,11 +237,11 @@ int DeepSkillGraph::train(int max_episodes)
             else
                 phase_label = "consolidation";
 
-            std::cout << "[Ep " << (episode + 1) << "/" << max_episodes
-                      << " | " << phase_label
-                      << " | V=" << (_skills.size() + _goal_regions.size())
-                      << " (S=" << _skills.size() << " GR=" << _goal_regions.size() << ")"
-                      << " E=" << _edges.size() << "]\n";
+            // std::cout << "[Ep " << (episode + 1) << "/" << max_episodes
+            //           << " | " << phase_label
+            //           << " | V=" << (_skills.size() + _goal_regions.size())
+            //           << " (S=" << _skills.size() << " GR=" << _goal_regions.size() << ")"
+            //   << " E=" << _edges.size() << "]\n";
         }
 
         // Determine phase
@@ -192,42 +270,55 @@ int DeepSkillGraph::train(int max_episodes)
             // TODO: update transition model
 
             // _validateOption(); // run validation phase for newly matured options
-
         }
 
-        if (_dsg_cfg.graph_update_freq > 0 && episode % _dsg_cfg.graph_update_freq == 0)
-            // connect new options to graph and update edges
-            _updateEdges();
+        // if (_dsg_cfg.graph_update_freq > 0 && episode % _dsg_cfg.graph_update_freq == 0)
+        // connect new options to graph and update edges
+        // _updateEdges();
 
         if (_dsg_cfg.log_interval > 0 && (episode + 1) % _dsg_cfg.log_interval == 0)
         {
             std::cout << "\n[Episode " << (episode + 1) << "]\n";
-            std::cout << "=== Skill Status ===\n";
+            std::cout << "=== In Progress Skill Status ===\n";
             std::cout << "  ID      Phase       GoalHits  Children\n";
             for (size_t i = 0; i < _skills.size(); ++i)
             {
-                std::string label = (i == (size_t)_global_option_idx) ? "global"
-                                  : (i == (size_t)_global_option_idx + 1) ? "goal"
-                                  : "opt-" + std::to_string(i);
-                std::string phase = (i == (size_t)_global_option_idx) ? "pre-trained"
-                                  : _skills[i]->getTrainingPhase();
-                std::cout << "  " << label << "   " << phase;
-                if (i == (size_t)_global_option_idx)
-                    std::cout << "\n";
-                else
-                    std::cout << "   " << _skills[i]->goalHits() << "/" << _skills[i]->gestationPeriod()
-                              << "  children=" << _skills[i]->children.size() << "\n";
+
+                if (_skills[i]->getTrainingPhase() != "mature")
+                {
+                    std::string label = (i == (size_t)_global_option_idx)       ? "global"
+                                        : (i == (size_t)_global_option_idx + 1) ? "goal"
+                                                                                : "opt-" + std::to_string(i);
+                    std::string phase = (i == (size_t)_global_option_idx) ? "pre-trained"
+                                                                          : _skills[i]->getTrainingPhase();
+                    std::cout << "  " << label << "   " << phase;
+                    if (phase != "pre-trained")
+                        std::cout << "   " << _skills[i]->goalHits() << "/" << _skills[i]->gestationPeriod();
+                    std::cout << "  " << _skills[i]->children.size() << "\n";
+                }
             }
-            std::cout << "  GoalRegions: " << _goal_regions.size()
-                      << "  Edges: " << _edges.size() << "\n";
+            std::cout << "\n=== Graph Structure ===\n";
+
+            for (int i = 0; i < _nodes.size(); i++)
+            {
+                const auto &node = _nodes[i];
+                std::string label = node.is_goal_region ? "GR-" + std::to_string(i) : "Opt-" + std::to_string(i);
+                std::string phase = node.is_goal_region ? "goal_region" : node.skill->getTrainingPhase();
+                std::cout << "  " << label << "   " << phase;
+                if (!node.is_goal_region)
+                    std::cout << "   " << node.skill->goalHits() << "/" << node.skill->gestationPeriod();
+                std::cout << "  children=[";
+                for (const auto &child : node.children)
+                    std::cout << child.first << "(w=" << child.second << ") ";
+                std::cout << "] ";
+                if (node.is_goal_region)
+                    std::cout << " | center=(x=" << node.goal_region.center.position[0]
+                              << ", y=" << node.goal_region.center.position[1]
+                              << ") eps=" << node.goal_region.epsilon;
+                std::cout << "\n";
+            }
             if (_dsg_cfg.visualize_initiation_sets)
                 visualizeInitiationSets();
-        }
-
-        if (_containsGlobalStartState())
-        {
-            std::cout << "Success!\n";
-            break;
         }
     }
     return (int)_skills.size() - 1;
@@ -239,147 +330,147 @@ int DeepSkillGraph::train(int max_episodes)
 
 void DeepSkillGraph::save(const std::string &dir) const
 {
-    DeepSkillChaining::save(dir);
-
-    // Parent topology
-    std::ofstream topo(dir + "/parent_ids.txt");
-    for (size_t i = 0; i < _skills.size(); ++i)
+    DeepSkillChaining::save(dir); // Saves policy weights
+    std::ofstream f(dir + "/graph_structure.txt");
+    f << _nodes.size() << "\n";
+    for (const auto &n : _nodes)
     {
-        int parent_id = -1;
-        for (size_t j = 0; j < _skills.size(); ++j)
-            for (const auto &child : _skills[j]->children)
-                if (child == _skills[i]) { parent_id = (int)j; break; }
-        topo << parent_id << "\n";
+        f << n.id << " " << n.is_goal_region << " " << n.children.size() << " " << n.parents.size() << "\n";
+        // Edges
+        for (auto &c : n.children)
+            f << c.first << " " << c.second << " ";
+        f << "\n";
+        for (auto &p : n.parents)
+            f << p.first << " " << p.second << " ";
+        f << "\n";
+        // Goal Region Data
+        if (n.is_goal_region)
+        {
+            f << n.goal_region.epsilon << " ";
+            for (float v : n.goal_region.center.position)
+                f << v << " ";
+            for (float v : n.goal_region.center.orientation)
+                f << v << " ";
+            for (float v : n.goal_region.center.velocity)
+                f << v << " ";
+            for (float v : n.goal_region.center.angular_velocity)
+                f << v << " ";
+        }
+        f << "\n";
     }
-
-    // Explicit edges
-    std::ofstream edge_file(dir + "/edges.txt");
-    edge_file << _edges.size() << "\n";
-    for (const auto &e : _edges)
-        edge_file << e.from << " " << e.to << " " << e.weight << "\n";
-
-    // Goal regions
-    std::ofstream gr_file(dir + "/goal_regions.txt");
-    gr_file << _goal_regions.size() << "\n";
-    for (const auto &gr : _goal_regions)
-    {
-        gr_file << gr.epsilon;
-        for (float v : gr.center.position)         gr_file << " " << v;
-        for (float v : gr.center.orientation)      gr_file << " " << v;
-        for (float v : gr.center.velocity)         gr_file << " " << v;
-        for (float v : gr.center.angular_velocity) gr_file << " " << v;
-        gr_file << "\n";
-    }
-
-    std::cout << "Saved graph: " << _edges.size() << " edges, "
-              << _goal_regions.size() << " goal regions to " << dir << "\n";
 }
 
 void DeepSkillGraph::load(const std::string &dir, const std::string &scene_file)
 {
-    // Read parent topology before base load creates skills
-    std::vector<int> parent_ids;
-    {
-        std::ifstream topo(dir + "/parent_ids.txt");
-        if (topo.is_open()) { int pid; while (topo >> pid) parent_ids.push_back(pid); }
-    }
-
     DeepSkillChaining::load(dir, scene_file);
+    _nodes.clear();
+    std::ifstream f(dir + "/graph_structure.txt");
+    int n_size;
+    f >> n_size;
 
-    // Restore children links
-    for (size_t i = 0; i < _skills.size() && i < parent_ids.size(); ++i)
-    {
-        int pid = parent_ids[i];
-        if (pid >= 0 && pid < (int)_skills.size())
-            _skills[pid]->children.push_back(_skills[i]);
-    }
+    // Skill index tracker to map _skills back to nodes
+    int skill_ptr = 0;
 
-    // Restore edges
-    _edges.clear();
+    for (int i = 0; i < n_size; i++)
     {
-        std::ifstream edge_file(dir + "/edges.txt");
-        if (edge_file.is_open())
+        Node n;
+        int n_children, n_parents;
+        f >> n.id >> n.is_goal_region >> n_children >> n_parents;
+        // Load Edges
+        for (int j = 0; j < n_children; j++)
         {
-            int n; edge_file >> n;
-            for (int i = 0; i < n; i++)
-            {
-                Edge e; edge_file >> e.from >> e.to >> e.weight;
-                _edges.push_back(e);
-            }
+            int id;
+            float w;
+            f >> id >> w;
+            n.children.push_back({id, w});
         }
-    }
-
-    // Restore goal regions
-    _goal_regions.clear();
-    {
-        std::ifstream gr_file(dir + "/goal_regions.txt");
-        if (gr_file.is_open())
+        for (int j = 0; j < n_parents; j++)
         {
-            int n; gr_file >> n;
-            for (int i = 0; i < n; i++)
-            {
-                GoalRegion gr;
-                gr_file >> gr.epsilon;
-                for (float &v : gr.center.position)         gr_file >> v;
-                for (float &v : gr.center.orientation)      gr_file >> v;
-                for (float &v : gr.center.velocity)         gr_file >> v;
-                for (float &v : gr.center.angular_velocity) gr_file >> v;
-                _goal_regions.push_back(gr);
-            }
+            int id;
+            float w;
+            f >> id >> w;
+            n.parents.push_back({id, w});
         }
-    }
 
-    std::cout << "Restored graph: " << _edges.size() << " edges, "
-              << _goal_regions.size() << " goal regions from " << dir << "\n";
+        if (n.is_goal_region)
+        {
+            f >> n.goal_region.epsilon;
+            for (float &v : n.goal_region.center.position)
+                f >> v;
+            for (float &v : n.goal_region.center.orientation)
+                f >> v;
+            for (float &v : n.goal_region.center.velocity)
+                f >> v;
+            for (float &v : n.goal_region.center.angular_velocity)
+                f >> v;
+        }
+        else
+        {
+            n.skill = _skills[skill_ptr++];
+        }
+        _nodes.push_back(n);
+    }
 }
 
 // =============================================================================
 // Graph edge management
 // =============================================================================
 
-void DeepSkillGraph::_updateEdges()
+// this seems to be a bit buggy, maybe make more strict
+void DeepSkillGraph::_updateEdges(int new_id)
 {
-    int n_skills = (int)_skills.size();
-    int n_gr     = (int)_goal_regions.size();
-
-    auto edge_exists = [&](int from, int to) {
-        for (const auto &e : _edges) if (e.from == from && e.to == to) return true;
-        return false;
-    };
-
-    // skill → skill edges: effect_set(i) ⊆ initiation_set(j)
-    // O(n^2) connecting skills based on effect set containment in initiation set
-    for (int i = _global_option_idx + 1; i < n_skills; i++)
+    for (int i = 0; i < _totalNodes(); ++i)
     {
-        if (_skills[i]->getTrainingPhase() != "mature") continue;
-        const auto &records = _skills[i]->getPositiveGestationRecords();
-        if (records.empty()) continue;
+        if (i == new_id)
+            continue;
+        if (!_nodes[i].is_goal_region && _nodes[i].skill->getTrainingPhase() != "mature")
+            continue;
 
-        for (int j = _global_option_idx + 1; j < n_skills; j++)
+        auto check_link = [&](int src, int dst) -> bool
         {
-            if (i == j || edge_exists(i, j)) continue;
-            bool all_covered = true;
-            for (const auto &rec : records)
-                if (!_skills[j]->canStartPessimistic(rec.state)) { all_covered = false; break; }
-            if (all_covered)
+            if (_nodes[src].is_goal_region)
             {
-                _edges.push_back({i, j, 1.0f});
-                std::cout << "[DSG] Edge " << i << " → " << j << "\n";
+                return _nodeCanStart(dst, _nodes[src].goal_region.center, true);
+            }
+            else
+            {
+                // Endpoint of a Skill is its Effect Set
+                const auto &effects = _nodes[src].skill->getEffectSet();
+                if (effects.empty())
+                    return false;
+                int covered = 0;
+                for (const auto &rec : effects)
+                    if (_nodeCanStart(dst, rec.state, true))
+                        covered++;
+                return (float)covered / effects.size() > 0.7f;
+            }
+        };
+
+        // 1. Check existing node -> new node (i reaches new_id)
+        if (check_link(i, new_id))
+        {
+            bool exists = false;
+            for (const auto &c : _nodes[i].children)
+                if (c.first == new_id)
+                    exists = true;
+            if (!exists)
+            {
+                _nodes[i].children.push_back({new_id, 1.0f});
+                _nodes[new_id].parents.push_back({i, 1.0f});
             }
         }
 
-        // skill → goal_region edges
-        for (int r = 0; r < n_gr; r++)
+        // 2. Check new node -> existing node (new_id reaches i)
+        if (check_link(new_id, i))
         {
-            int gr_idx = n_skills + r;
-            if (edge_exists(i, gr_idx)) continue;
-            bool all_covered = true;
-            for (const auto &rec : records)
-                if (!_nodeCanStart(gr_idx, rec.state)) { all_covered = false; break; }
-            if (all_covered)
+            bool exists = false;
+            for (const auto &c : _nodes[new_id].children)
+                if (c.first == i)
+                    exists = true;
+            if (!exists)
             {
-                _edges.push_back({i, gr_idx, 1.0f});
-                std::cout << "[DSG] Edge " << i << " → GR" << r << "\n";
+                _nodes[new_id].children.push_back({i, 1.0f});
+                _nodes[i].parents.push_back({new_id, 1.0f});
             }
         }
     }
@@ -387,58 +478,78 @@ void DeepSkillGraph::_updateEdges()
 
 void DeepSkillGraph::_updateEdgeWeight(int from, int to, bool success)
 {
-    const float kappa = _dsg_cfg.edge_weight_kappa;
-    for (auto &e : _edges)
+    const float factor = success ? _dsg_cfg.edge_weight_kappa : (1.0f / _dsg_cfg.edge_weight_kappa);
+
+    // Update forward list
+    for (auto &child : _nodes[from].children)
     {
-        if (e.from == from && e.to == to)
+        if (child.first == to)
         {
-            e.weight *= success ? kappa : (1.0f / kappa);
-            return;
+            child.second *= factor;
+            break;
+        }
+    }
+
+    // Update backward list
+    for (auto &parent : _nodes[to].parents)
+    {
+        if (parent.first == from)
+        {
+            parent.second *= factor;
+            break;
         }
     }
 }
 
-std::pair<float, std::vector<int>> DeepSkillGraph::_dijkstraPath(int from_node, int to_node) const
+std::pair<float, std::vector<int>> DeepSkillGraph::_dijkstraPath(int from, int to) const
 {
     int N = _totalNodes();
-
     std::vector<float> dist(N, std::numeric_limits<float>::infinity());
-    std::vector<int>   prev(N, -1);
-    dist[from_node] = 0.0f;
-
-    auto neighbors = [&](int u) -> std::vector<std::pair<int, float>> {
-        std::vector<std::pair<int, float>> nbrs;
-        for (const auto &e : _edges)
-            if (e.from == u) nbrs.push_back({e.to, e.weight});
-        // implicit parent→child edges for skill nodes
-        if (u < (int)_skills.size())
-            for (int k = 0; k < (int)_skills.size(); k++)
-                for (const auto &child : _skills[u]->children)
-                    if (_skills[k] == child) { nbrs.push_back({k, 1.0f}); break; }
-        return nbrs;
-    };
+    std::vector<int> prev(N, -1);
+    dist[from] = 0.0f;
 
     using P = std::pair<float, int>;
     std::priority_queue<P, std::vector<P>, std::greater<P>> pq;
-    pq.push({0.0f, from_node});
+    pq.push({0.0f, from});
 
     while (!pq.empty())
     {
-        auto [d, u] = pq.top(); pq.pop();
-        if (d > dist[u]) continue;
-        for (auto [v, w] : neighbors(u))
-            if (dist[u] + w < dist[v]) { dist[v] = dist[u] + w; prev[v] = u; pq.push({dist[v], v}); }
+        auto [d, u] = pq.top();
+        pq.pop();
+        if (d > dist[u])
+            continue;
+        if (u == to)
+            break;
+
+        for (auto [v, w] : _nodes[u].children) // TODO: ignore goal regions for cost calculation?
+        {
+            if (dist[u] + w < dist[v])
+            {
+                dist[v] = dist[u] + w;
+                prev[v] = u;
+                pq.push({dist[v], v});
+            }
+        }
     }
 
-    if (dist[to_node] == std::numeric_limits<float>::infinity())
-        return {std::numeric_limits<float>::infinity(), {}}; // unreachable
-
     std::vector<int> path;
-    for (int v = to_node; v != -1 && v != from_node; v = prev[v])
+    if (dist[to] == std::numeric_limits<float>::infinity())
+        return {dist[to], path};
+    for (int v = to; v != -1 && v != from; v = prev[v])
         path.push_back(v);
     std::reverse(path.begin(), path.end());
-    return {dist[to_node], path};
+    return {dist[to], path};
 }
+
+// void DeepSkillGraph::_makeSkill(bool is_global, std::shared_ptr<Skill> parent)
+// {
+//     DeepSkillChaining::_makeSkill(is_global, parent);
+//     Node n;
+//     n.is_goal_region = false;
+//     n.skill = _skills.back();
+//     n.id = (int)_nodes.size(); // Stable ID matches index in unified list
+//     _nodes.push_back(n);
+// }
 
 // =============================================================================
 // Unified node dispatch helpers
@@ -446,43 +557,41 @@ std::pair<float, std::vector<int>> DeepSkillGraph::_dijkstraPath(int from_node, 
 
 int DeepSkillGraph::_totalNodes() const
 {
-    return (int)(_skills.size() + _goal_regions.size());
+    return (int)_nodes.size();
 }
 
-bool DeepSkillGraph::_nodeCanStart(int node_idx, const AbstractedState &s) const
+bool DeepSkillGraph::_nodeCanStart(int node_idx, const AbstractedState &s, bool pessimistic) const
 {
-    if (node_idx < (int)_skills.size())
-        return _skills[node_idx]->canStart(s);
+    const auto &n = _nodes[node_idx];
+    if (!n.is_goal_region)
+        return (pessimistic) ? n.skill->canStartPessimistic(s) : n.skill->canStart(s);
 
-    const GoalRegion &gr = _goal_regions[node_idx - (int)_skills.size()];
-    float dx = s.position[0] - gr.center.position[0];
-    float dy = s.position[1] - gr.center.position[1];
-    float dz = s.position[2] - gr.center.position[2];
-    return std::sqrt(dx*dx + dy*dy + dz*dz) <= gr.epsilon;
+    // Goal region check
+    float dx = s.position[0] - n.goal_region.center.position[0];
+    float dy = s.position[1] - n.goal_region.center.position[1];
+
+    return std::sqrt(dx * dx + dy * dy) <= n.goal_region.epsilon;
 }
 
 float DeepSkillGraph::_nodeDistanceToState(int node_idx, const AbstractedState &s) const
 {
-    if (node_idx < (int)_skills.size())
-        return _skills[node_idx]->distanceToState(s);
+    const auto &n = _nodes[node_idx];
+    if (!n.is_goal_region)
+        return n.skill->distanceToState(s);
 
-    const GoalRegion &gr = _goal_regions[node_idx - (int)_skills.size()];
-    float dx = s.position[0] - gr.center.position[0];
-    float dy = s.position[1] - gr.center.position[1];
-    float dz = s.position[2] - gr.center.position[2];
-    return std::sqrt(dx*dx + dy*dy + dz*dz);
+    float dx = s.position[0] - n.goal_region.center.position[0];
+    float dy = s.position[1] - n.goal_region.center.position[1];
+    return std::sqrt(dx * dx + dy * dy);
 }
 
-int DeepSkillGraph::_currentNodeIdx() const
+std::string DeepSkillGraph::_nodeLabel(int node_idx) const
 {
-    auto s = _env->getAbstractedState();
-    // deepest skill whose initiation set contains s
-    for (int o = (int)_skills.size() - 1; o > _global_option_idx; o--)
-        if (_skills[o]->canStart(s)) return o;
-    // check goal regions
-    for (int r = 0; r < (int)_goal_regions.size(); r++)
-        if (_nodeCanStart((int)_skills.size() + r, s)) return (int)_skills.size() + r;
-    return _global_option_idx;
+    if (node_idx < 0 || node_idx >= (int)_nodes.size())
+        return "none";
+    const auto &n = _nodes[node_idx];
+    if (n.is_goal_region)
+        return "GR-" + std::to_string(n.id);
+    return (n.id == _global_option_idx) ? "GlobalOpt" : "Opt-" + std::to_string(n.id);
 }
 
 // =============================================================================
@@ -492,14 +601,17 @@ int DeepSkillGraph::_currentNodeIdx() const
 std::vector<int> DeepSkillGraph::_getV(const AbstractedState &s) const
 {
     std::vector<int> V;
-    // O(s): skill nodes (excluding global) whose initiation set contains s
-    for (int o = _global_option_idx + 1; o < (int)_skills.size(); o++)
-        if (_skills[o]->canStart(s))
-            V.push_back(o);
-    // B(s): goal region nodes containing s
-    for (int r = 0; r < (int)_goal_regions.size(); r++)
-        if (_nodeCanStart((int)_skills.size() + r, s))
-            V.push_back((int)_skills.size() + r);
+    for (int i = 0; i < (int)_nodes.size(); ++i)
+    {
+        if (_nodeCanStart(i, s, false))
+        {
+            // Logic check: Only include mature skills or Goal Regions
+            if (_nodes[i].is_goal_region || _nodes[i].skill->getTrainingPhase() == "mature")
+            {
+                V.push_back(i);
+            }
+        }
+    }
     return V;
 }
 
@@ -521,17 +633,16 @@ std::vector<int> DeepSkillGraph::_getReachableDescendants(int node_idx) const
     std::queue<int> q;
     visited.insert(node_idx);
     q.push(node_idx);
+
     while (!q.empty())
     {
-        int u = q.front(); q.pop();
-        // follow explicit edges
-        for (const auto &e : _edges)
-            if (e.from == u && !visited.count(e.to)) { visited.insert(e.to); q.push(e.to); }
-        // follow implicit parent→child edges for skill nodes
-        if (u < (int)_skills.size())
-            for (int k = 0; k < (int)_skills.size(); k++)
-                for (const auto &child : _skills[u]->children)
-                    if (_skills[k] == child && !visited.count(k)) { visited.insert(k); q.push(k); break; }
+        int u = q.front();
+        q.pop();
+        for (const auto &c : _nodes[u].children)
+        {
+            if (visited.insert(c.first).second)
+                q.push(c.first);
+        }
     }
     return std::vector<int>(visited.begin(), visited.end());
 }
@@ -542,28 +653,32 @@ std::vector<int> DeepSkillGraph::_getAncestors(int node_idx) const
     std::queue<int> q;
     visited.insert(node_idx);
     q.push(node_idx);
+
     while (!q.empty())
     {
-        int u = q.front(); q.pop();
-        // reverse explicit edges
-        for (const auto &e : _edges)
-            if (e.to == u && !visited.count(e.from)) { visited.insert(e.from); q.push(e.from); }
-        // reverse implicit child→parent edges for skill nodes
-        for (int k = 0; k < (int)_skills.size(); k++)
-            for (const auto &child : _skills[k]->children)
-                if (child == _skills[u] && !visited.count(k)) { visited.insert(k); q.push(k); break; }
+        int u = q.front();
+        q.pop();
+        for (const auto &p : _nodes[u].parents)
+        {
+            if (visited.insert(p.first).second)
+                q.push(p.first);
+        }
     }
     return std::vector<int>(visited.begin(), visited.end());
 }
 
 int DeepSkillGraph::_nearestNodeToState(const AbstractedState &s) const
 {
-    int   best = 0;
+    int best = 0;
     float best_dist = std::numeric_limits<float>::infinity();
     for (int i = 0; i < _totalNodes(); i++)
     {
         float d = _nodeDistanceToState(i, s);
-        if (d < best_dist) { best = i; best_dist = d; }
+        if (d < best_dist)
+        {
+            best = i;
+            best_dist = d;
+        }
     }
     return best;
 }
@@ -571,40 +686,56 @@ int DeepSkillGraph::_nearestNodeToState(const AbstractedState &s) const
 int DeepSkillGraph::_closestDisconnectedNode() const
 {
     auto s = _env->getAbstractedState();
-    // Use D(s_t): descendants of all nodes in V(s_t), not just the single current node
-    auto reachable = _getDSt(s);
-    std::unordered_set<int> reachable_set(reachable.begin(), reachable.end());
+    // Use the BFS-based descendant set
+    auto reachable_indices = _getDSt(s);
+    std::unordered_set<int> reachable_set(reachable_indices.begin(), reachable_indices.end());
 
-    int   best = -1;
+    int best = -1;
     float best_dist = std::numeric_limits<float>::infinity();
-    for (int i = 0; i < _totalNodes(); i++)
+
+    for (int i = 0; i < (int)_nodes.size(); i++)
     {
-        if (reachable_set.count(i)) continue;
+        // If the BFS says we can reach it, it is NOT disconnected!
+        if (reachable_set.count(i))
+            continue;
+
+        if (!_nodes[i].is_goal_region && _nodes[i].skill->getTrainingPhase() != "mature")
+            continue;
+
         float d = _nodeDistanceToState(i, s);
-        if (d < best_dist) { best = i; best_dist = d; }
+        if (d < best_dist)
+        {
+            best = i;
+            best_dist = d;
+        }
     }
     return best;
 }
 
-std::pair<int,int> DeepSkillGraph::_closestPair(const std::vector<int> &D,
-                                                  const std::vector<int> &A) const
+std::pair<int, int> DeepSkillGraph::_closestPair(const std::vector<int> &D,
+                                                 const std::vector<int> &A) const
 {
-    int   best_d = -1, best_a = -1;
+    int best_d = -1, best_a = -1;
     float best_dist = std::numeric_limits<float>::infinity();
 
     for (int vd : D)
     {
-        // representative state for vd: sample from inside its region
-        AbstractedState s_vd;
-        if (vd < (int)_skills.size())
-            s_vd = _skills[vd]->sampleSubgoalState();
-        else
-            s_vd = _goal_regions[vd - (int)_skills.size()].center;
+        AbstractedState s_vd = _nodeRepresentativeState(vd);
 
         for (int va : A)
         {
+            // NEW: Skip if they are the same node. There is no gap to bridge here.
+            if (vd == va)
+                continue;
+
             float d = _nodeDistanceToState(va, s_vd);
-            if (d < best_dist) { best_d = vd; best_a = va; best_dist = d; }
+
+            if (d < best_dist)
+            {
+                best_d = vd;
+                best_a = va;
+                best_dist = d;
+            }
         }
     }
     return {best_d, best_a};
@@ -613,75 +744,86 @@ std::pair<int,int> DeepSkillGraph::_closestPair(const std::vector<int> &D,
 // =============================================================================
 // Navigation and training primitives
 // =============================================================================
-
 void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
 {
     int step = 0;
     while (step < max_steps)
     {
         auto current_state = _env->getAbstractedState();
-        if (_nodeCanStart(node_idx, current_state))
+        bool env_done = _env->computeReward(current_state).first.data_ptr<float>()[0] > 0.5;
+        if (_nodeCanStart(node_idx, current_state, false) || env_done)
             return;
 
-        // V(s_t) = O(s_t) ∪ B(s_t): all graph nodes whose region contains current state
+        // V(s_t): all nodes containing the current state
         auto V_s = _getV(current_state);
 
-        // Case (a): find least-cost skill in O(s_t) with a path to node_idx
-        int best_option = -1;
-        int next_node   = -1; // first node on the Dijkstra path after best_option
+        int best_node_idx = -1;
+        int next_hop_idx = -1;
         AbstractedState best_goal;
         float best_cost = std::numeric_limits<float>::infinity();
 
+        // Case (a): find least-cost path to node_idx starting from a skill node in V_s
         for (int v : V_s)
         {
-            if (v >= (int)_skills.size()) continue; // only skill nodes can be executed, i.e., skip goal regions in V(s_t)
+            // if (_nodes[v].is_goal_region)
+            //     continue; // Only skills have policies we can execute
+
             auto [cost, path] = _dijkstraPath(v, node_idx);
             if (!path.empty() && cost < best_cost)
             {
-                best_cost   = cost;
-                best_option = v;
-                next_node   = path.front();
-                best_goal   = _skills[v]->getLocalGoal();
+                best_cost = cost;
+                best_node_idx = v;
+                next_hop_idx = path.front();
+                best_goal = _nodeRepresentativeState(next_hop_idx);
             }
         }
 
-        // Case (b): no graph path from V(s_t) to node_idx (degenerate — node_idx should be in D(s_t))
-        // Steer the global option directly toward the target node as a recovery primitive.
-        if (best_option == -1)
+        // Case (b): Recovery — use Global Option to steer toward target if no graph path exists
+        if (best_node_idx == -1)
         {
-            best_option = _global_option_idx;
-            best_goal   = (node_idx < (int)_skills.size())
-                ? _skills[node_idx]->sampleSubgoalState()
-                : _goal_regions[node_idx - (int)_skills.size()].center; // steer global option directly toward the target node as a recovery primitive
+            best_node_idx = _global_option_idx; // Use the base class global skill index
+            best_goal = _nodeRepresentativeState(node_idx);
+
+            auto [steps_taken, cum_reward, done, first_poo, last_poo] = // reak if done?
+                _skills[_global_option_idx]->rollout(best_goal);
+
+            step += steps_taken;
+            if (steps_taken == 0)
+            {
+                return;
+            }
+            if (_cfg.verbose)
+                std::cout << "[DSG Navigation] No path found. Using Global Option recovery toward "
+                          << _nodeLabel(node_idx) << "\n";
+        }
+        else
+        {
+            // Execute the chosen skill
+            // Access the skill object directly from the Node to avoid index-mismatch bugs
+            if (_nodes[best_node_idx].is_goal_region) continue;
+            auto [steps_taken, cum_reward, done, first_poo, last_poo] =
+                _nodes[best_node_idx].skill->rollout(best_goal);
+
+            if (steps_taken == 0)
+            {
+                return;
+            }
+            step += steps_taken;
         }
 
-        // The paper replans at every new state; training happens in the dedicated training phases.
-        // bool prev_eval = _eval;
-        // setEvalMode(true);
-        auto [steps_taken, cum_reward, done, first_poo, last_poo] =
-            _skills[best_option]->rollout(best_goal);
-        // setEvalMode(prev_eval);
-
-        if (steps_taken == 0) { step++; continue; }
-
-        // Update edge weight based on whether the agent entered the next node (case a only).
-        if (next_node != -1)
+        // Update weights if we were following an explicit graph edge
+        if (next_hop_idx != -1)
         {
-            bool success = _nodeCanStart(next_node, _env->getAbstractedState());
-            _updateEdgeWeight(best_option, next_node, success);
+            bool success = _nodeCanStart(next_hop_idx, _env->getAbstractedState(), false);
+            _updateEdgeWeight(best_node_idx, next_hop_idx, success);
         }
-        
-        // update poo - not needed, can remove
-        _poo.addExperience(first_poo, best_option, cum_reward, last_poo, false, steps_taken);
-        _poo.learn();
-        step += steps_taken;
     }
 }
 
 AbstractedState DeepSkillGraph::_runMPC(const AbstractedState &target)
 {
     // ── Fallback: no transition model loaded, use global option ──────────────
-    if (!_mpc_ctx)
+    if (!_mpc_ctx || true)
     {
         std::cout << "[MPC Fallback] No model — global option proxy for "
                   << _dsg_cfg.mpc_steps << " steps toward ("
@@ -699,7 +841,7 @@ AbstractedState DeepSkillGraph::_runMPC(const AbstractedState &target)
         float dx = s_reached.position[0] - target.position[0];
         float dy = s_reached.position[1] - target.position[1];
         std::cout << "[MPC Fallback] Reached (" << s_reached.position[0] << ", "
-                  << s_reached.position[1] << ") dist=" << std::sqrt(dx*dx + dy*dy) << "\n";
+                  << s_reached.position[1] << ") dist=" << std::sqrt(dx * dx + dy * dy) << "\n";
         return s_reached;
     }
 
@@ -737,14 +879,15 @@ AbstractedState DeepSkillGraph::_runMPC(const AbstractedState &target)
             float dy = static_cast<float>(rs.y - goal_y);
             std::cout << "[MPC] step " << (step + 1) << "/" << _dsg_cfg.mpc_steps
                       << " pos=(" << rs.x << ", " << rs.y << ")"
-                      << " dist=" << std::sqrt(dx*dx + dy*dy)
+                      << " dist=" << std::sqrt(dx * dx + dy * dy)
                       << " act=[" << cmd.vx << ", " << cmd.vy << ", " << cmd.yaw << "]\n";
         }
 
         auto action_tensor = torch::tensor(
-            { static_cast<float>(cmd.vx),
-              static_cast<float>(cmd.vy),
-              static_cast<float>(cmd.yaw) }, torch::kFloat32);
+            {static_cast<float>(cmd.vx),
+             static_cast<float>(cmd.vy),
+             static_cast<float>(cmd.yaw)},
+            torch::kFloat32);
 
         auto [_ns, _r, done_t] = _env->step(action_tensor);
 
@@ -759,65 +902,18 @@ AbstractedState DeepSkillGraph::_runMPC(const AbstractedState &target)
     float dx = s_reached.position[0] - static_cast<float>(goal_x);
     float dy = s_reached.position[1] - static_cast<float>(goal_y);
     std::cout << "[MPC] reached (" << s_reached.position[0] << ", " << s_reached.position[1]
-              << ") dist=" << std::sqrt(dx*dx + dy*dy) << "\n";
+              << ") dist=" << std::sqrt(dx * dx + dy * dy) << "\n";
     return s_reached;
 }
 
-void DeepSkillGraph::_trainDSCBridge(int v_a_skill_idx)
+AbstractedState DeepSkillGraph::_nodeRepresentativeState(int node_idx) const
 {
-    // When v_a is a goal region its ε-ball is the termination set for the bridge skill.
-    // We create a null-parent skill (atTermination uses computeReward) and temporarily
-    // set success_radius = goal_region_epsilon so termination fires at the ε-ball boundary.
-    bool v_a_is_goal_region = (v_a_skill_idx >= (int)_skills.size());
-    AbstractedState bridge_goal;
-
-    if (v_a_is_goal_region)
-    {
-        int gr_idx = v_a_skill_idx - (int)_skills.size();
-        bridge_goal = _goal_regions[gr_idx].center;
-        _makeSkill(false, nullptr);
-    }
-    else
-    {
-        _makeSkill(false, _skills[v_a_skill_idx]);
-    }
-    int bridge_idx = (int)_skills.size() - 1;
-
-    std::cout << "[DSG] Training bridge skill " << bridge_idx
-              << " toward " << (v_a_is_goal_region ? "goal region " : "skill ")
-              << v_a_skill_idx << "\n";
-
-    // Widen success radius to ε for goal-region targets so termination matches the ε-ball.
-    float prev_success_radius = _env->success_radius;
-    if (v_a_is_goal_region)
-        _env->success_radius = _dsg_cfg.goal_region_epsilon;
-
-    // Run rollouts until the bridge skill matures or the step budget is exhausted.
-    int step = 0;
-    while (_skills[bridge_idx]->getTrainingPhase() != "mature" &&
-           step < _dsg_cfg.steps_per_episode)
-    {
-        AbstractedState goal = v_a_is_goal_region
-            ? bridge_goal
-            : _skills[bridge_idx]->getLocalGoal();
-        auto [steps_taken, cum_reward, done, first_poo, last_poo] =
-            _skills[bridge_idx]->rollout(goal);
-
-        if (steps_taken == 0) { step++; continue; }
-
-        _poo.addExperience(first_poo, bridge_idx, cum_reward, last_poo, done, steps_taken);
-        _poo.learn();
-        step += steps_taken;
-    }
-
-    _env->success_radius = prev_success_radius;
-
-    bool matured = _skills[bridge_idx]->getTrainingPhase() == "mature";
-    std::cout << "[DSG] Bridge skill " << bridge_idx
-              << (matured ? " matured" : " budget exhausted")
-              << " after " << step << "/" << _dsg_cfg.steps_per_episode << " steps"
-              << " hits=" << _skills[bridge_idx]->goalHits()
-              << "/" << _skills[bridge_idx]->gestationPeriod() << "\n";
+    const auto &n = _nodes[node_idx];
+    if (n.is_goal_region)
+        return n.goal_region.center;
+    if (n.skill->getTrainingPhase() == "mature")
+        return n.skill->sampleSubgoalState();
+    return _env->getRandomValidAbstractedState();
 }
 
 // =============================================================================
@@ -826,90 +922,293 @@ void DeepSkillGraph::_trainDSCBridge(int v_a_skill_idx)
 
 bool DeepSkillGraph::_graphExpansionPhase()
 {
-    // 1. Sample random reachable state — exploration target - TODO: implement sampling strategy
+    // 1. Sample random reachable state (exploration target)
     AbstractedState s_rand = _env->getRandomValidAbstractedState();
 
-    // 2. Find nearest node to s_rand within D(s_t) — guarantees a path exists from current state
+    // 2. Find nearest node to s_rand within D(s_t)
+    // D(s_t) provides a list of unified indices reachable from current state
     auto D_st = _getDSt(_env->getAbstractedState());
     int v_nn = -1;
+    float best_dist = std::numeric_limits<float>::infinity();
+
+    for (int v : D_st)
     {
-        float best_dist = std::numeric_limits<float>::infinity();
-        for (int v : D_st)
+        float d = _nodeDistanceToState(v, s_rand);
+        if (d < best_dist)
         {
-            float d = _nodeDistanceToState(v, s_rand);
-            if (d < best_dist) { best_dist = d; v_nn = v; }
+            best_dist = d;
+            v_nn = v;
         }
     }
-    // Fallback: graph not yet reachable from current state — use globally nearest node
+
+    // Fallback: Use globally nearest node if D(s_t) is empty or unreachable
     if (v_nn == -1)
         v_nn = _nearestNodeToState(s_rand);
 
-    std::cout << "[DSG Expansion] s_rand=(" << s_rand.position[0] << ", " << s_rand.position[1]
-              << ") v_nn=" << v_nn << "\n";
+    std::cout << "[DSG Expansion] Target: (" << s_rand.position[0] << ", " << s_rand.position[1]
+              << ") | Nearest Node: " << _nodeLabel(v_nn) << "\n";
 
-    // 3. Navigate to v_nn using current graph plan / POO fallback
+    // 3. Navigate to v_nn
     _navigateTo(v_nn, _dsg_cfg.steps_per_episode / 2);
 
-    // 4. Extend graph: run receding-horizon MPC toward s_rand for mpc_steps real steps.
-    //    Uses the learned transition model if loaded; falls back to the global option otherwise.
+    // 4. Extend graph via MPC toward s_rand
     AbstractedState s_mpc = _runMPC(s_rand);
 
-    // 5. Rejection sampling: reject if s_mpc is already inside any node in the graph
-    // Only mature skills have trained classifiers; gestating skills return canStart()=true
-    // everywhere so must be excluded from this check.
-    for (int o = _global_option_idx + 1; o < (int)_skills.size(); o++)
-        if (_skills[o]->getTrainingPhase() == "mature" && _skills[o]->canStart(s_mpc))
+    // 5. Rejection sampling: Is s_mpc already covered by an existing node?
+    for (int i = 0; i < (int)_nodes.size(); ++i)
+    {
+        // Only reject if s_mpc falls into a Goal Region or a MATURE skill.
+        // We skip gestating skills because their classifiers aren't trustworthy yet.
+        if (_nodes[i].is_goal_region || _nodes[i].skill->getTrainingPhase() == "mature")
         {
-            std::cout << "[DSG Expansion] Rejected — s_mpc covered by skill " << o << "\n";
-            return false;
+            if (_nodeCanStart(i, s_mpc, false))
+            {
+                if (_cfg.verbose)
+                    std::cout << "[DSG Expansion] Rejected — s_mpc covered by " << _nodeLabel(i) << "\n";
+                return false;
+            }
         }
-    for (int r = 0; r < (int)_goal_regions.size(); r++)
-        if (_nodeCanStart((int)_skills.size() + r, s_mpc))
+    }
+
+    // 6. Acceptance: Add s_mpc as a new Goal Region Node
+    Node n;
+    n.is_goal_region = true;
+    n.goal_region = {s_mpc, _dsg_cfg.goal_region_epsilon};
+    n.id = (int)_nodes.size();
+    int new_node_id = n.id;
+    _nodes.push_back(n);
+
+    _updateEdges(new_node_id);
+
+    std::cout << "[DSG Expansion] Added " << _nodeLabel(new_node_id)
+              << " linked from " << _nodeLabel(v_nn) << "\n";
+    return true;
+}
+
+float DeepSkillGraph::_dscRollout()
+{
+    int step = 0;
+    bool env_done = false;
+    float total_reward = 0;
+
+    auto eng = _robot_bridge->getEngine();
+
+    auto rollout_goal = _nodeRepresentativeState(_current_dsc_problem->v_a);
+
+    while (step < _dsg_cfg.steps_per_episode && !env_done)
+    {
+        // make a new skill if we have finished training the current option, but still have not reached the end goal
+        if (_shouldCreateNewOption(_current_dsc_problem->v_d, _current_dsc_problem->dsc_chain) && !_eval)
         {
-            std::cout << "[DSG Expansion] Rejected — s_mpc covered by goal region " << r << "\n";
-            return false;
+            std::cout << "\n[DSC] Finished training option " << _unfinished_option_idx << "\n";
+            float total_dist = 0;
+            for (int i = 0; i < _cfg.gestation_n; i++)
+            {
+                AbstractedState sample = _skills[_unfinished_option_idx]->sampleSubgoalState();
+                float dx = sample.position[0] - _global_start.position[0];
+                float dy = sample.position[1] - _global_start.position[1];
+                float dz = sample.position[2] - _global_start.position[2];
+                total_dist += std::sqrt(dx * dx + dy * dy + dz * dz);
+            }
+            std::cout << "\n[Option " << _unfinished_option_idx << " matured] Average distance of initiation region to start: " << (total_dist / _cfg.gestation_n) << " m\n";
+
+            std::shared_ptr<Skill> parent = nullptr;
+
+            if (_current_dsc_problem->dsc_chain.empty())
+            {
+                int root_node_id = _current_dsc_problem->v_a;
+                if (!_nodes[root_node_id].is_goal_region)
+                {
+                    parent = _nodes[root_node_id].skill;
+                }
+            }
+            else
+            {
+                int last_skill_idx = _current_dsc_problem->dsc_chain.back();
+                parent = _skills[last_skill_idx];
+            }
+
+            _makeSkill(false, parent);
+            _current_dsc_problem->dsc_chain.push_back(_unfinished_option_idx);
         }
 
-    // 6. Accept: add s_mpc as a new goal region node
-    _goal_regions.push_back({s_mpc, _dsg_cfg.goal_region_epsilon});
-    std::cout << "[DSG Expansion] GoalRegion " << (_goal_regions.size() - 1)
-              << " at (" << s_mpc.position[0] << ", " << s_mpc.position[1] << ")\n";
-    return true;
+        auto [option, goal] = _pickOption();
+        std::cout << "Option: " << option << " Goal: (" << goal.position[0] << ", " << goal.position[1] << ")\n";
+
+        if (eng->render_m)
+            eng->setGoalMarker(goal.position[0], goal.position[1], 0.5f);
+
+        auto [steps_taken, cum_reward, local_done, first_state_poo, last_state_poo] = _skills[option]->rollout(goal);
+
+        auto [g_reward, g_done] = _env->computeReward(rollout_goal);
+        env_done = g_done.data_ptr<float>()[0] > 0.5f;
+
+        if (steps_taken == 0) // this condition occurs when we just finished training a new skill, but then find ourselves in the initiation set of that skill while trying to train the new skill
+        {
+            break;
+        }
+
+        step += steps_taken;
+        total_reward += cum_reward;
+
+        // float clipped_reward = std::clamp(cum_reward, -100.0f, 100.0f); // clipping reward since sometimes not terminating makes the reward spike and want to limit that effect.
+        if (!_eval) // only train poo during training, not evaluation
+        {
+            _poo.addExperience(first_state_poo, option, cum_reward, last_state_poo, env_done, steps_taken);
+            _poo.learn();
+        }
+
+        if (_cfg.verbose)
+            std::cout << "  [Rollout] option=" << option
+                      << " phase=" << _skills[option]->getTrainingPhase()
+                      << " steps=" << steps_taken
+                      << " reward=" << cum_reward
+                      << " local_done=" << local_done
+                      << " global_done=" << env_done << "\n";
+    }
+    return total_reward;
+}
+
+std::pair<int, AbstractedState> DeepSkillGraph::_pickOption()
+{
+    auto goal = _nodeRepresentativeState(_current_dsc_problem->v_a);
+    auto poo_state = _env->getStateRelativeToGoal(goal);
+    auto global_state = _env->getAbstractedState();
+
+    torch::Tensor q_vals = _poo.getOptions(poo_state);
+
+    int best_option = _global_option_idx;
+    float best_q_val = std::numeric_limits<float>::lowest();
+
+    // Collect valid options split by pessimistic availability
+    std::vector<int> pessimistic_options;
+    std::vector<int> optimistic_options;
+
+    for (auto o : _current_dsc_problem->dsc_chain)
+    {
+        if (_skills[o]->canStart(global_state) && !_skills[o]->atTermination(goal))
+        {
+            if (_skills[o]->canStartPessimistic(global_state))
+            {
+                pessimistic_options.push_back(o);
+            }
+            else
+            {
+                optimistic_options.push_back(o);
+            }
+        }
+    }
+
+    // Pick best from pessimistic, fallback to optimistic
+    const auto &candidates = pessimistic_options.empty() ? optimistic_options : pessimistic_options;
+
+    // empirically found that just picking the earliest valid option is more consistent
+    // than picking based on Q values
+    best_option = candidates.empty() ? _global_option_idx : candidates[0];
+
+    if (best_option == _global_option_idx)
+    {
+        // TODO: pick closest option as goal
+        float min_dist = std::numeric_limits<float>::infinity();
+        int closest_option = -1;
+        for (auto o : _current_dsc_problem->dsc_chain)
+        {
+            float dist = _skills[o]->distanceToState(global_state);
+            if (dist < min_dist)
+            {
+                min_dist = dist;
+                closest_option = o;
+            }
+        }
+        if (closest_option != -1)
+        {
+            return {_global_option_idx, _skills[closest_option]->sampleSubgoalState()};
+        }
+        else
+        {
+            return {_global_option_idx, _global_goal};
+        }
+    }
+    else
+    {
+        return {best_option, _skills[best_option]->getLocalGoal()};
+    }
 }
 
 void DeepSkillGraph::_graphConsolidationPhase()
 {
-    // 1. Find closest node not reachable from current state
-    int v_g = _closestDisconnectedNode();
-    if (v_g == -1)
+    bool can_start_new_problem = _current_dsc_problem == nullptr || _containsStart(_current_dsc_problem->v_d, _current_dsc_problem->dsc_chain);
+
+    if (can_start_new_problem)
     {
-        std::cout << "[DSG Consolidation] Graph fully connected, skipping.\n";
-        return;
+        // 1. Find closest node not reachable from current state
+        int v_g = _closestDisconnectedNode();
+        if (v_g == -1)
+        {
+            std::cout << "[DSG Consolidation] Graph fully connected, skipping.\n";
+            return;
+        }
+
+        // 2. D(s_t): descendants of all nodes in V(s_t); A(v_g): ancestors of the target node
+        auto D_s = _getDSt(_env->getAbstractedState());
+        auto A_vg = _getAncestors(v_g);
+
+        // 3. Find closest bridgeable pair (v_d ∈ D_s, v_a ∈ A_vg)
+        auto [v_d, v_a] = _closestPair(D_s, A_vg);
+        if (v_d == -1 || v_a == -1)
+        {
+            std::cout << "[DSG Consolidation] No bridgeable pair found.\n";
+            return;
+        }
+        if (!_current_dsc_problem)
+            _current_dsc_problem = std::make_unique<DSCProblem>();
+
+        _current_dsc_problem->v_a = v_a;
+        _current_dsc_problem->v_d = v_d;
+        _current_dsc_problem->v_g = v_g;
+        _current_dsc_problem->dsc_chain = {};
+
+        std::shared_ptr<Skill> parent = nullptr;
+
+        if (_current_dsc_problem->dsc_chain.empty())
+        {
+            int root_node_id = _current_dsc_problem->v_a;
+            if (!_nodes[root_node_id].is_goal_region)
+            {
+                parent = _nodes[root_node_id].skill;
+            }
+        }
+        else
+        {
+            int last_skill_idx = _current_dsc_problem->dsc_chain.back();
+            parent = _skills[last_skill_idx];
+        }
+
+        _makeSkill(false, parent);
+        std::cout << _unfinished_option_idx << " is the new option being trained to bridge " << _nodeLabel(v_d) << " to " << _nodeLabel(v_g) << "\n";
+        _current_dsc_problem->dsc_chain.push_back(_unfinished_option_idx);
+
+        std::cout << "[DSG Consolidation] New problem: " << _nodeLabel(v_d) << " → " << _nodeLabel(v_a) << " → " << _nodeLabel(v_g) << "\n";
     }
 
-    // 2. D(s_t): descendants of all nodes in V(s_t); A(v_g): ancestors of the target node
-    auto D_s  = _getDSt(_env->getAbstractedState());
-    auto A_vg = _getAncestors(v_g);
+    std::cout << "[DSG Consolidation] Bridging " << _nodeLabel(_current_dsc_problem->v_d)
+              << " → " << _nodeLabel(_current_dsc_problem->v_a)
+              << " to reach " << _nodeLabel(_current_dsc_problem->v_g) << "\n";
 
-    // 3. Find closest bridgeable pair (v_d ∈ D_s, v_a ∈ A_vg)
-    auto [v_d, v_a] = _closestPair(D_s, A_vg);
-    if (v_d == -1 || v_a == -1)
-    {
-        std::cout << "[DSG Consolidation] No bridgeable pair found.\n";
-        return;
-    }
-
-    std::cout << "[DSG Consolidation] Bridging " << v_d << " → " << v_a
-              << " to reach node " << v_g << "\n";
+    AbstractedState v_a_state = _nodeRepresentativeState(_current_dsc_problem->v_a);
 
     // 4. Navigate to v_d
-    _navigateTo(v_d, _dsg_cfg.steps_per_episode / 3);
+    _navigateTo(_current_dsc_problem->v_d, _dsg_cfg.steps_per_episode / 3);
+    if (_env->getUnderlyingState().second)
+        return;
 
-    // 5. Train a DSC bridge from current position toward v_a
-    _trainDSCBridge(v_a);
+    float reward = _dscRollout();
+    _validateOption();
+    if (_env->getUnderlyingState().second)
+        return;
 
     // 6. Navigate to v_g
-    _navigateTo(v_g, _dsg_cfg.steps_per_episode / 3);
+    _navigateTo(_current_dsc_problem->v_g, _dsg_cfg.steps_per_episode / 3);
 }
 
 // =============================================================================
@@ -920,19 +1219,19 @@ void DeepSkillGraph::_graphConsolidationPhase()
 #error "dsg.cpp must be compiled with -DDSG_BUILD to suppress DSC main"
 #endif
 
-#define SCENE_FILE       "../config/scene/umaze_scene_obs_free.xml"
-#define OG_ACTOR         "../models/best_actor.pt"
-#define OG_CRITIC1       "../models/best_critic_1.pt"
-#define OG_CRITIC2       "../models/best_critic_2.pt"
-#define DSG_SAVE_PATH    "../dsg_models"
-#define TM_CHECKPOINT    "../checkpoints/improved/transition_transformer_delta_latest.pt"
-#define TM_NORMALISER    "../checkpoints/improved/normaliser.txt"
+#define SCENE_FILE "../config/scene/test_scene.xml"
+#define OG_ACTOR "../models/actor.pt"
+#define OG_CRITIC1 "../models/critic_1.pt"
+#define OG_CRITIC2 "../models/critic_2.pt"
+#define DSG_SAVE_PATH "../dsg_models"
+#define TM_CHECKPOINT "../checkpoints/improved/transition_transformer_delta_latest.pt"
+#define TM_NORMALISER "../checkpoints/improved/normaliser.txt"
 #define TEST false
 
 #define X_MIN -7.0f
-#define X_MAX  7.0f
+#define X_MAX 7.0f
 #define Y_MIN -7.0f
-#define Y_MAX  7.0f
+#define Y_MAX 7.0f
 
 int main(int argc, char **argv)
 {
@@ -956,21 +1255,23 @@ int main(int argc, char **argv)
         SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, /*render=*/false);
 
     DeepSkillGraph::Config cfg;
-    cfg.gestation_n            = 50;
-    cfg.last_k                 = 20;
-    cfg.max_option_steps       = 50;
-    cfg.nu                     = 0.1;
-    cfg.actor_warmup_steps     = 0;
-    cfg.warmup_episodes        = 0; // use to warm up policy over options with global option rollouts before starting expansion/consolidation
-    cfg.verbose                = true;
-    cfg.log_interval           = 5;
+    cfg.gestation_n = 60;
+    cfg.last_k = 15;
+    cfg.max_option_steps = 30;
+    cfg.nu = 0.01;
+    cfg.actor_warmup_steps = 0;
+    cfg.warmup_episodes = 0; // use to warm up policy over options with global option rollouts before starting expansion/consolidation
+    cfg.verbose = true;
+    cfg.log_interval = 25;
     cfg.visualize_initiation_sets = true;
-    cfg.max_children_per_node  = 3;
-    cfg.expansion_freq         = 5; // frequency of expansion phase (every N episodes)
-    cfg.mpc_steps              = 50;
-    cfg.goal_region_epsilon    = 1.0f;
+    cfg.max_children_per_node = 3;
+    cfg.expansion_freq = 100; // frequency of expansion phase (every N episodes)
+    cfg.mpc_steps = 50;
+    cfg.goal_region_epsilon = 0.5f;
+    cfg.save_path = DSG_SAVE_PATH;
+    cfg.training_episodes = 20000;
 
-    AbstractedState global_start = {{-5.3, -4.5, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    AbstractedState global_start = {{0.0, 0.0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 
     // DSG has no fixed global goal — the graph grows outward from global_start
     DeepSkillGraph dsg(robot_bridge, device, global_start,
@@ -985,9 +1286,8 @@ int main(int argc, char **argv)
 
     if (!TEST)
     {
-        int n = dsg.train(20000);
+        int n = dsg.train(cfg.training_episodes); // cfg.training_episodes default = 20000
         std::cout << "\nTraining complete: " << n << " skill(s) in graph.\n";
-        dsg.save(DSG_SAVE_PATH);
     }
     else
     {

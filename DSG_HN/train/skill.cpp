@@ -34,41 +34,14 @@ std::string Skill::getTrainingPhase() const
 
 AbstractedState Skill::getLocalGoal()
 {
-    if (_parent == nullptr || _is_global)
-    {
+    // The global option has no meaningful initiation region to sample from.
+    // The first skill in a DSC chain (parent = global option) should target
+    // its own _global_goal (the goal it was trained to reach), not a random
+    // state from the global option's empty gestation records.
+    if (_parent == nullptr || _is_global || _parent->getTrainingPhase() == "global")
         return _global_goal;
-    }
-    else
-    {
-        return _parent->sampleSubgoalState();
-    }
+    return _parent->sampleSubgoalState();
 }
-
-// bool Skill::atTermination(const AbstractedState &goal) const
-// {
-//     auto [reward, done] = _env->computeReward(goal);
-//     if (!_parent)
-//     {
-//         // if the goal option, return if we ended up at the goal
-//         return (done.data_ptr<float>()[0] > 0.5f && reward.data_ptr<float>()[0] > 45);
-//     }
-//     else // return true if the current state is within the parents initiation set
-//     {
-//         // If the environment flagged a terminal state with negative reward,
-//         // this was a collision/OOB/timeout — not a real success.
-//         if (done.data_ptr<float>()[0] > 0.5f && reward.data_ptr<float>()[0] < 0)
-//             return false;
-
-//         auto state = _env->getAbstractedState();
-//         bool collision = _env->getUnderlyingState().second;
-//         // Use pessimistic classifier, but allow near-boundary points (d_val > -0.01)
-//         // only when the optimistic classifier also agrees — this prevents the RBF
-//         // kernel's near-zero tail from matching points far from the parent's region.
-//         bool pessimistic = _parent->canStartPessimistic(state);
-//         bool near_boundary = _parent->canStart(state) && _parent->getDecisionValue(state) > -0.001;
-//         return (pessimistic || near_boundary) && !collision;
-//     }
-// }
 
 bool Skill::atTermination(const AbstractedState &goal) const
 {
@@ -208,7 +181,7 @@ void Skill::validateSkill(bool success)
 
 bool Skill::canStart(const RobotState &state) const
 {
-    if (getTrainingPhase() == "gestation")
+    if (_is_global || getTrainingPhase() == "gestation")
         return true;
     auto vec = _classifierVec(state);
     return _classifier.classify(vec) || _pessimistic_classifier.classify(vec);
@@ -216,7 +189,7 @@ bool Skill::canStart(const RobotState &state) const
 
 bool Skill::canStart(const AbstractedState &state) const
 {
-    if (getTrainingPhase() == "gestation")
+    if (_is_global || getTrainingPhase() == "gestation")
         return true;
     auto vec = _classifierVec(state);
     return _classifier.classify(vec) || _pessimistic_classifier.classify(vec);
@@ -224,14 +197,14 @@ bool Skill::canStart(const AbstractedState &state) const
 
 bool Skill::canStartPessimistic(const RobotState &state) const
 {
-    if (getTrainingPhase() == "gestation")
+    if (_is_global || getTrainingPhase() == "gestation")
         return true;
     return _pessimistic_classifier.classify(_classifierVec(state));
 }
 
 bool Skill::canStartPessimistic(const AbstractedState &state) const
 {
-    if (getTrainingPhase() == "gestation")
+    if (_is_global || getTrainingPhase() == "gestation")
         return true;
     return _pessimistic_classifier.classify(_classifierVec(state));
 }
@@ -378,10 +351,10 @@ AbstractedState Skill::sampleSubgoalState() const
     }
 
     // 3. Final selection from robust candidates
-    if (robust_indices.empty())
-    {
-        std::cout << "No robust candidates found, sampling from all positives\n";
-    }
+    // if (robust_indices.empty())
+    // {
+    //     std::cout << "No robust candidates found, sampling from all positives\n";
+    // }
     const auto &final_pool = robust_indices.empty() ? candidate_indices : robust_indices;
 
     // Nearest-neighbor filtering to keep the chain tight
@@ -459,23 +432,24 @@ void Skill::save(const std::string &actor_path,
         std::cout << "[Skill " << _id << "] Saved pessimistic classifier to " << classifier_path + "_pessimistic" << "\n";
     }
 
-    if (!_is_global && !_positive_gestation_records.empty())
-    {
-        std::ofstream out(classifier_path + "_positives.txt");
-        out << _positive_gestation_records.size() << "\n";
-        for (const auto &record : _positive_gestation_records)
+    auto write_records = [](const std::string &path, const std::vector<GestationRecord> &records) {
+        std::ofstream out(path);
+        out << records.size() << "\n";
+        for (const auto &record : records)
         {
-            for (float v : record.state.position)
-                out << v << " ";
-            for (float v : record.state.orientation)
-                out << v << " ";
-            for (float v : record.state.velocity)
-                out << v << " ";
-            for (float v : record.state.angular_velocity)
-                out << v << " ";
+            for (float v : record.state.position)         out << v << " ";
+            for (float v : record.state.orientation)      out << v << " ";
+            for (float v : record.state.velocity)         out << v << " ";
+            for (float v : record.state.angular_velocity) out << v << " ";
             out << "\n";
         }
-    }
+    };
+
+    if (!_is_global && !_positive_gestation_records.empty())
+        write_records(classifier_path + "_positives.txt", _positive_gestation_records);
+
+    if (!_is_global && !_effect_records.empty())
+        write_records(classifier_path + "_effect.txt", _effect_records);
 }
 
 void Skill::load(const std::string &actor_path,
@@ -534,6 +508,24 @@ void Skill::load(const std::string &actor_path,
             _positive_gestation_records.push_back({_classifierVec(state), state});
         }
     }
+
+    auto load_records = [&](const std::string &path, std::vector<GestationRecord> &records) {
+        std::ifstream f(path);
+        if (!f.good() || _is_global) return;
+        size_t count = 0; f >> count;
+        for (size_t i = 0; i < count; i++)
+        {
+            AbstractedState state;
+            for (auto &v : state.position)         f >> v;
+            for (auto &v : state.orientation)      f >> v;
+            for (auto &v : state.velocity)         f >> v;
+            for (auto &v : state.angular_velocity) f >> v;
+            records.push_back({_classifierVec(state), state});
+        }
+    };
+
+    _effect_records.clear();
+    load_records(classifier_path + "_effect.txt", _effect_records);
 
     if (!_is_global && _classifier.trained())
     {
@@ -772,13 +764,14 @@ void Skill::_herUpdate(const std::vector<Transition> &trajectory)
 //     }
 // }
 
+
+
 void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool term_success)
 {
     if (term_success)
     {
         // 1. Capture the "Entry Point": The state where the robot began this successful rollout.
-        // This is crucial for chaining: it tells the next skill in the chain exactly where
-        // a successful path was found. We skip this for the global/goal option.
+        // Feeds the SVM (initiation set classifier) only — not the effect set.
         if (_parent != nullptr)
         {
             _positive_gestation_records.push_back(visited.front());
@@ -787,7 +780,10 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
         }
 
         // 2. Capture the "Success Buffer": The last K states of the trajectory.
-        // These represent the region where the robot successfully entered the parent's set.
+        // These go into the initiation set proxy (classifier training).
+        // The effect set E_o gets only the single terminal state — the state at which
+        // atTermination() fired. Approach states are outside the parent's boundary and
+        // would cause edge inference (E_i ⊆ I_j) to fail spuriously.
         int buffer_size = std::min((int)visited.size(), _k);
         int start_idx = (int)visited.size() - buffer_size;
 
@@ -797,6 +793,7 @@ void Skill::_fitClassifier(const std::vector<GestationRecord> &visited, bool ter
             _gestation_vecs.push_back(visited[t].classifier_vec);
             _gestation_labels.push_back(1);
         }
+        _effect_records.push_back(visited.back());
     }
     else
     {

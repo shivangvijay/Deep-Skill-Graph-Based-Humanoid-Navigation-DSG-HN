@@ -10,3 +10,6 @@ unitree_mujoco/simulate/mujoco
 **/.DS_Store
 *.png
 dsc_models*/
+**/dsg_models/*
+*.log
+**/references/*
