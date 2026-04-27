@@ -275,7 +275,7 @@ void DeepSkillGraph::_validateOption()
 
 float DeepSkillGraph::execute()
 {
-    _env->resetTo(_sampleStartStateFromGlobalStartRegion());
+    _env->resetTo(_global_start);
 
     // Target the most recently added node (the current frontier)
     if (_nodes.empty())
@@ -293,55 +293,6 @@ void DeepSkillGraph::_warmupRollout()
     // In DSG there is no fixed global goal — roll the global option toward a random valid state.
     AbstractedState target = _env->getRandomValidAbstractedState();
     _skills[_global_option_idx]->rollout(target);
-}
-
-AbstractedState DeepSkillGraph::_sampleStartStateFromGlobalStartRegion(int max_attempts)
-{
-    // Locate the GR created for _global_start (seed node) if present.
-    AbstractedState center = _global_start;
-    float epsilon = std::max(0.0f, _dsg_cfg.goal_region_epsilon);
-    for (const auto &node : _nodes)
-    {
-        if (!node.is_goal_region)
-            continue;
-        const float dx = node.goal_region.center.position[0] - _global_start.position[0];
-        const float dy = node.goal_region.center.position[1] - _global_start.position[1];
-        if (std::sqrt(dx * dx + dy * dy) <= 1e-5f)
-        {
-            center = node.goal_region.center;
-            epsilon = std::max(0.0f, node.goal_region.epsilon);
-            break;
-        }
-    }
-
-    if (epsilon <= 0.0f)
-        return center;
-
-    std::uniform_real_distribution<float> unit01(0.0f, 1.0f);
-    std::uniform_real_distribution<float> unitTheta(0.0f, 6.28318530718f);
-    for (int i = 0; i < max_attempts; ++i)
-    {
-        // Uniform over disk area: r = R * sqrt(u)
-        const float r = epsilon * std::sqrt(unit01(_rng));
-        const float th = unitTheta(_rng);
-
-        AbstractedState sample = center;
-        sample.position[0] = center.position[0] + r * std::cos(th);
-        sample.position[1] = center.position[1] + r * std::sin(th);
-
-        // Match TrainEnvironment::resetTo() clamping bounds to avoid distorted samples.
-        if (sample.position[0] < _robot_bridge->x_min + 0.5f || sample.position[0] > _robot_bridge->x_max - 0.5f)
-            continue;
-        if (sample.position[1] < _robot_bridge->y_min + 0.5f || sample.position[1] > _robot_bridge->y_max - 0.5f)
-            continue;
-        if (!_robot_bridge->isConfigurationValid(sample))
-            continue;
-
-        return sample;
-    }
-
-    // Guaranteed in-region fallback.
-    return center;
 }
 
 // =============================================================================
@@ -372,7 +323,7 @@ int DeepSkillGraph::train(int max_episodes)
         if (episode > 0)
             std::cout << "------\n";
 
-        _env->resetTo(_sampleStartStateFromGlobalStartRegion());
+        _env->resetTo(_global_start); // this can either be a fixed position or come from a small set of states.
 
         // Per-episode header: episode, phase, and current graph size
         {
@@ -1704,6 +1655,7 @@ int main(int argc, char **argv)
     // -------------------------------------------------------------------------
     cfg.success_radius = 0.3f;      // env local-goal success radius
     cfg.goal_region_epsilon = 0.3f; // GR epsilon-ball radius
+    cfg.start_noise_radius = 2.0f;
 
     // -------------------------------------------------------------------------
     // Skill lifecycle (DSC option learning / validation)
@@ -1714,7 +1666,7 @@ int main(int argc, char **argv)
     cfg.refinement_eps = 30;
     cfg.max_option_steps = 50;
     cfg.max_skills = 10 ;
-    cfg.val_accuracy_threshold = 0.1f;
+    cfg.val_accuracy_threshold = 0.8f;
 
     // -------------------------------------------------------------------------
     // Classifier / initiation set behaviour

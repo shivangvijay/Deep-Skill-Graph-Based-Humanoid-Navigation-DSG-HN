@@ -165,9 +165,6 @@ private:
     // cfg.mpc_steps real environment steps.  Returns the state reached.
     // Falls back to running the global option as a proxy if no transition model is loaded.
     AbstractedState _runMPC(const AbstractedState &target);
-    // Sample a valid reset state inside the goal region centered at _global_start.
-    // Falls back to _global_start if no valid sample is found in a bounded number of tries.
-    AbstractedState _sampleStartStateFromGlobalStartRegion(int max_attempts = 128);
     // Returns a representative AbstractedState for any node in the unified index space.
     AbstractedState _nodeRepresentativeState(int node_idx) const;
 
