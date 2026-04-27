@@ -70,11 +70,11 @@ int DeepSkillChaining::train(int max_episodes) // max_episodes is the timeout wh
         {
             std::uniform_real_distribution<float> dis(0.0f, 1.0f);
             float p = dis(_rng);
-            if (p < 0.1) // bit of goal biased sampling, may want to do even more intelligent sampling going forward
+            if (p < _cfg.sample_global_start_percentage) // bit of goal biased sampling, may want to do even more intelligent sampling going forward
             {
                 _env->resetTo(_global_start);
             }
-            else if (p >= 0.1 && p < 0.7)
+            else if (p >= _cfg.sample_global_start_percentage && p < _cfg.sample_global_start_percentage + _cfg.sample_start_near_boundary_percentage)
             {
                 auto start = _sampleStartNearBoundary();
                 _env->resetTo(start);
@@ -495,7 +495,7 @@ bool DeepSkillChaining::_shouldCreateNewOption()
     bool start_in_init = false;
     for (int o = _global_option_idx + 1; o < _skills.size(); o++)
     {
-        if (_skills[o]->getTrainingPhase() != "mature")
+        if (_skills[o]->getTrainingPhase() != "mature" && !_cfg.strict_sampling) // disable when using strict sampling since if an earlier option can start, no later option will ever pass gestation
             return false;
         if (_skills[o]->canStart(_global_start))
             return false;
@@ -508,8 +508,8 @@ bool DeepSkillChaining::_containsGlobalStartState()
     bool start_in_init = false;
     for (int o = _global_option_idx + 1; o < _skills.size(); o++)
     {
-        // if (_skills[o]->getTrainingPhase() != "mature")
-        //     return false;
+        if (_skills[o]->getTrainingPhase() != "mature")
+            return false;
         if (_skills[o]->canStart(_global_start) && _skills[o]->getTrainingPhase() == "mature")
             start_in_init = true;
     }
@@ -676,7 +676,6 @@ AbstractedState DeepSkillChaining::_sampleStartNearObstacle()
 // perhaps: instead of sampling interpolating between goal and start, interpolate between start and random part of inititation set of last mature option
 AbstractedState DeepSkillChaining::_sampleStartInterpolated()
 {
-
     float pos_std = 1.0f; // tune this based on how much spread you want
     for (int attempts = 0; attempts < 300; attempts++)
     {
@@ -761,12 +760,13 @@ AbstractedState DeepSkillChaining::_sampleSpawnState()
 /************************************** main **************************************/
 
 #ifndef DSG_BUILD
-#define SCENE_FILE "../config/scene/test_scene.xml"
-#define OG_ACTOR "../models/pretrain_actor_test_scene.pt"
-#define OG_CRITIC1 "../models/pretrain_critic_1_test_scene.pt"
-#define OG_CRITIC2 "../models/pretrain_critic_2_test_scene.pt"
-#define DSC_SAVE_PATH "../dsc_models_test_scene"
-#define TEST false // if set to true, will not train, will just load and run testing
+#define SCENE_FILE "../config/scene/umaze_scene.xml"
+#define OG_ACTOR "../models/pretrain_actor_umaze.pt"
+#define OG_CRITIC1 "../models/pretrain_critic_1_umaze.pt"
+#define OG_CRITIC2 "../models/pretrain_critic_2_umaze.pt"
+#define DSC_SAVE_PATH "../dsc_models_umaze"
+#define TEST true // if set to true, will not train, will just load and run testing
+#define RENDER_TRAINING false
 
 #define X_MIN -7.0f
 #define X_MAX 7.0f
@@ -793,7 +793,7 @@ int main(int argc, char **argv)
     }
 
     auto robot_bridge = std::make_shared<RobotBridgeTrain>(
-        SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, /*render=*/false);
+        SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, /*render=*/RENDER_TRAINING);
 
     DeepSkillChaining::Config cfg;
     // configs for narrow map
@@ -808,11 +808,11 @@ int main(int argc, char **argv)
     // cfg.exploration_noise_gestation = 0.15;
     // cfg.exploration_noise_mature = 0.1;
     // cfg.nu = 0.01;
-    // cfg.optimistic_svc_c = 0.1
+    // cfg.optimistic_svc_c = 0.1;
     // cfg.optimistic_svc_gamma = 0.5;
 
     // configs for umaze
-    cfg.gestation_n = 60;
+    cfg.gestation_n = 120;
     cfg.last_k = 15;
     cfg.max_option_steps = 30;
     cfg.narrow_map = false;
@@ -822,6 +822,22 @@ int main(int argc, char **argv)
     cfg.nu = 0.05;
     cfg.optimistic_svc_c = 1.0;
     cfg.optimistic_svc_gamma = 0.5;
+    cfg.sample_global_start_percentage = 0.1;
+    cfg.sample_start_near_boundary_percentage = 0.6;
+
+    // configs for test scene
+    // cfg.gestation_n = 60;
+    // cfg.last_k = 30;
+    // cfg.max_option_steps = 50;
+    // cfg.narrow_map = false;
+    // cfg.strict_sampling = false;
+    // cfg.exploration_noise_gestation = 0.3;
+    // cfg.exploration_noise_mature = 0.1;
+    // cfg.nu = 0.05;
+    // cfg.optimistic_svc_c = 1.0;
+    // cfg.optimistic_svc_gamma = 0.5;
+    // cfg.sample_global_start_percentage = 0.6;
+    // cfg.sample_start_near_boundary_percentage = 0.1;
 
     // shared params
     cfg.actor_warmup_steps = 0; // gonna keep at zero for testing purposes as well
@@ -836,17 +852,18 @@ int main(int argc, char **argv)
     cfg.subgoal_robustness_tolerance = 0.25;
     cfg.negative_samples_per_failure = 1;
     cfg.pessimistic_ocsvm_gamma = 0.5;
+    cfg.optimistic_svc_balance_classes = false;
 
     // goal for UMaze
-    // AbstractedState global_goal = {{-4.5, 4.1, 0.}, {0, 0, 0, -1}, {0, 0, 0}, {0, 0, 0}};
-    // AbstractedState global_start = {{-5.3, -4.5, 0.}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    AbstractedState global_goal = {{-4.5, 4.1, 0.}, {0, 0, 0, -1}, {0, 0, 0}, {0, 0, 0}};
+    AbstractedState global_start = {{-5.3, -4.5, 0.}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 
     // goal for narrow map
     // AbstractedState global_goal = {{2.0, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
     // AbstractedState global_start = {{-2.0, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 
-    AbstractedState global_goal = {{4.0, 4.0, 0.}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
-    AbstractedState global_start = {{0.0, 0.0, 0.}, {0, 0, 0, -1}, {0, 0, 0}, {0, 0, 0}};
+    // AbstractedState global_start = {{4.0, 4.0, 0.}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    // AbstractedState global_goal = {{0.0, 0.0, 0.}, {0, 0, 0, -1}, {0, 0, 0}, {0, 0, 0}};
 
     std::string pretrained_actor_path = OG_ACTOR;
     std::string pretrained_critic_1_path = OG_CRITIC1;
@@ -869,7 +886,7 @@ int main(int argc, char **argv)
 
     dsc.setEvalMode(true);
     // std::cout << "\n=== Evaluation (20 episodes) ===" << std::endl;
-    // robot_bridge->startRender();
+    robot_bridge->startRender();
     int success = 0;
     for (int i = 0; i < 50; ++i)
     {
