@@ -16,6 +16,32 @@ list(APPEND CMAKE_PREFIX_PATH "${LIBTORCH_PATH}")
 
 find_package(Torch REQUIRED)
 
+set(THIRDPARTY_HINTS
+  $ENV{CONDA_PREFIX}
+  /opt/homebrew
+  /usr/local
+)
+
+find_path(GLFW_INCLUDE_DIR
+  NAMES GLFW/glfw3.h
+  HINTS ${THIRDPARTY_HINTS}
+  PATH_SUFFIXES include
+)
+find_library(GLFW_LIBRARY
+  NAMES glfw glfw3 libglfw.dylib
+  HINTS ${THIRDPARTY_HINTS}
+  PATH_SUFFIXES lib
+)
+if(NOT GLFW_INCLUDE_DIR OR NOT GLFW_LIBRARY)
+  message(FATAL_ERROR "GLFW not found. Install glfw in your active env/system and reconfigure CMake.")
+endif()
+
+find_path(SPDLOG_INCLUDE_DIR
+  NAMES spdlog/spdlog.h
+  HINTS ${THIRDPARTY_HINTS}
+  PATH_SUFFIXES include
+)
+
 include_directories(
   /opt/homebrew/include
   $ENV{CONDA_PREFIX}/include
@@ -29,6 +55,7 @@ include_directories(
   ${MUJOCO_DIR}
   ${PROJECT_SOURCE_DIR}/../../../unitree_sdk2/include   # headers only — IDL types used as plain structs
   ${TRAIN_DIR}/../robot_bridge/include
+  ${GLFW_INCLUDE_DIR}
 )
 
 file(COPY ${SCENE_XML_DIR}/ DESTINATION ${PROJECT_SOURCE_DIR}/config/scene)
@@ -52,16 +79,23 @@ set(COMMON_LIBS
   $ENV{CONDA_PREFIX}/lib/libfmt.dylib
   ${TRAIN_DIR}/../deploy/thirdparty/onnxruntime-osx-arm64-1.22.0/lib/libonnxruntime.dylib
   ${MUJOCO_DIR}/lib/libmujoco.3.3.6.dylib
-  $ENV{CONDA_PREFIX}/lib/libglfw.dylib
+  ${GLFW_LIBRARY}
   $ENV{CONDA_PREFIX}/lib/libsvm.dylib
   ${TORCH_LIBRARIES}
 )
 
-add_executable(train ${TRAIN_DIR}/train.cpp ${COMMON_SOURCES})
-target_link_libraries(train PRIVATE ${COMMON_LIBS})
+if(SPDLOG_INCLUDE_DIR)
+  include_directories(${SPDLOG_INCLUDE_DIR})
+  add_executable(train ${TRAIN_DIR}/train.cpp ${COMMON_SOURCES})
+  target_link_libraries(train PRIVATE ${COMMON_LIBS})
+else()
+  message(WARNING "spdlog headers not found; skipping train target.")
+endif()
 
-add_executable(test ${TRAIN_DIR}/test.cpp ${COMMON_SOURCES})
-target_link_libraries(test PRIVATE ${COMMON_LIBS})
+if(EXISTS "${TRAIN_DIR}/test.cpp")
+  add_executable(test ${TRAIN_DIR}/test.cpp ${COMMON_SOURCES})
+  target_link_libraries(test PRIVATE ${COMMON_LIBS})
+endif()
 
 add_executable(dsc ${TRAIN_DIR}/dsc.cpp ${COMMON_SOURCES})
 target_link_libraries(dsc PRIVATE ${COMMON_LIBS})
