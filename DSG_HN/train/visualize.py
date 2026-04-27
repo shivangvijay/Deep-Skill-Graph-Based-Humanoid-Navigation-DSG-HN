@@ -79,7 +79,6 @@ def load_points_and_goal_regions(points_file: str, use_points: bool):
                 points.append((skill, x, y))
     return points, goal_regions
 
-
 args = parse_args()
 scene_file = args.scene_file
 points_file = args.points_file
@@ -175,8 +174,10 @@ ax.set_xlim(-7,7)
 ax.set_ylim(-7,7)
 ax.set_aspect('equal')
 ax.set_title('Initiation Sets Visualization')
-# if not os.path.exists("../results"):
-#     os.makedirs("../results")
+
+if not os.path.exists("../logs"):
+    os.makedirs("../logs")
+    
 out_path = "../logs/initiation_sets_viz.png"
 log(f"saving figure to {out_path}")
 plt.savefig(out_path)

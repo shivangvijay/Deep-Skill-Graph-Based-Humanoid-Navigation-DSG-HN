@@ -210,7 +210,7 @@ bool DeepSkillGraph::_containsStart(int v_d, const std::vector<int> &dsc_chain)
 {
     for (auto o : dsc_chain)
     {
-        if (_skillCoversNodeLoose(o, v_d, /*pessimistic=*/true))
+        if (_skillCoversNodeLoose(o, v_d, /*pessimistic=*/false))
             return true;
     }
     return false;
@@ -559,39 +559,48 @@ void DeepSkillGraph::load(const std::string &dir, const std::string &scene_file)
 // Graph edge management
 // =============================================================================
 
+
 void DeepSkillGraph::_updateEdges()
 {
     const int N = _totalNodes();
+    const float connect_threshold = 0.8f; // 80% coverage to add an edge
+    const float stale_threshold = 0.5f;   // 50% failure to remove an edge
 
     auto is_mature = [&](int idx) -> bool {
         return _nodes[idx].is_goal_region || _nodes[idx].skill->getTrainingPhase() == "mature";
     };
 
-    // Returns true iff effect set of src is fully contained in initiation set of dst.
-    // Use pessimistic initiation regions for robust edge creation.
+    // --- Addition pass: check all ordered pairs (i, j) of mature nodes ---
     auto check_link = [&](int src, int dst) -> bool
     {
         if (src == dst) return false; 
+        
         // Skip if edge already exists
         for (const auto &c : _nodes[src].children)
             if (c.first == dst) return false;
 
         if (_nodes[src].is_goal_region)
         {
+            // For a Goal Region (single point), we stick to binary check
             return _nodeCanStart(dst, _nodes[src].goal_region.center, true);
         }
         else
         {
             const auto &effects = _nodes[src].skill->getEffectSet();
             if (effects.empty()) return false;
+
+            int covered = 0;
             for (const auto &rec : effects)
-                if (!_nodeCanStart(dst, rec.state, true))
-                    return false;
-            return true;
+            {
+                if (_nodeCanStart(dst, rec.state, true))
+                    covered++;
+            }
+
+            float ratio = static_cast<float>(covered) / static_cast<float>(effects.size());
+            return ratio >= connect_threshold;
         }
     };
 
-    // --- Addition pass: check all ordered pairs (i, j) of mature nodes ---
     for (int i = 0; i < N; ++i)
     {
         if (!is_mature(i)) continue;
@@ -602,50 +611,148 @@ void DeepSkillGraph::_updateEdges()
             {
                 _nodes[i].children.push_back({j, 1.0f});
                 _nodes[j].parents.push_back({i, 1.0f});
-                std::cout << "[UpdateEdges] Edge added: " << _nodeLabel(i) << " → " << _nodeLabel(j) << "\n";
+                std::cout << "[UpdateEdges] Edge added: " << _nodeLabel(i) << " → " << _nodeLabel(j) 
+                          << " (threshold " << connect_threshold << " met)\n";
             }
         }
     }
 
-    // --- Deletion pass: check all existing edges across all nodes ---
-    // Sample K=5 effect states; delete only if >3/5 fail (conservative threshold).
+    // --- Deletion pass: check all existing edges ---
     auto check_stale = [&](int src, int dst) -> bool
     {
-        const int K = 5;
-        int fail = 0;
         if (_nodes[src].is_goal_region)
         {
-            if (!_nodeCanStart(dst, _nodes[src].goal_region.center, false))
-                fail = K;
+            // Single point check for goal regions
+            return !_nodeCanStart(dst, _nodes[src].goal_region.center, false);
         }
         else
         {
             const auto &effects = _nodes[src].skill->getEffectSet();
             if (effects.empty()) return true;
+
+            // Sample K=50 or all if effects.size() is small
+            const int K = std::min(50, (int)effects.size());
+            int fail = 0;
             for (int k = 0; k < K; ++k)
-                if (!_nodeCanStart(dst, effects[rand() % effects.size()].state, false))
+            {
+                // Random sampling for efficiency on large effect sets
+                const auto& sample_state = effects[rand() % effects.size()].state;
+                if (!_nodeCanStart(dst, sample_state, false))
                     fail++;
+            }
+
+            float fail_ratio = static_cast<float>(fail) / static_cast<float>(K);
+            return fail_ratio >= stale_threshold;
         }
-        return fail > 3;
     };
 
-    // for (int i = 0; i < N; ++i)
-    // {
-    //     auto &ch = _nodes[i].children;
-    //     for (int ci = (int)ch.size() - 1; ci >= 0; --ci)
-    //     {
-    //         int j = ch[ci].first;
-    //         if (check_stale(i, j))
-    //         {
-    //             std::cout << "[UpdateEdges] Edge removed: " << _nodeLabel(i) << " → " << _nodeLabel(j) << "\n";
-    //             auto &par = _nodes[j].parents;
-    //             par.erase(std::remove_if(par.begin(), par.end(),
-    //                 [i](const auto &p){ return p.first == i; }), par.end());
-    //             ch.erase(ch.begin() + ci);
-    //         }
-    //     }
-    // }
+    for (int i = 0; i < N; ++i)
+    {
+        auto &ch = _nodes[i].children;
+        for (int ci = (int)ch.size() - 1; ci >= 0; --ci)
+        {
+            int j = ch[ci].first;
+            if (check_stale(i, j))
+            {
+                std::cout << "[UpdateEdges] Edge removed: " << _nodeLabel(i) << " → " << _nodeLabel(j) 
+                          << " (fail ratio >= " << stale_threshold << ")\n";
+                
+                auto &par = _nodes[j].parents;
+                par.erase(std::remove_if(par.begin(), par.end(),
+                    [i](const auto &p){ return p.first == i; }), par.end());
+                ch.erase(ch.begin() + ci);
+            }
+        }
+    }
 }
+
+// void DeepSkillGraph::_updateEdges()
+// {
+//     const int N = _totalNodes();
+
+//     auto is_mature = [&](int idx) -> bool {
+//         return _nodes[idx].is_goal_region || _nodes[idx].skill->getTrainingPhase() == "mature";
+//     };
+
+//     // Returns true iff effect set of src is fully contained in initiation set of dst.
+//     // Use pessimistic initiation regions for robust edge creation.
+//     auto check_link = [&](int src, int dst) -> bool
+//     {
+//         if (src == dst) return false; 
+//         // Skip if edge already exists
+//         for (const auto &c : _nodes[src].children)
+//             if (c.first == dst) return false;
+
+//         if (_nodes[src].is_goal_region)
+//         {
+//             return _nodeCanStart(dst, _nodes[src].goal_region.center, true);
+//         }
+//         else
+//         {
+//             const auto &effects = _nodes[src].skill->getEffectSet();
+//             if (effects.empty()) return false;
+//             for (const auto &rec : effects)
+//                 if (!_nodeCanStart(dst, rec.state, true))
+//                     return false;
+//             return true;
+//         }
+//     };
+
+//     // --- Addition pass: check all ordered pairs (i, j) of mature nodes ---
+//     for (int i = 0; i < N; ++i)
+//     {
+//         if (!is_mature(i)) continue;
+//         for (int j = 0; j < N; ++j)
+//         {
+//             if (!is_mature(j)) continue;
+//             if (check_link(i, j))
+//             {
+//                 _nodes[i].children.push_back({j, 1.0f});
+//                 _nodes[j].parents.push_back({i, 1.0f});
+//                 std::cout << "[UpdateEdges] Edge added: " << _nodeLabel(i) << " → " << _nodeLabel(j) << "\n";
+//             }
+//         }
+//     }
+
+//     // --- Deletion pass: check all existing edges across all nodes ---
+//     // Sample K=5 effect states; delete only if >3/5 fail (conservative threshold).
+//     auto check_stale = [&](int src, int dst) -> bool
+//     {
+//         const int K = 5;
+//         int fail = 0;
+//         if (_nodes[src].is_goal_region)
+//         {
+//             if (!_nodeCanStart(dst, _nodes[src].goal_region.center, false))
+//                 fail = K;
+//         }
+//         else
+//         {
+//             const auto &effects = _nodes[src].skill->getEffectSet();
+//             if (effects.empty()) return true;
+//             for (int k = 0; k < K; ++k)
+//                 if (!_nodeCanStart(dst, effects[rand() % effects.size()].state, false))
+//                     fail++;
+//         }
+//         return fail > 3;
+//     };
+
+//     // for (int i = 0; i < N; ++i)
+//     // {
+//     //     auto &ch = _nodes[i].children;
+//     //     for (int ci = (int)ch.size() - 1; ci >= 0; --ci)
+//     //     {
+//     //         int j = ch[ci].first;
+//     //         if (check_stale(i, j))
+//     //         {
+//     //             std::cout << "[UpdateEdges] Edge removed: " << _nodeLabel(i) << " → " << _nodeLabel(j) << "\n";
+//     //             auto &par = _nodes[j].parents;
+//     //             par.erase(std::remove_if(par.begin(), par.end(),
+//     //                 [i](const auto &p){ return p.first == i; }), par.end());
+//     //             ch.erase(ch.begin() + ci);
+//     //         }
+//     //     }
+//     // }
+// }
 
 void DeepSkillGraph::_ensureStructuralEdge(int from, int to, const std::string &reason)
 {
@@ -1416,7 +1523,7 @@ void DeepSkillGraph::visualizeInitiationSets()
     }
     out.close();
 
-    std::string cmd = "python ../../visualize.py \"" + _scene_file_path + "\" \"" + temp_file +
+    std::string cmd = "python ../visualize.py \"" + _scene_file_path + "\" \"" + temp_file +
                       "\" --models-dir \"" + _dsg_cfg.save_path + "\"";
     system(cmd.c_str());
 }
@@ -1516,7 +1623,7 @@ void DeepSkillGraph::_graphConsolidationPhase()
             int bridge_skill_idx = -1;
             for (int o : _current_dsc_problem->dsc_chain)
             {
-                if (_skillCoversNodeLoose(o, v_d, /*pessimistic=*/true))
+                if (_skillCoversNodeLoose(o, v_d, /*pessimistic=*/false))
                 {
                     bridge_skill_idx = o;
                     break;
@@ -1653,18 +1760,18 @@ void DeepSkillGraph::_graphConsolidationPhase()
 #endif
 
 #define SCENE_FILE "../config/scene/test_scene.xml"
-#define OG_ACTOR "../models/best_actor.pt"
-#define OG_CRITIC1 "../models/best_critic_1.pt"
-#define OG_CRITIC2 "../models/best_critic_2.pt"
+#define OG_ACTOR "../models/pretrain_actor_test_scene.pt"
+#define OG_CRITIC1 "../models/pretrain_critic_1_test_scene.pt"
+#define OG_CRITIC2 "../models/pretrain_critic_2_test_scene.pt"
 #define DSG_SAVE_PATH "../models/dsg_models"
 #define TM_CHECKPOINT "../checkpoints/improved/transition_transformer_delta_latest.pt"
 #define TM_NORMALISER "../checkpoints/improved/normaliser.txt"
 #define TEST false
 
-#define X_MIN -7.0f
-#define X_MAX 7.0f
-#define Y_MIN -7.0f
-#define Y_MAX 7.0f
+#define X_MIN -5.0f
+#define X_MAX 5.0f
+#define Y_MIN -5.0f
+#define Y_MAX 5.0f
 
 int main(int argc, char **argv)
 {
@@ -1697,13 +1804,13 @@ int main(int argc, char **argv)
     cfg.steps_per_episode = 1000;
     cfg.warmup_episodes = 0; // warm up policy-over-options before DSG expansion/consolidation
     cfg.save_path = DSG_SAVE_PATH;
-    cfg.save_interval = 100;
+    cfg.save_interval = 200;
 
     // -------------------------------------------------------------------------
     // Environment + geometric termination / region thresholds
     // -------------------------------------------------------------------------
-    cfg.success_radius = 0.3f;      // env local-goal success radius
-    cfg.goal_region_epsilon = 0.3f; // GR epsilon-ball radius
+    cfg.success_radius = 0.5f;      // env local-goal success radius
+    cfg.goal_region_epsilon = 0.5f; // GR epsilon-ball radius
 
     // -------------------------------------------------------------------------
     // Skill lifecycle (DSC option learning / validation)
@@ -1714,7 +1821,7 @@ int main(int argc, char **argv)
     cfg.refinement_eps = 30;
     cfg.max_option_steps = 50;
     cfg.max_skills = 10 ;
-    cfg.val_accuracy_threshold = 0.1f;
+    cfg.val_accuracy_threshold = 0.0f;
 
     // -------------------------------------------------------------------------
     // Classifier / initiation set behaviour
@@ -1723,11 +1830,11 @@ int main(int argc, char **argv)
     cfg.pessimistic_ocsvm_gamma = 0.5;          // one-class RBF gamma for pessimistic classifier
     cfg.optimistic_ocsvm_gamma = 0.1;           // one-class RBF gamma for optimistic classifier in phase-1
     cfg.optimistic_ocsvm_nu_divisor = 10.0;     // optimistic phase-1 nu = nu / divisor
-    cfg.optimistic_svc_c = 10.0;                 // phase-2 optimistic SVC C (Higher C: penalizes training errors more, tries harder to classify training points correctly (especially positives), less regularization. Lower C: allows more misclassification, smoother/more regularized boundary.)
-    cfg.optimistic_svc_gamma = 0.01;             // phase-2 optimistic SVC gamma (kernel coefficient, lower = wider)
+    cfg.optimistic_svc_c = 1.0;                 // phase-2 optimistic SVC C (Higher C: penalizes training errors more, tries harder to classify training points correctly (especially positives), less regularization. Lower C: allows more misclassification, smoother/more regularized boundary.)
+    cfg.optimistic_svc_gamma = 0.5;             // phase-2 optimistic SVC gamma (kernel coefficient, lower = wider)
     cfg.optimistic_svc_balance_classes = false;  // phase-2 class balancing for optimistic SVC
     cfg.optimistic_svc_positive_margin_tolerance = 0.0; // include SVC decision margin band: keep points with decisionValue >= -tol
-    cfg.subgoal_robustness_tolerance = 0.1f;    // neighborhood check around sampled subgoal
+    cfg.subgoal_robustness_tolerance = 0.25f;    // neighborhood check around sampled subgoal
     cfg.negative_samples_per_failure = 1;       // failure negatives added per failed rollout
     cfg.option_node_cover_threshold = 0.8f;     // chain-closure criterion for option-node v_d coverage
 
