@@ -110,8 +110,9 @@ public:
         current_step = 0;
         last_action = {0.0f, 0.0f, 0.0f};
         prev_action = {0.0f, 0.0f, 0.0f};
-        prev_dist_to_goal = _euclidean2D(start.position, goal.position);
-        prev_obs_dist = robot_bridge->distanceToNearestObstacle(start.position, start.orientation);
+
+
+        updatePrevState(robot_bridge->getRobotState());
 
         _collision = false;
         _last_termination_cause = TerminationCause::None;
@@ -160,6 +161,7 @@ public:
         cmd[1] = a[1];
         cmd[2] = a[2];
 
+        updatePrevState(robot_bridge->getRobotState());
         robot_bridge->publishVelCommand(cmd);
         robot_bridge->update();
         current_step++;
@@ -198,8 +200,9 @@ public:
         current_step = 0;
         last_action = {0.0f, 0.0f, 0.0f};
         prev_action = {0.0f, 0.0f, 0.0f};
-        prev_dist_to_goal = _euclidean2D(clamped_pos, goal.position);
-        prev_obs_dist = robot_bridge->distanceToNearestObstacle(clamped_pos, quat);
+
+        updatePrevState(robot_bridge->getRobotState());
+
         _collision = false;
         _last_termination_cause = TerminationCause::None;
         return transformState(robot_bridge->getRobotState());
@@ -294,7 +297,7 @@ public:
     {
         RobotState state = robot_bridge->getRobotState();
         bool collision = robot_bridge->inCollision();
-        return computeReward(state, collision, goal_);
+        return computeReward(state, collision, goal_, true);
     }
 
     // use this compute reward if going with the tight map
@@ -313,6 +316,11 @@ public:
 
             float min_obs_dist = robot_bridge->distanceToNearestObstacle(state.position, state.orientation);
             constexpr float safe_margin = 1.2f;
+
+            float prev_obs_dist = robot_bridge->distanceToNearestObstacle(prev_state.position, prev_state.orientation);
+            float prev_dist_to_goal = std::sqrt((prev_state.position[0] - goal_position[0]) * (prev_state.position[0] - goal_position[0]) +
+                                        (prev_state.position[1] - goal_position[1]) * (prev_state.position[1] - goal_position[1]));
+
             if (min_obs_dist < safe_margin)
             {
                 reward -= 2.0f * (safe_margin - min_obs_dist);
@@ -356,8 +364,6 @@ public:
                 _last_termination_cause = TerminationCause::Timeout;
             }
 
-            prev_dist_to_goal = pos_error;
-            prev_obs_dist = min_obs_dist;
             reward /= 10;
 
             return {torch::tensor({reward}, torch::kFloat32),
@@ -375,6 +381,11 @@ public:
 
             float min_obs_dist = robot_bridge->distanceToNearestObstacle(state.position, state.orientation);
             constexpr float safe_margin = 1.2f;
+
+
+            float prev_obs_dist = robot_bridge->distanceToNearestObstacle(prev_state.position, prev_state.orientation);
+            float prev_dist_to_goal = std::sqrt((prev_state.position[0] - goal_position[0]) * (prev_state.position[0] - goal_position[0]) +
+                                        (prev_state.position[1] - goal_position[1]) * (prev_state.position[1] - goal_position[1]));
             if (min_obs_dist < safe_margin)
             {
                 reward -= 2.0f * (safe_margin - min_obs_dist);
@@ -408,6 +419,7 @@ public:
                 float action_jerk = std::abs(last_action[0] - prev_action[0]) +
                                     std::abs(last_action[1] - prev_action[1]) +
                                     std::abs(last_action[2] - prev_action[2]);
+
                 reward -= 0.5f * action_jerk;
             }
 
@@ -417,9 +429,6 @@ public:
                 terminated = true;
                 _last_termination_cause = TerminationCause::Timeout;
             }
-
-            prev_dist_to_goal = pos_error;
-            prev_obs_dist = min_obs_dist;
 
             return {torch::tensor({reward}, torch::kFloat32),
                     torch::tensor({(float)terminated}, torch::kFloat32)};
@@ -571,8 +580,9 @@ private:
     std::vector<Obstacle> obstacles;
     std::array<float, 3> last_action = {0.0f, 0.0f, 0.0f};
     std::array<float, 3> prev_action = {0.0f, 0.0f, 0.0f};
-    float prev_dist_to_goal = 0.0f;
-    float prev_obs_dist = 10.0f;
+
+    RobotState prev_state;
+
     bool _collision = false;
     TerminationCause _last_termination_cause = TerminationCause::None;
 
@@ -581,6 +591,11 @@ private:
         float dx = a[0] - b[0];
         float dy = a[1] - b[1];
         return std::sqrt(dx * dx + dy * dy);
+    }
+
+    void updatePrevState(RobotState state)
+    {
+        prev_state = state;
     }
 
     // used to put vector into another frame. Set use_inverse to true if you want to go from world->local

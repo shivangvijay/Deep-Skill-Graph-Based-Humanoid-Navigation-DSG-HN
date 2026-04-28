@@ -149,7 +149,12 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
             visited.push_back({_classifierVec(_env->getAbstractedState()), _env->getAbstractedState()});
         }
         num_steps++;
-        total_reward += current_gamma * _env->computeReward(_global_goal).first.data_ptr<float>()[0];
+
+        if (_eval)
+        {
+            current_gamma = 1.0f; 
+        }
+        total_reward += _env->computeReward(_global_goal).first.data_ptr<float>()[0] * current_gamma;
         current_gamma *= _gamma;
     }
 
