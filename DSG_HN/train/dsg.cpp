@@ -1144,6 +1144,151 @@ std::pair<int, int> DeepSkillGraph::_closestPair(const std::vector<int> &D,
 // =============================================================================
 // Navigation and training primitives
 // =============================================================================
+// void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
+// {
+//     auto pathToString = [&](const std::vector<int> &path, int from) -> std::string
+//     {
+//         std::string out = _nodeLabel(from);
+//         for (int v : path)
+//         {
+//             out += " -> ";
+//             out += _nodeLabel(v);
+//         }
+//         return out;
+//     };
+
+//     auto start_state = _env->getAbstractedState();
+//     std::cout << "[Navigate] Start navigateTo from="
+//               << start_state.position[0] << ", " << start_state.position[1]
+//               << " target=" << _nodeLabel(node_idx)
+//               << " max_steps=" << max_steps << "\n";
+
+//     int step = 0;
+//     while (step < max_steps)
+//     {
+//         auto current_state = _env->getAbstractedState();
+//         // _env->setGoal(_nodeRepresentativeState(node_idx));
+//         // bool env_done = _env->computeReward(current_state).second.data_ptr<float>()[0] > 0.5;
+//         bool env_done = _env->getUnderlyingState().second; // gonna just terminate if in collisions
+//         bool already_in_target = _nodeCanStart(node_idx, current_state, false);
+
+//         int best_node_idx = -1;
+//         int next_hop_idx = -1;
+//         AbstractedState best_goal;
+//         float best_cost = std::numeric_limits<float>::infinity();
+//         std::vector<int> best_path;
+//         bool force_self_hop = false;
+
+//         if (already_in_target || env_done)
+//         {
+//             if (already_in_target)
+//             {
+//                 std::cout << "[Navigate] Already in target " << _nodeLabel(node_idx) << "\n";
+//                 // If target is an option and we're already in its initiation set,
+//                 // synthesize a self-hop so the normal execution block runs it once.
+//                 if (!_nodes[node_idx].is_goal_region && node_idx != _global_option_idx)
+//                 {
+//                     force_self_hop = true;
+//                     best_node_idx = node_idx;
+//                     next_hop_idx = node_idx;
+//                     best_goal = _nodeRepresentativeState(node_idx);
+//                     best_path = {node_idx};
+//                 }
+//                 else
+//                 {
+//                     return;
+//                 }
+//             }
+//             else
+//             {
+//                 std::cout << "[Navigate] Reached point "
+//                           << current_state.position[0] << ", " << current_state.position[1] << "\n";
+//                 return;
+//             }
+//         }
+
+//         // V(s_t): all nodes containing the current state
+//         auto V_s = _getV(current_state);
+
+//         // Case (a): find least-cost path to node_idx starting from a skill node in V_s
+//         if (!force_self_hop)
+//         {
+//             for (int v : V_s)
+//             {
+//                 // if (_nodes[v].is_goal_region)
+//                 //     continue; // Only skills have policies we can execute
+
+//                 auto [cost, path] = _dijkstraPath(v, node_idx);
+//                 if (!path.empty() && cost < best_cost)
+//                 {
+//                     best_cost = cost;
+//                     best_node_idx = v;
+//                     next_hop_idx = path.front();
+//                     best_goal = _nodeRepresentativeState(next_hop_idx);
+//                     best_path = path;
+//                 }
+//             }
+//         }
+
+//         // Case (b): Recovery — use Global Option to steer toward target if no graph path exists
+//         if (!force_self_hop && best_node_idx == -1)
+//         {
+//             best_node_idx = _global_option_idx; // Use the base class global skill index
+//             best_goal = _nodeRepresentativeState(node_idx);
+
+//             std::cout << "[Navigate] No path found, using global option\n";
+//             std::cout << "[Navigate] No graph path from current state. "
+//                       << "Executing GlobalOpt toward " << _nodeLabel(node_idx) << "\n";
+
+//             auto [steps_taken, cum_reward, done, first_poo, last_poo] = // reak if done?
+//                 _skills[_global_option_idx]->rollout(best_goal);
+
+//             step += steps_taken;
+//             if (steps_taken == 0)
+//             {
+//                 return;
+//             }
+//             if (_cfg.verbose)
+//                 std::cout << "[DSG Navigation] No path found. Using Global Option recovery toward "
+//                           << _nodeLabel(node_idx) << "\n";
+//         }
+//         else
+//         {
+//             std::cout << "[Navigate] Path selected: "
+//                       << pathToString(best_path, best_node_idx)
+//                       << " | execute=" << _nodeLabel(best_node_idx)
+//                       << " -> next_hop=" << _nodeLabel(next_hop_idx) << "\n";
+
+//             // Execute the chosen skill
+//             // Access the skill object directly from the Node to avoid index-mismatch bugs
+            
+//             while (_nodes[best_node_idx].is_goal_region && best_node_idx < _)
+//             {
+
+//             }
+//             auto [steps_taken, cum_reward, done, first_poo, last_poo] =
+//                 _nodes[best_node_idx].skill->rollout(best_goal);
+
+//             if (steps_taken == 0)
+//             {
+//                 return;
+//             }
+//             step += steps_taken;
+//         }
+
+//         // Update weights if we were following an explicit graph edge
+//         if (next_hop_idx != -1)
+//         {
+//             bool success = _nodeCanStart(next_hop_idx, _env->getAbstractedState(), false);
+//             _updateEdgeWeight(best_node_idx, next_hop_idx, success);
+//         }
+//     }
+
+//     auto final_state = _env->getAbstractedState();
+//     std::cout << "[Navigate] Stopped at step budget with state=("
+//               << final_state.position[0] << ", " << final_state.position[1] << ")\n";
+// }
+
 void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
 {
     auto pathToString = [&](const std::vector<int> &path, int from) -> std::string
@@ -1167,123 +1312,102 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
     while (step < max_steps)
     {
         auto current_state = _env->getAbstractedState();
-        // _env->setGoal(_nodeRepresentativeState(node_idx));
-        // bool env_done = _env->computeReward(current_state).second.data_ptr<float>()[0] > 0.5;
-        bool env_done = _env->getUnderlyingState().second; // gonna just terminate if in collisions
-        bool already_in_target = _nodeCanStart(node_idx, current_state, false);
+        
+        // Terminate immediately if in collision
+        bool in_collision = _env->getUnderlyingState().second;
+        if (in_collision) {
+            std::cout << "[Navigate] Termination: Collision detected.\n";
+            return;
+        }
 
+        // Check if we have arrived in the target node's initiation set
+        if (_nodeCanStart(node_idx, current_state, false)) {
+            std::cout << "[Navigate] Arrived in target " << _nodeLabel(node_idx) << "\n";
+            return;
+        }
+
+        // 1. Path Planning: Find executable path via Dijkstra
+        auto V_s = _getV(current_state);
         int best_node_idx = -1;
         int next_hop_idx = -1;
-        AbstractedState best_goal;
         float best_cost = std::numeric_limits<float>::infinity();
         std::vector<int> best_path;
-        bool force_self_hop = false;
 
-        if (already_in_target || env_done)
+        for (int v : V_s)
         {
-            if (already_in_target)
+            auto [cost, path] = _dijkstraPath(v, node_idx);
+            if (!path.empty() && cost < best_cost)
             {
-                std::cout << "[Navigate] Already in target " << _nodeLabel(node_idx) << "\n";
-                // If target is an option and we're already in its initiation set,
-                // synthesize a self-hop so the normal execution block runs it once.
-                if (!_nodes[node_idx].is_goal_region && node_idx != _global_option_idx)
+                best_cost = cost;
+                best_node_idx = v;
+                best_path = path;
+            }
+        }
+
+        // 2. Execution Logic
+        int exec_node = -1;
+        AbstractedState current_subgoal;
+
+        if (best_node_idx != -1)
+        {
+            // Peeking: If current node is a Goal Region, skip to the first Skill in path
+            exec_node = best_node_idx;
+            std::vector<int> path_copy = best_path;
+
+            while (exec_node != -1 && _nodes[exec_node].is_goal_region)
+            {
+                if (!path_copy.empty())
                 {
-                    force_self_hop = true;
-                    best_node_idx = node_idx;
-                    next_hop_idx = node_idx;
-                    best_goal = _nodeRepresentativeState(node_idx);
-                    best_path = {node_idx};
+                    exec_node = path_copy.front();
+                    path_copy.erase(path_copy.begin());
                 }
                 else
                 {
-                    return;
+                    // Path only contained the GR we are standing in
+                    exec_node = -1;
+                    break;
                 }
             }
-            else
-            {
-                std::cout << "[Navigate] Reached point "
-                          << current_state.position[0] << ", " << current_state.position[1] << "\n";
-                return;
+
+            if (exec_node != -1) {
+                // Determine next_hop for weight updates and set local goal
+                next_hop_idx = (exec_node == best_node_idx && !best_path.empty()) 
+                               ? best_path.front() : exec_node;
+                current_subgoal = _nodeRepresentativeState(next_hop_idx);
             }
         }
 
-        // V(s_t): all nodes containing the current state
-        auto V_s = _getV(current_state);
-
-        // Case (a): find least-cost path to node_idx starting from a skill node in V_s
-        if (!force_self_hop)
+        // 3. Rollout: Execute found Skill or Fallback to Global Option
+        if (exec_node == -1 || _nodes[exec_node].is_goal_region)
         {
-            for (int v : V_s)
-            {
-                // if (_nodes[v].is_goal_region)
-                //     continue; // Only skills have policies we can execute
-
-                auto [cost, path] = _dijkstraPath(v, node_idx);
-                if (!path.empty() && cost < best_cost)
-                {
-                    best_cost = cost;
-                    best_node_idx = v;
-                    next_hop_idx = path.front();
-                    best_goal = _nodeRepresentativeState(next_hop_idx);
-                    best_path = path;
-                }
-            }
+            std::cout << "[Navigate] No graph path or executable skill. Using Global Option.\n";
+            exec_node = _global_option_idx;
+            current_subgoal = _nodeRepresentativeState(node_idx);
         }
 
-        // Case (b): Recovery — use Global Option to steer toward target if no graph path exists
-        if (!force_self_hop && best_node_idx == -1)
-        {
-            best_node_idx = _global_option_idx; // Use the base class global skill index
-            best_goal = _nodeRepresentativeState(node_idx);
+        std::cout << "[Navigate] Step " << step << " | Executing: " << _nodeLabel(exec_node) << "\n";
 
-            std::cout << "[Navigate] No path found, using global option\n";
-            std::cout << "[Navigate] No graph path from current state. "
-                      << "Executing GlobalOpt toward " << _nodeLabel(node_idx) << "\n";
+        auto [steps_taken, cum_reward, done, first_poo, last_poo] = (exec_node == _global_option_idx)
+            ? _skills[_global_option_idx]->rollout(current_subgoal)
+            : _nodes[exec_node].skill->rollout(current_subgoal);
 
-            auto [steps_taken, cum_reward, done, first_poo, last_poo] = // reak if done?
-                _skills[_global_option_idx]->rollout(best_goal);
-
-            step += steps_taken;
-            if (steps_taken == 0)
-            {
-                return;
-            }
-            if (_cfg.verbose)
-                std::cout << "[DSG Navigation] No path found. Using Global Option recovery toward "
-                          << _nodeLabel(node_idx) << "\n";
-        }
-        else
-        {
-            std::cout << "[Navigate] Path selected: "
-                      << pathToString(best_path, best_node_idx)
-                      << " | execute=" << _nodeLabel(best_node_idx)
-                      << " -> next_hop=" << _nodeLabel(next_hop_idx) << "\n";
-
-            // Execute the chosen skill
-            // Access the skill object directly from the Node to avoid index-mismatch bugs
-            if (_nodes[best_node_idx].is_goal_region)
-                continue;
-            auto [steps_taken, cum_reward, done, first_poo, last_poo] =
-                _nodes[best_node_idx].skill->rollout(best_goal);
-
-            if (steps_taken == 0)
-            {
-                return;
-            }
-            step += steps_taken;
+        // Safety break for zero-step rollouts to prevent infinite loop
+        if (steps_taken == 0) {
+            std::cout << "[Navigate] Warning: Skill rollout took 0 steps. Breaking.\n";
+            return;
         }
 
-        // Update weights if we were following an explicit graph edge
-        if (next_hop_idx != -1)
+        step += steps_taken;
+
+        // 4. Edge Maintenance: Update weight of the edge we intended to traverse
+        if (next_hop_idx != -1 && exec_node != _global_option_idx)
         {
             bool success = _nodeCanStart(next_hop_idx, _env->getAbstractedState(), false);
             _updateEdgeWeight(best_node_idx, next_hop_idx, success);
         }
     }
 
-    auto final_state = _env->getAbstractedState();
-    std::cout << "[Navigate] Stopped at step budget with state=("
-              << final_state.position[0] << ", " << final_state.position[1] << ")\n";
+    std::cout << "[Navigate] Navigation ended after " << step << " steps.\n";
 }
 
 AbstractedState DeepSkillGraph::_runMPC(const AbstractedState &target)
