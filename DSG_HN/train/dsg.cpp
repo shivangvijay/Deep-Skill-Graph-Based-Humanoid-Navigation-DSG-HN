@@ -258,7 +258,7 @@ void DeepSkillGraph::_validateOption()
                     }
                 }
 
-                // Ensure first-chain structural link to v_a 
+                // Ensure first-chain structural link to v_a
                 auto pending_it = _pending_structural_target_node.find(_skills[i].get());
                 if (pending_it != _pending_structural_target_node.end())
                 {
@@ -402,8 +402,8 @@ int DeepSkillGraph::train(int max_episodes)
                 _env->resetTo(_sampleStartStateFromGlobalStartRegion());
                 // first episode will be expansion
                 bool expanded = false;
-                for (int attempt = 0; attempt < _dsg_cfg.max_expansion_tries && !expanded; attempt++)
-                    expanded = _graphExpansionPhase();
+                // for (int attempt = 0; attempt < _dsg_cfg.max_expansion_tries && !expanded; attempt++)
+                expanded = _graphExpansionPhase();
                 if (!expanded)
                 {
                     std::cout << "[DSG] Expansion exhausted " << _dsg_cfg.max_expansion_tries
@@ -415,18 +415,17 @@ int DeepSkillGraph::train(int max_episodes)
             {
                 // Important: skip no-op consolidation episodes before reset so we do
                 // not render unnecessary respawns when --render-training is enabled.
-                if (!_canRunConsolidationEpisode())
-                {
-                    if (_dsg_cfg.verbose)
-                        std::cout << "[DSG Consolidation] Precheck: no actionable bridge yet; skipping episode without respawn.\n";
-                    continue;
-                }
+                // if (!_canRunConsolidationEpisode())
+                // {
+                //     if (_dsg_cfg.verbose)
+                //         std::cout << "[DSG Consolidation] Precheck: no actionable bridge yet; skipping episode without respawn.\n";
+                //     continue;
+                // }
                 _env->resetTo(_sampleStartStateFromGlobalStartRegion());
                 _graphConsolidationPhase();
             }
 
             // TODO: update transition model
-
         }
 
         if (_dsg_cfg.graph_update_freq > 0 && (episode + 1) % _dsg_cfg.graph_update_freq == 0)
@@ -478,40 +477,40 @@ int DeepSkillGraph::train(int max_episodes)
     return (int)_skills.size() - 1;
 }
 
-bool DeepSkillGraph::_canRunConsolidationEpisode()
-{
-    if (_nodes.empty())
-        return false;
+// bool DeepSkillGraph::_canRunConsolidationEpisode()
+// {
+//     if (_nodes.empty())
+//         return false;
 
-    // Keep graph connectivity fresh for the same selector logic used by consolidation.
-    _updateEdges();
+//     // Keep graph connectivity fresh for the same selector logic used by consolidation.
+//     _updateEdges();
 
-    // If there is an active unresolved problem, consolidation should run.
-    if (_current_dsc_problem)
-    {
-        const bool solved = _containsStart(_current_dsc_problem->v_d, _current_dsc_problem->dsc_chain);
-        if (!solved)
-            return true;
-    }
+//     // If there is an active unresolved problem, consolidation should run.
+//     if (_current_dsc_problem)
+//     {
+//         const bool solved = _containsStart(_current_dsc_problem->v_d, _current_dsc_problem->dsc_chain);
+//         if (!solved)
+//             return true;
+//     }
 
-    // Otherwise check whether a new (v_d, v_a, v_g) problem is currently bridgeable.
-    int v_g = _closestDisconnectedNode();
-    if (v_g == -1)
-        return false;
+//     // Otherwise check whether a new (v_d, v_a, v_g) problem is currently bridgeable.
+//     int v_g = _closestDisconnectedNode();
+//     if (v_g == -1)
+//         return false;
 
-    auto current_state = _env->getAbstractedState();
-    auto D_s = _getDSt(current_state);
-    auto A_vg = _getAncestors(v_g);
+//     auto current_state = _env->getAbstractedState();
+//     auto D_s = _getDSt(current_state);
+//     auto A_vg = _getAncestors(v_g);
 
-    std::vector<int> A_vg_unsaturated;
-    A_vg_unsaturated.reserve(A_vg.size());
-    for (int a : A_vg)
-        if (!_targetAtBranchLimit(a))
-            A_vg_unsaturated.push_back(a);
+//     std::vector<int> A_vg_unsaturated;
+//     A_vg_unsaturated.reserve(A_vg.size());
+//     for (int a : A_vg)
+//         if (!_targetAtBranchLimit(a))
+//             A_vg_unsaturated.push_back(a);
 
-    auto [v_d, v_a] = _closestPair(D_s, A_vg_unsaturated);
-    return v_d != -1 && v_a != -1;
-}
+//     auto [v_d, v_a] = _closestPair(D_s, A_vg_unsaturated);
+//     return v_d != -1 && v_a != -1;
+// }
 
 // =============================================================================
 // save / load
@@ -605,25 +604,27 @@ void DeepSkillGraph::load(const std::string &dir, const std::string &scene_file)
 // Graph edge management
 // =============================================================================
 
-
 void DeepSkillGraph::_updateEdges()
 {
     const int N = _totalNodes();
     const float connect_threshold = 0.8f; // 80% coverage to add an edge
     const float stale_threshold = 0.5f;   // 50% failure to remove an edge
 
-    auto is_mature = [&](int idx) -> bool {
+    auto is_mature = [&](int idx) -> bool
+    {
         return _nodes[idx].is_goal_region || _nodes[idx].skill->getTrainingPhase() == "mature";
     };
 
     // --- Addition pass: check all ordered pairs (i, j) of mature nodes ---
     auto check_link = [&](int src, int dst) -> bool
     {
-        if (src == dst) return false; 
-        
+        if (src == dst)
+            return false;
+
         // Skip if edge already exists
         for (const auto &c : _nodes[src].children)
-            if (c.first == dst) return false;
+            if (c.first == dst)
+                return false;
 
         if (_nodes[src].is_goal_region)
         {
@@ -633,7 +634,8 @@ void DeepSkillGraph::_updateEdges()
         else
         {
             const auto &effects = _nodes[src].skill->getEffectSet();
-            if (effects.empty()) return false;
+            if (effects.empty())
+                return false;
 
             int covered = 0;
             for (const auto &rec : effects)
@@ -649,15 +651,17 @@ void DeepSkillGraph::_updateEdges()
 
     for (int i = 0; i < N; ++i)
     {
-        if (!is_mature(i)) continue;
+        if (!is_mature(i))
+            continue;
         for (int j = 0; j < N; ++j)
         {
-            if (!is_mature(j)) continue;
+            if (!is_mature(j))
+                continue;
             if (check_link(i, j))
             {
                 _nodes[i].children.push_back({j, 1.0f});
                 _nodes[j].parents.push_back({i, 1.0f});
-                std::cout << "[UpdateEdges] Edge added: " << _nodeLabel(i) << " → " << _nodeLabel(j) 
+                std::cout << "[UpdateEdges] Edge added: " << _nodeLabel(i) << " → " << _nodeLabel(j)
                           << " (threshold " << connect_threshold << " met)\n";
             }
         }
@@ -674,7 +678,8 @@ void DeepSkillGraph::_updateEdges()
         else
         {
             const auto &effects = _nodes[src].skill->getEffectSet();
-            if (effects.empty()) return true;
+            if (effects.empty())
+                return true;
 
             // Sample K=50 or all if effects.size() is small
             const int K = std::min(50, (int)effects.size());
@@ -682,7 +687,7 @@ void DeepSkillGraph::_updateEdges()
             for (int k = 0; k < K; ++k)
             {
                 // Random sampling for efficiency on large effect sets
-                const auto& sample_state = effects[rand() % effects.size()].state;
+                const auto &sample_state = effects[rand() % effects.size()].state;
                 if (!_nodeCanStart(dst, sample_state, false))
                     fail++;
             }
@@ -700,12 +705,14 @@ void DeepSkillGraph::_updateEdges()
             int j = ch[ci].first;
             if (check_stale(i, j))
             {
-                std::cout << "[UpdateEdges] Edge removed: " << _nodeLabel(i) << " → " << _nodeLabel(j) 
+                std::cout << "[UpdateEdges] Edge removed: " << _nodeLabel(i) << " → " << _nodeLabel(j)
                           << " (fail ratio >= " << stale_threshold << ")\n";
-                
+
                 auto &par = _nodes[j].parents;
                 par.erase(std::remove_if(par.begin(), par.end(),
-                    [i](const auto &p){ return p.first == i; }), par.end());
+                                         [i](const auto &p)
+                                         { return p.first == i; }),
+                          par.end());
                 ch.erase(ch.begin() + ci);
             }
         }
@@ -724,7 +731,7 @@ void DeepSkillGraph::_updateEdges()
 //     // Use pessimistic initiation regions for robust edge creation.
 //     auto check_link = [&](int src, int dst) -> bool
 //     {
-//         if (src == dst) return false; 
+//         if (src == dst) return false;
 //         // Skip if edge already exists
 //         for (const auto &c : _nodes[src].children)
 //             if (c.first == dst) return false;
@@ -1161,7 +1168,8 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
     while (step < max_steps)
     {
         auto current_state = _env->getAbstractedState();
-        bool env_done = _env->computeReward(current_state).first.data_ptr<float>()[0] > 0.5;
+        _env->setGoal(_nodeRepresentativeState(node_idx));
+        bool env_done = _env->computeReward(current_state).second.data_ptr<float>()[0] > 0.5;
         bool already_in_target = _nodeCanStart(node_idx, current_state, false);
 
         int best_node_idx = -1;
@@ -1253,7 +1261,8 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
 
             // Execute the chosen skill
             // Access the skill object directly from the Node to avoid index-mismatch bugs
-            if (_nodes[best_node_idx].is_goal_region) continue;
+            if (_nodes[best_node_idx].is_goal_region)
+                continue;
             auto [steps_taken, cum_reward, done, first_poo, last_poo] =
                 _nodes[best_node_idx].skill->rollout(best_goal);
 
@@ -1585,7 +1594,7 @@ void DeepSkillGraph::visualizeInitiationSets()
     }
     out.close();
 
-    std::string cmd = "python ../../visualize.py \"" + _scene_file_path + "\" \"" + temp_file +
+    std::string cmd = "python ../visualize.py \"" + _scene_file_path + "\" \"" + temp_file +
                       "\" --models-dir \"" + _dsg_cfg.save_path + "\"";
     system(cmd.c_str());
 }
@@ -1840,26 +1849,27 @@ void DeepSkillGraph::_graphConsolidationPhase()
 #error "dsg.cpp must be compiled with -DDSG_BUILD to suppress DSC main"
 #endif
 
-#define SCENE_FILE "../config/scene/test_scene.xml"
-#define OG_ACTOR "../models/pretrain_actor_test_scene.pt"
-#define OG_CRITIC1 "../models/pretrain_critic_1_test_scene.pt"
-#define OG_CRITIC2 "../models/pretrain_critic_2_test_scene.pt"
+#define SCENE_FILE "../config/scene/umaze_scene.xml"
+#define OG_ACTOR "../models/pretrain_actor_umaze.pt"
+#define OG_CRITIC1 "../models/pretrain_critic_1_umaze.pt"
+#define OG_CRITIC2 "../models/pretrain_critic_2_umaze.pt"
 #define DSG_SAVE_PATH "../models/dsg_models"
 #define TM_CHECKPOINT "../checkpoints/improved/transition_transformer_delta_latest.pt"
 #define TM_NORMALISER "../checkpoints/improved/normaliser.txt"
 #define TEST false
 
-#define X_MIN -5.0f
-#define X_MAX 5.0f
-#define Y_MIN -5.0f
-#define Y_MAX 5.0f
+#define RENDER_TRAINING true
+#define RENDER_REALTIME false // if true, will
+#define RENDER_EVAL true
+
+#define X_MIN -7.0f
+#define X_MAX 7.0f
+#define Y_MIN -7.0f
+#define Y_MAX 7.0f
 
 int main(int argc, char **argv)
 {
     auto vm = param::helper(argc, argv);
-    const bool render_training = vm["render-training"].as<bool>();
-    const bool render_eval = vm["render-eval"].as<bool>();
-    const bool render_realtime = vm["render-realtime"].as<bool>();
     std::string rel_path = param::config["FSM"]["Velocity"]["policy_dir"].as<std::string>();
     auto policy_dir = param::parser_policy_dir(rel_path);
 
@@ -1876,8 +1886,8 @@ int main(int argc, char **argv)
     }
 
     auto robot_bridge = std::make_shared<RobotBridgeTrain>(
-        SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, /*render=*/false);
-    robot_bridge->setRenderRealtime(render_realtime);
+        SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, /*render=*/RENDER_TRAINING);
+    robot_bridge->setRenderRealtime(RENDER_REALTIME);
 
     DeepSkillGraph::Config cfg;
     // -------------------------------------------------------------------------
@@ -1903,23 +1913,25 @@ int main(int argc, char **argv)
     cfg.last_k = 30;
     cfg.refinement_eps = 30;
     cfg.max_option_steps = 50;
-    cfg.max_skills = 10 ;
+    cfg.max_skills = 10;
     cfg.val_accuracy_threshold = 0.0f;
+    cfg.exploration_noise_gestation = 0.2;
+    cfg.exploration_noise_mature = 0.1;
 
     // -------------------------------------------------------------------------
     // Classifier / initiation set behaviour
     // -------------------------------------------------------------------------
-    cfg.nu = 0.1;                               // one-class SVM outlier fraction (pessimistic tightness, lower = tighter)
-    cfg.pessimistic_ocsvm_gamma = 0.5;          // one-class RBF gamma for pessimistic classifier
-    cfg.optimistic_ocsvm_gamma = 0.1;           // one-class RBF gamma for optimistic classifier in phase-1
-    cfg.optimistic_ocsvm_nu_divisor = 10.0;     // optimistic phase-1 nu = nu / divisor
-    cfg.optimistic_svc_c = 1.0;                 // phase-2 optimistic SVC C (Higher C: penalizes training errors more, tries harder to classify training points correctly (especially positives), less regularization. Lower C: allows more misclassification, smoother/more regularized boundary.)
-    cfg.optimistic_svc_gamma = 0.5;             // phase-2 optimistic SVC gamma (kernel coefficient, lower = wider)
-    cfg.optimistic_svc_balance_classes = false;  // phase-2 class balancing for optimistic SVC
+    cfg.nu = 0.05;                                       // one-class SVM outlier fraction (pessimistic tightness, lower = tighter)
+    cfg.pessimistic_ocsvm_gamma = 0.5;                  // one-class RBF gamma for pessimistic classifier
+    cfg.optimistic_ocsvm_gamma = 0.1;                   // one-class RBF gamma for optimistic classifier in phase-1
+    cfg.optimistic_ocsvm_nu_divisor = 10.0;             // optimistic phase-1 nu = nu / divisor
+    cfg.optimistic_svc_c = 1.0;                         // phase-2 optimistic SVC C (Higher C: penalizes training errors more, tries harder to classify training points correctly (especially positives), less regularization. Lower C: allows more misclassification, smoother/more regularized boundary.)
+    cfg.optimistic_svc_gamma = 0.5;                     // phase-2 optimistic SVC gamma (kernel coefficient, lower = wider)
+    cfg.optimistic_svc_balance_classes = false;         // phase-2 class balancing for optimistic SVC
     cfg.optimistic_svc_positive_margin_tolerance = 0.0; // include SVC decision margin band: keep points with decisionValue >= -tol
-    cfg.subgoal_robustness_tolerance = 0.25f;    // neighborhood check around sampled subgoal
-    cfg.negative_samples_per_failure = 1;       // failure negatives added per failed rollout
-    cfg.option_node_cover_threshold = 0.8f;     // chain-closure criterion for option-node v_d coverage
+    cfg.subgoal_robustness_tolerance = 0.25f;           // neighborhood check around sampled subgoal
+    cfg.negative_samples_per_failure = 1;               // failure negatives added per failed rollout
+    cfg.option_node_cover_threshold = 0.8f;             // chain-closure criterion for option-node v_d coverage
 
     // -------------------------------------------------------------------------
     // Policy / critic architectures
@@ -1931,10 +1943,10 @@ int main(int argc, char **argv)
     // -------------------------------------------------------------------------
     // Learning dynamics (TD3 + policy-over-options)
     // -------------------------------------------------------------------------
-    cfg.lr_actor = 1e-4f;
-    cfg.lr_critic = 3e-4f;
-    cfg.lr_actor_global = 1e-5f;
-    cfg.lr_critic_global = 3e-5f;
+    cfg.lr_actor = 5e-5f;
+    cfg.lr_critic = 1e-4f;
+    cfg.lr_actor_global = 0.0f;
+    cfg.lr_critic_global = 0.0f;
     cfg.lr_poo = 1e-4f;
     cfg.actor_warmup_steps = 0; // TBD
     cfg.tau = 0.005f;
@@ -1942,15 +1954,16 @@ int main(int argc, char **argv)
     cfg.batch_size = 256;
     cfg.poo_batch_size = 16;
     cfg.actor_update_freq = 2;
+    cfg.updates_per_step = 2;
 
     // -------------------------------------------------------------------------
     // DSG graph structure + edge maintenance
     // -------------------------------------------------------------------------
     cfg.graph_update_freq = 10;
     cfg.max_children_per_node = 5;
-    cfg.expansion_freq = 100;  // every N episodes run expansion, else consolidation
+    cfg.expansion_freq = 100; // every N episodes run expansion, else consolidation
     cfg.max_expansion_tries = 10;
-    cfg.edge_weight_kappa = 0.95f; // learning rate for edge weight updates 
+    cfg.edge_weight_kappa = 0.95f; // learning rate for edge weight updates
 
     // -------------------------------------------------------------------------
     // Expansion controller (global-option proxy / transition-model MPC)
@@ -1972,15 +1985,15 @@ int main(int argc, char **argv)
     // -------------------------------------------------------------------------
     // Logging / debug visibility
     // -------------------------------------------------------------------------
-    cfg.render_training = render_training;
+    cfg.render_training = RENDER_TRAINING;
     cfg.verbose = true;
     cfg.log_interval = 25;
     cfg.visualize_initiation_sets = true;
-    std::cout << "[RenderConfig] render_training=" << (render_training ? "true" : "false")
-              << ", render_eval=" << (render_eval ? "true" : "false")
-              << ", render_realtime=" << (render_realtime ? "true" : "false") << "\n";
+    std::cout << "[RenderConfig] render_training=" << (RENDER_TRAINING ? "true" : "false")
+              << ", render_eval=" << (RENDER_EVAL ? "true" : "false") << "\n";
 
-    AbstractedState global_start = {{0.0, 0.0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    AbstractedState global_start = {{-5.3, -4.5, 0.}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    // AbstractedState global_start = {{0.0, 0.0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 
     // DSG has no fixed global goal — the graph grows outward from global_start
     DeepSkillGraph dsg(robot_bridge, device, global_start,
@@ -2004,7 +2017,7 @@ int main(int argc, char **argv)
     }
 
     float total = 0.0f;
-    if (render_eval)
+    if (RENDER_EVAL)
         robot_bridge->startRender();
     for (int i = 0; i < 40; ++i)
     {
