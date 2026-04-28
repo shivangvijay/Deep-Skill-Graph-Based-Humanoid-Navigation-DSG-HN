@@ -1168,8 +1168,9 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
     while (step < max_steps)
     {
         auto current_state = _env->getAbstractedState();
-        _env->setGoal(_nodeRepresentativeState(node_idx));
-        bool env_done = _env->computeReward(current_state).second.data_ptr<float>()[0] > 0.5;
+        // _env->setGoal(_nodeRepresentativeState(node_idx));
+        // bool env_done = _env->computeReward(current_state).second.data_ptr<float>()[0] > 0.5;
+        bool env_done = _env->getUnderlyingState().second; // gonna just terminate if in collisions
         bool already_in_target = _nodeCanStart(node_idx, current_state, false);
 
         int best_node_idx = -1;
@@ -1961,7 +1962,7 @@ int main(int argc, char **argv)
     // -------------------------------------------------------------------------
     cfg.graph_update_freq = 10;
     cfg.max_children_per_node = 5;
-    cfg.expansion_freq = 100; // every N episodes run expansion, else consolidation
+    cfg.expansion_freq = 50; // every N episodes run expansion, else consolidation
     cfg.max_expansion_tries = 10;
     cfg.edge_weight_kappa = 0.95f; // learning rate for edge weight updates
 
