@@ -267,7 +267,6 @@ void DeepSkillGraph::_validateOption()
                         _ensureStructuralEdge(new_id, target_id, "first-option-to-v_a");
                     _pending_structural_target_node.erase(pending_it);
                 }
-                _updateEdges();
             }
         }
     }
@@ -1851,15 +1850,15 @@ void DeepSkillGraph::_graphConsolidationPhase()
 #endif
 
 #define SCENE_FILE "../config/scene/umaze_scene.xml"
-#define OG_ACTOR "../models/pretrain_actor_umaze.pt"
-#define OG_CRITIC1 "../models/pretrain_critic_1_umaze.pt"
-#define OG_CRITIC2 "../models/pretrain_critic_2_umaze.pt"
-#define DSG_SAVE_PATH "../models/dsg_models"
+#define OG_ACTOR "../models/UMaze/pretrain_actor_umaze.pt"
+#define OG_CRITIC1 "../models/UMaze/pretrain_critic_1_umaze.pt" 
+#define OG_CRITIC2 "../models/UMaze/pretrain_critic_2_umaze.pt"
+#define DSG_SAVE_PATH "../models/dsg_models/run3"
 #define TM_CHECKPOINT "../checkpoints/improved/transition_transformer_delta_latest.pt"
 #define TM_NORMALISER "../checkpoints/improved/normaliser.txt"
 #define TEST false
 
-#define RENDER_TRAINING true
+#define RENDER_TRAINING false
 #define RENDER_REALTIME false // if true, will
 #define RENDER_EVAL true
 
@@ -1962,7 +1961,7 @@ int main(int argc, char **argv)
     // -------------------------------------------------------------------------
     cfg.graph_update_freq = 10;
     cfg.max_children_per_node = 5;
-    cfg.expansion_freq = 50; // every N episodes run expansion, else consolidation
+    cfg.expansion_freq = 200; // every N episodes run expansion, else consolidation
     cfg.max_expansion_tries = 10;
     cfg.edge_weight_kappa = 0.95f; // learning rate for edge weight updates
 
