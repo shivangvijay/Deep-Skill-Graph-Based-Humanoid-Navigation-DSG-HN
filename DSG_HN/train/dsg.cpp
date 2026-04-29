@@ -815,8 +815,8 @@ void DeepSkillGraph::load(const std::string &dir, const std::string &scene_file)
 void DeepSkillGraph::_updateEdges()
 {
     const int N = _totalNodes();
-    const float connect_threshold = 0.8f; // 50% coverage to add an edge
-    const float stale_threshold = 0.2f;   // 50% failure to remove an edge
+    const float connect_threshold = 0.5f; // 50% coverage to add an edge
+    const float stale_threshold = 0.5f;   // 50% + failure to remove an edge
 
     auto is_mature = [&](int idx) -> bool
     {
@@ -1452,6 +1452,19 @@ std::pair<int, int> DeepSkillGraph::_closestPair(const std::vector<int> &D,
 
 void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
 {
+    auto labelsToStringLocal = [&](const std::vector<int> &ids) -> std::string
+    {
+        std::string out = "[";
+        for (size_t i = 0; i < ids.size(); ++i)
+        {
+            if (i > 0)
+                out += ", ";
+            out += _nodeLabel(ids[i]);
+        }
+        out += "]";
+        return out;
+    };
+
     auto pathToString = [&](const std::vector<int> &path, int from) -> std::string
     {
         std::string out = _nodeLabel(from);
@@ -1489,6 +1502,7 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
 
         // 1. Path Planning: Find executable path via Dijkstra
         auto V_s = _getV(current_state);
+        std::cout << "[Navigate] V(s_t)=" << labelsToStringLocal(V_s) << "\n";
         int best_node_idx = -1;
         int next_hop_idx = -1;
         float best_cost = std::numeric_limits<float>::infinity();
@@ -1497,12 +1511,33 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
         for (int v : V_s)
         {
             auto [cost, path] = _dijkstraPath(v, node_idx);
+            if (!path.empty())
+            {
+                std::cout << "[Navigate] Candidate from " << _nodeLabel(v)
+                          << " cost=" << cost
+                          << " path=" << pathToString(path, v) << "\n";
+            }
+            else
+            {
+                std::cout << "[Navigate] Candidate from " << _nodeLabel(v)
+                          << " has no path to " << _nodeLabel(node_idx) << "\n";
+            }
             if (!path.empty() && cost < best_cost)
             {
                 best_cost = cost;
                 best_node_idx = v;
                 best_path = path;
             }
+        }
+        if (best_node_idx != -1)
+        {
+            std::cout << "[Navigate] Best candidate: " << _nodeLabel(best_node_idx)
+                      << " cost=" << best_cost
+                      << " path=" << pathToString(best_path, best_node_idx) << "\n";
+        }
+        else
+        {
+            std::cout << "[Navigate] No graph candidate found from current V(s_t).\n";
         }
 
         // 2. Execution Logic
@@ -1519,12 +1554,18 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
             {
                 if (!path_copy.empty())
                 {
+                    std::cout << "[Navigate] Peeking through goal node "
+                              << _nodeLabel(exec_node)
+                              << " -> " << _nodeLabel(path_copy.front()) << "\n";
                     exec_node = path_copy.front();
                     path_copy.erase(path_copy.begin());
                 }
                 else
                 {
                     // Path only contained the GR we are standing in
+                    std::cout << "[Navigate] Path ended at goal node "
+                              << _nodeLabel(best_node_idx)
+                              << " with no executable option.\n";
                     exec_node = -1;
                     break;
                 }
@@ -1535,13 +1576,17 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
                 next_hop_idx = (exec_node == best_node_idx && !best_path.empty()) 
                                ? best_path.front() : exec_node;
                 current_subgoal = _nodeRepresentativeState(next_hop_idx);
+                std::cout << "[Navigate] Selected exec_node=" << _nodeLabel(exec_node)
+                          << " next_hop=" << _nodeLabel(next_hop_idx) << "\n";
             }
         }
 
         // 3. Rollout: Execute found Skill or Fallback to Global Option
         if (exec_node == -1 || _nodes[exec_node].is_goal_region)
         {
-            std::cout << "[Navigate] No graph path or executable skill. Using Global Option.\n";
+            std::cout << "[Navigate] Fallback to Global Option ("
+                      << ((exec_node == -1) ? "no executable node" : "exec node is goal region")
+                      << ").\n";
             exec_node = _global_option_idx;
             current_subgoal = _nodeRepresentativeState(node_idx);
         }

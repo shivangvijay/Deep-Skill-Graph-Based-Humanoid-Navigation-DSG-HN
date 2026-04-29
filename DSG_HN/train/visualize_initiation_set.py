@@ -423,7 +423,18 @@ def main() -> None:
         return
 
     scale_x, scale_y = resolve_feature_scales(models_dir, args.scale_x, args.scale_y)
-    sid_to_opt = build_skill_to_graph_index(skills, models_dir)
+
+    # Determine which skills are mature (actually in the graph, not gestating)
+    explicit_map = parse_graph_option_skill_mapping(models_dir)
+    if explicit_map:
+        mature_skills = [sid for sid in skills if sid in explicit_map]
+    else:
+        option_nodes = parse_graph_option_nodes(models_dir)
+        mature_skills = [sid for sid in sorted(skills)[:len(option_nodes)]]
+
+    sid_to_opt = build_skill_to_graph_index(mature_skills, models_dir)
+    skills = mature_skills  # Only use mature skills from here on
+    print(f"[info] discovered skills: {len(discover_skills(models_dir))}, mature skills: {len(skills)}")
     scale_meta_path = models_dir / "classifier_scale.txt"
     if args.scale_x is not None and args.scale_y is not None:
         scale_source = "cli"

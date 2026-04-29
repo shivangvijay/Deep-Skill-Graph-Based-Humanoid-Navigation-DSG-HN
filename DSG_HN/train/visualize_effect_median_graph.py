@@ -292,13 +292,10 @@ def main() -> None:
             )
             ax.text(x, y, f"GR-{node_id}", color="magenta", fontsize=7, ha="center", va="center")
 
-    # Plot effect-set medians for options (same skill discovery/indexing flow as initiation script).
-    skipped_no_graph_node = 0
-    for sid in skills:
-        node_id = sid_to_opt.get(sid, None)
-        if node_id is None:
-            skipped_no_graph_node += 1
-            continue
+    # Plot effect-set medians for options (only mature options in the graph).
+    mature_skills = [sid for sid in skills if sid in sid_to_opt]
+    for sid in mature_skills:
+        node_id = sid_to_opt[sid]
         effect_path = models_dir / f"skill_{sid}_classifier.svm_effect.txt"
         eff = load_effect_points_2d(effect_path)
         if eff.shape[0] == 0:
@@ -339,7 +336,7 @@ def main() -> None:
     ]
     for nid in sorted(set(plotted_option_node_ids)):
         legend_handles.append(Line2D([0], [0], color=option_color(nid), lw=2.0, label=f"Opt-{nid}"))
-    ax.legend(handles=legend_handles, loc="upper right", fontsize=7, frameon=True)
+    ax.legend(handles=legend_handles, loc="upper left", bbox_to_anchor=(1.0, 1.0), fontsize=7, frameon=True)
 
     ax.set_xlim(args.xmin, args.xmax)
     ax.set_ylim(args.ymin, args.ymax)
@@ -353,6 +350,7 @@ def main() -> None:
     fig.savefig(out_path, dpi=170, bbox_inches="tight")
 
     print(f"discovered skills: {len(skills)}")
+    print(f"mature options plotted: {len(mature_skills)}")
     print(f"models_dir: {models_dir}")
     print(f"mapping mode: {'explicit skill_id' if explicit_map else 'legacy positional'}")
     if explicit_map:
@@ -361,8 +359,6 @@ def main() -> None:
     print(f"goal-region source: {'points-file' if goal_regions else 'graph_structure'}")
     print(f"goal regions plotted: {len(plotted_goal_ids)}")
     print(f"options plotted: {len(plotted_option_node_ids)}")
-    if skipped_no_graph_node > 0:
-        print(f"skills skipped (no graph option node): {skipped_no_graph_node}")
     print(f"edges drawn: {edge_count}")
     print(f"saved: {out_path}")
 
