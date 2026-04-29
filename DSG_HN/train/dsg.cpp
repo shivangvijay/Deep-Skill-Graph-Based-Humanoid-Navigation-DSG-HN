@@ -228,6 +228,10 @@ void DeepSkillGraph::_validateOption()
 
     for (int i = 0; i < (int)_skills.size(); ++i)
     {
+        // Global option is not a DSG graph node; keep it as controller fallback only.
+        if (i == _global_option_idx)
+            continue;
+
         if (_skills[i]->getTrainingPhase() == "mature")
         {
             // Check if already in graph
@@ -525,10 +529,17 @@ void DeepSkillGraph::save(const std::string &dir) const
 {
     DeepSkillChaining::save(dir); // Saves policy weights
     std::ofstream f(dir + "/graph_structure.txt");
+    if (!f.is_open())
+        throw std::runtime_error("Failed to open graph_structure.txt for writing in " + dir);
     std::unordered_map<const Skill *, int> skill_to_id;
     skill_to_id.reserve(_skills.size());
     for (int i = 0; i < (int)_skills.size(); ++i)
         skill_to_id[_skills[i].get()] = i;
+
+    int option_nodes = 0;
+    int mapped_option_nodes = 0;
+    std::vector<int> unmapped_node_ids;
+    std::vector<int> global_option_node_ids;
 
     f << _nodes.size() << "\n";
     for (const auto &n : _nodes)
@@ -556,12 +567,61 @@ void DeepSkillGraph::save(const std::string &dir) const
         }
         else if (n.skill)
         {
+            if (_global_option_idx >= 0 && _global_option_idx < (int)_skills.size() &&
+                n.skill == _skills[_global_option_idx])
+            {
+                global_option_node_ids.push_back(n.id);
+            }
+            option_nodes++;
             auto it = skill_to_id.find(n.skill.get());
             if (it != skill_to_id.end())
+            {
                 f << "skill_id " << it->second;
+                mapped_option_nodes++;
+            }
+            else
+            {
+                // Keep payload line format intact, but track this as a hard error below.
+                unmapped_node_ids.push_back(n.id);
+            }
         }
         f << "\n";
     }
+
+    f.flush();
+    if (!f)
+        throw std::runtime_error("Failed while writing graph_structure.txt in " + dir);
+
+    if (!global_option_node_ids.empty())
+    {
+        std::ostringstream oss;
+        oss << "Global option incorrectly present in DSG graph nodes in " << dir << ": ";
+        for (size_t i = 0; i < global_option_node_ids.size(); ++i)
+        {
+            if (i)
+                oss << ", ";
+            oss << "Opt-" << global_option_node_ids[i];
+        }
+        throw std::runtime_error(oss.str());
+    }
+
+    if (!unmapped_node_ids.empty())
+    {
+        std::ostringstream oss;
+        oss << "Save produced unmapped option nodes (missing skill_id) in " << dir << ": ";
+        for (size_t i = 0; i < unmapped_node_ids.size(); ++i)
+        {
+            if (i)
+                oss << ", ";
+            oss << "Opt-" << unmapped_node_ids[i];
+        }
+        throw std::runtime_error(oss.str());
+    }
+
+    std::cout << "[SaveAudit] graph_nodes=" << _nodes.size()
+              << " option_nodes=" << option_nodes
+              << " mapped_skill_ids=" << mapped_option_nodes
+              << " save_path=" << dir << "\n";
 }
 
 void DeepSkillGraph::load(const std::string &dir, const std::string &scene_file)
@@ -713,7 +773,14 @@ void DeepSkillGraph::load(const std::string &dir, const std::string &scene_file)
             const auto &n = _nodes[i];
             bool keep = n.is_goal_region;
             if (!n.is_goal_region && n.skill)
-                keep = (n.skill->getTrainingPhase() != "gestation");
+            {
+                // Global option should never appear as a graph node.
+                if (_global_option_idx >= 0 && _global_option_idx < (int)_skills.size() &&
+                    n.skill == _skills[_global_option_idx])
+                    keep = false;
+                else
+                    keep = (n.skill->getTrainingPhase() != "gestation");
+            }
 
             if (!keep)
                 continue;
@@ -2183,8 +2250,8 @@ void DeepSkillGraph::_graphConsolidationPhase()
 #define OG_ACTOR "../models/UMaze/pretrain_actor_umaze.pt"
 #define OG_CRITIC1 "../models/UMaze/pretrain_critic_1_umaze.pt" 
 #define OG_CRITIC2 "../models/UMaze/pretrain_critic_2_umaze.pt"
-#define DSG_SAVE_PATH "../models/UMaze/dsg_models/run2"
-#define DSG_LOAD_PATH "../models/UMaze/dsg_models/run1"
+#define DSG_SAVE_PATH "../models/UMaze/dsg_models/run3"
+#define DSG_LOAD_PATH "../models/UMaze/dsg_models/run2"
 #define CONTINUE_RUN true
 #define TM_CHECKPOINT "../checkpoints/improved/transition_transformer_delta_latest.pt"
 #define TM_NORMALISER "../checkpoints/improved/normaliser.txt"

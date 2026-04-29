@@ -18,7 +18,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--models-dir",
-        default="mac/models/UMaze/dsg_models/run2",
+        default="mac/models/UMaze/dsg_models/run3",
         help="Directory containing skill_<id>_classifier.svm files.",
     )
     parser.add_argument(
@@ -74,7 +74,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--out-dir",
-        default="./mac/logs/UMaze/run2/initiation_set_viz",
+        default="./mac/logs/UMaze/run3/initiation_set_viz",
         help="Directory to save visualization artifacts.",
     )
     return parser.parse_args()
@@ -326,21 +326,9 @@ def parse_graph_option_skill_mapping(models_dir: Path) -> Dict[int, int]:
 def build_skill_to_graph_index(skills: List[int], models_dir: Path) -> Dict[int, int]:
     explicit = parse_graph_option_skill_mapping(models_dir)
     if explicit:
-        mapping: Dict[int, int] = {}
-        used_node_ids = set()
-        for sid in sorted(skills):
-            if sid in explicit:
-                mapping[sid] = explicit[sid]
-                used_node_ids.add(explicit[sid])
-
-        # Preserve prior behavior for gestating/unmapped skills:
-        # assign hypothetical next graph ids.
-        next_node = (max(used_node_ids) + 1) if used_node_ids else 0
-        for sid in sorted(skills):
-            if sid not in mapping:
-                mapping[sid] = next_node
-                next_node += 1
-        return mapping
+        # Graph mapping is source-of-truth when available.
+        # Ignore skills not explicitly referenced by graph option nodes.
+        return {sid: explicit[sid] for sid in sorted(skills) if sid in explicit}
 
     option_nodes = parse_graph_option_nodes(models_dir)
     mapping: Dict[int, int] = {}

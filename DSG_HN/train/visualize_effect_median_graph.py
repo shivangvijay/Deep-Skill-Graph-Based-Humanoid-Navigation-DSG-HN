@@ -24,10 +24,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "models_dir",
         nargs="?",
-        default="./mac/models/UMaze/dsg_models/run2",
+        default="./mac/models/UMaze/dsg_models/run3",
         help="DSG save directory containing graph_structure.txt and skill files.",
     )
-    parser.add_argument("--out", default="./mac/logs/UMaze/run2/effect_median_graph.png", help="Output image path.")
+    parser.add_argument("--out", default="./mac/logs/UMaze/run3/effect_median_graph.png", help="Output image path.")
     parser.add_argument("--xmin", type=float, default=-7.0)
     parser.add_argument("--xmax", type=float, default=7.0)
     parser.add_argument("--ymin", type=float, default=-7.0)
