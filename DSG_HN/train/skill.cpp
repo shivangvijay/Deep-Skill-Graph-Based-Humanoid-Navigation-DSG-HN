@@ -144,6 +144,7 @@ std::tuple<int, float, bool, torch::Tensor, torch::Tensor> Skill::rollout(const 
         }
 
         state = next_state;
+        underlying_state = next_underlying_state;
         if (!_is_global && train)
         {
             visited.push_back({_classifierVec(_env->getAbstractedState()), _env->getAbstractedState()});
