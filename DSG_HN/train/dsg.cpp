@@ -1,5 +1,6 @@
 #include "dsg.h"
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <queue>
@@ -80,6 +81,45 @@ void DeepSkillGraph::loadTransitionModel(const std::string &model_path,
                           mpc_cfg);
 
     std::cout << "[DSG] Transformer transition model loaded from " << model_path << "\n";
+}
+
+void DeepSkillGraph::addExplicitGoalRegionsIfMissing(const std::vector<AbstractedState> &centers, float epsilon)
+{
+    const float eps = (epsilon > 0.0f) ? epsilon : _dsg_cfg.goal_region_epsilon;
+    const float eps_sq = eps * eps;
+    int added = 0;
+
+    for (const auto &c : centers)
+    {
+        bool exists = false;
+        for (const auto &n : _nodes)
+        {
+            if (!n.is_goal_region)
+                continue;
+            const float dx = n.goal_region.center.position[0] - c.position[0];
+            const float dy = n.goal_region.center.position[1] - c.position[1];
+            if ((dx * dx + dy * dy) <= eps_sq)
+            {
+                exists = true;
+                break;
+            }
+        }
+        if (exists)
+            continue;
+
+        Node n;
+        n.is_goal_region = true;
+        n.goal_region = {c, eps};
+        n.id = (int)_nodes.size();
+        _nodes.push_back(n);
+        added++;
+    }
+
+    if (added > 0)
+    {
+        _updateEdges();
+        std::cout << "[DSG] Injected " << added << " explicit goal region(s).\n";
+    }
 }
 
 // =============================================================================
@@ -831,6 +871,96 @@ void DeepSkillGraph::load(const std::string &dir, const std::string &scene_file)
         _nodes.swap(kept);
     }
 
+    // Remove goal-region nodes that are disconnected from the main component.
+    // We keep node 0 as the anchor (seed/global-start GR).
+    if (!_nodes.empty())
+    {
+        std::vector<char> reachable(_nodes.size(), 0);
+        std::queue<int> q;
+        reachable[0] = 1;
+        q.push(0);
+
+        while (!q.empty())
+        {
+            const int u = q.front();
+            q.pop();
+
+            for (const auto &c : _nodes[u].children)
+            {
+                const int v = c.first;
+                if (v >= 0 && v < (int)_nodes.size() && !reachable[v])
+                {
+                    reachable[v] = 1;
+                    q.push(v);
+                }
+            }
+            for (const auto &p : _nodes[u].parents)
+            {
+                const int v = p.first;
+                if (v >= 0 && v < (int)_nodes.size() && !reachable[v])
+                {
+                    reachable[v] = 1;
+                    q.push(v);
+                }
+            }
+        }
+
+        std::vector<int> old_to_new(_nodes.size(), -1);
+        std::vector<Node> kept;
+        kept.reserve(_nodes.size());
+
+        for (int i = 0; i < (int)_nodes.size(); ++i)
+        {
+            const auto &n = _nodes[i];
+            const bool drop_disconnected_goal = (i != 0 && n.is_goal_region && !reachable[i]);
+            if (drop_disconnected_goal)
+                continue;
+            old_to_new[i] = (int)kept.size();
+            kept.push_back(n);
+        }
+
+        for (int new_idx = 0; new_idx < (int)kept.size(); ++new_idx)
+        {
+            auto &n = kept[new_idx];
+            n.id = new_idx;
+
+            std::vector<std::pair<int, float>> new_children;
+            new_children.reserve(n.children.size());
+            for (const auto &c : n.children)
+            {
+                const int old_child = c.first;
+                if (old_child < 0 || old_child >= (int)old_to_new.size())
+                    continue;
+                const int mapped = old_to_new[old_child];
+                if (mapped == -1)
+                    continue;
+                new_children.push_back({mapped, c.second});
+            }
+            n.children.swap(new_children);
+
+            std::vector<std::pair<int, float>> new_parents;
+            new_parents.reserve(n.parents.size());
+            for (const auto &p : n.parents)
+            {
+                const int old_parent = p.first;
+                if (old_parent < 0 || old_parent >= (int)old_to_new.size())
+                    continue;
+                const int mapped = old_to_new[old_parent];
+                if (mapped == -1)
+                    continue;
+                new_parents.push_back({mapped, p.second});
+            }
+            n.parents.swap(new_parents);
+        }
+
+        if ((int)kept.size() != (int)_nodes.size())
+        {
+            std::cout << "[Load] Pruned " << ((int)_nodes.size() - (int)kept.size())
+                      << " disconnected goal region node(s) from graph.\n";
+        }
+        _nodes.swap(kept);
+    }
+
     int goal_count = 0, option_count = 0;
     for (const auto &n : _nodes)
     {
@@ -882,8 +1012,8 @@ void DeepSkillGraph::load(const std::string &dir, const std::string &scene_file)
 void DeepSkillGraph::_updateEdges()
 {
     const int N = _totalNodes();
-    const float connect_threshold = 0.5f; // 50% coverage to add an edge
-    const float stale_threshold = 0.5f;   // 50% + failure to remove an edge
+    const float connect_threshold = 0.1f; // 10% coverage to add an edge
+    const float stale_threshold = 1.0f;   // full failure to remove an edge
 
     auto is_mature = [&](int idx) -> bool
     {
@@ -2251,7 +2381,7 @@ void DeepSkillGraph::_graphConsolidationPhase()
 #define OG_CRITIC1 "../models/UMaze/pretrain_critic_1_umaze.pt" 
 #define OG_CRITIC2 "../models/UMaze/pretrain_critic_2_umaze.pt"
 #define DSG_SAVE_PATH "../models/UMaze/dsg_models/run3"
-#define DSG_LOAD_PATH "../models/UMaze/dsg_models/run2"
+#define DSG_LOAD_PATH "../models/UMaze/dsg_models/run3"
 #define CONTINUE_RUN true
 #define TM_CHECKPOINT "../checkpoints/improved/transition_transformer_delta_latest.pt"
 #define TM_NORMALISER "../checkpoints/improved/normaliser.txt"
@@ -2260,6 +2390,7 @@ void DeepSkillGraph::_graphConsolidationPhase()
 #define RENDER_TRAINING false
 #define RENDER_REALTIME false // if true, will
 #define RENDER_EVAL false
+#define ADD_EXPLICIT_SMPC_GOAL_REGIONS true
 
 #define X_MIN -7.0f
 #define X_MAX 7.0f
@@ -2375,7 +2506,7 @@ int main(int argc, char **argv)
     cfg.graph_update_freq = 10;
     cfg.max_children_per_node = 5;
     cfg.expansion_freq = 100; // every N episodes run expansion, else consolidation
-    cfg.max_expansion_tries = 10;
+    cfg.max_expansion_tries = 50;
     cfg.edge_weight_kappa = 0.95f; // learning rate for edge weight updates
 
     // -------------------------------------------------------------------------
@@ -2443,6 +2574,39 @@ int main(int argc, char **argv)
         catch (const std::exception &e)
         {
             throw std::runtime_error("Failed to load DSG checkpoint from " + load_path + ": " + e.what());
+        }
+    }
+
+    if (ADD_EXPLICIT_SMPC_GOAL_REGIONS)
+    {
+        // Add hand-picked s_mpc-like goals if they are not already represented by a GR.
+        const std::array<std::array<float, 2>, 5> explicit_xy = {
+            std::array<float, 2>{0.0f, -2.0f},
+            std::array<float, 2>{2.0f, -1.0f},
+            std::array<float, 2>{2.0f, 3.0f},
+            std::array<float, 2>{2.0f, 6.0f},
+            std::array<float, 2>{-4.0f, 6.0f},
+        };
+
+        std::vector<AbstractedState> explicit_gr_centers;
+        explicit_gr_centers.reserve(explicit_xy.size());
+        for (const auto &xy : explicit_xy)
+        {
+            AbstractedState s = global_start;
+            s.position[0] = xy[0];
+            s.position[1] = xy[1];
+            explicit_gr_centers.push_back(s);
+        }
+
+        dsg.addExplicitGoalRegionsIfMissing(explicit_gr_centers, cfg.goal_region_epsilon);
+        std::cout << "[DSG] Explicit s_mpc goal-region injection enabled (N="
+                  << explicit_gr_centers.size() << ", eps=" << cfg.goal_region_epsilon << ")\n";
+        if (!cfg.save_path.empty())
+        {
+            std::filesystem::create_directories(cfg.save_path);
+            dsg.save(cfg.save_path);
+            std::cout << "[DSG] Saved checkpoint after explicit goal-region injection to "
+                      << cfg.save_path << "\n";
         }
     }
 

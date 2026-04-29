@@ -72,6 +72,7 @@ public:
     void visualizeInitiationSets();
     void save(const std::string &dir) const override;
     void load(const std::string &dir, const std::string &scene_file) override;
+    void addExplicitGoalRegionsIfMissing(const std::vector<AbstractedState> &centers, float epsilon = -1.0f);
 
     // Load a pre-trained Transformer transition model for CEM-based graph expansion.
     // model_path      : path to the .pt checkpoint (farnaz/transition training script)
