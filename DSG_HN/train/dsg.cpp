@@ -1495,7 +1495,7 @@ void DeepSkillGraph::_navigateTo(int node_idx, int max_steps)
         }
 
         // Check if we have arrived in the target node's initiation set
-        if (_nodeCanStart(node_idx, current_state, false)) {
+        if (_nodeCanStart(node_idx, current_state, true)) {
             std::cout << "[Navigate] Arrived in target " << _nodeLabel(node_idx) << "\n";
             return;
         }
