@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 # Toggle for drawing goal regions (GR circles/labels)
 SHOW_GOAL_REGIONS = True
 # Temporary kill-switch: skip all visualization work to avoid interfering with training.
-SKIP_VISUALIZATION = True
+SKIP_VISUALIZATION = False
 
 
 def log(msg: str):
@@ -55,6 +55,49 @@ def load_points_from_models(models_dir: Path):
         except Exception:
             continue
     return points
+
+
+def parse_graph_option_nodes(models_dir: Path):
+    graph_path = models_dir / "graph_structure.txt"
+    if not graph_path.exists():
+        return []
+    lines = graph_path.read_text().splitlines()
+    if not lines:
+        return []
+    n = int(lines[0].strip())
+    idx = 1
+    option_nodes = []
+    for _ in range(n):
+        header = lines[idx].strip().split()
+        idx += 1
+        node_id = int(header[0])
+        is_goal = int(header[1]) != 0
+        idx += 3  # children line, parents line, payload line
+        if not is_goal:
+            option_nodes.append(node_id)
+    return option_nodes
+
+
+def map_skill_to_graph_node(points, models_dir: Path):
+    if not points:
+        return points
+    option_nodes = parse_graph_option_nodes(models_dir)
+    skill_ids = sorted(set(s for s, _, _ in points))
+    mapped = []
+
+    # Existing graph options map in-order; extra (e.g., gestating) options get hypothetical next node ids.
+    skill_to_node = {}
+    next_node = (max(option_nodes) + 1) if option_nodes else 0
+    for i, sid in enumerate(skill_ids):
+        if i < len(option_nodes):
+            skill_to_node[sid] = option_nodes[i]
+        else:
+            skill_to_node[sid] = next_node
+            next_node += 1
+
+    for sid, x, y in points:
+        mapped.append((skill_to_node.get(sid, sid), x, y))
+    return mapped
 
 
 def load_points_and_goal_regions(points_file: str, use_points: bool):
@@ -128,6 +171,7 @@ all_points, goal_regions = load_points_and_goal_regions(points_file, use_legacy_
 if args.models_dir is not None:
     log(f"loading model points from {args.models_dir}")
     all_points = load_points_from_models(Path(args.models_dir))
+    all_points = map_skill_to_graph_node(all_points, Path(args.models_dir))
 log(f"loaded points={len(all_points)} goal_regions_from_points={len(goal_regions)}")
 
 for skill, x, y in all_points:

@@ -18,7 +18,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--models-dir",
-        default="mac/models/dsg_models",
+        default="mac/models/UMaze/dsg_models/run4",
         help="Directory containing skill_<id>_classifier.svm files.",
     )
     parser.add_argument(
@@ -58,11 +58,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--show-points",
         action="store_true",
+        default=True,
         help="Overlay positive gestation records if available.",
     )
     parser.add_argument(
         "--save-combined-pessimistic",
         action="store_true",
+        default=True,
         help="Also save one image with all skills' pessimistic boundaries overlaid.",
     )
     parser.add_argument(
@@ -95,6 +97,10 @@ def parse_scene_path(models_dir: Path, explicit_scene: Optional[str]) -> Optiona
     if p2.exists():
         return p2
     return None
+
+
+def option_color(skill_id: int):
+    return plt.get_cmap("tab20")(skill_id % 20)
 
 
 def draw_obstacles(ax, scene_path: Optional[Path]) -> None:
@@ -259,6 +265,42 @@ def discover_skills(models_dir: Path) -> List[int]:
     return sorted(set(out))
 
 
+def parse_graph_option_nodes(models_dir: Path) -> List[int]:
+    graph_path = models_dir / "graph_structure.txt"
+    if not graph_path.exists():
+        return []
+    lines = graph_path.read_text().splitlines()
+    if not lines:
+        return []
+
+    n = int(lines[0].strip())
+    idx = 1
+    nodes: List[int] = []
+    for _ in range(n):
+        header = lines[idx].strip().split()
+        idx += 1
+        node_id = int(header[0])
+        is_goal = int(header[1]) != 0
+        idx += 3  # children, parents, payload lines
+        if not is_goal:
+            nodes.append(node_id)
+    return nodes
+
+
+def build_skill_to_graph_index(skills: List[int], models_dir: Path) -> Dict[int, int]:
+    option_nodes = parse_graph_option_nodes(models_dir)
+    mapping: Dict[int, int] = {}
+    next_node = (max(option_nodes) + 1) if option_nodes else 0
+    for i, sid in enumerate(sorted(skills)):
+        if i < len(option_nodes):
+            mapping[sid] = option_nodes[i]
+        else:
+            # Gestating / not-yet-instantiated option gets hypothetical next graph index.
+            mapping[sid] = next_node
+            next_node += 1
+    return mapping
+
+
 def resolve_feature_scales(models_dir: Path, user_scale_x: Optional[float], user_scale_y: Optional[float]) -> Tuple[float, float]:
     # Explicit CLI values always win.
     if user_scale_x is not None and user_scale_y is not None:
@@ -327,6 +369,7 @@ def main() -> None:
         return
 
     scale_x, scale_y = resolve_feature_scales(models_dir, args.scale_x, args.scale_y)
+    sid_to_opt = build_skill_to_graph_index(skills, models_dir)
     scale_meta_path = models_dir / "classifier_scale.txt"
     if args.scale_x is not None and args.scale_y is not None:
         scale_source = "cli"
@@ -346,6 +389,7 @@ def main() -> None:
     feat_pts = np.stack([world_pts[:, 0] / scale_x, world_pts[:, 1] / scale_y], axis=1)
 
     for sid in skills:
+        opt_idx = sid_to_opt.get(sid, sid)
         opt_path = models_dir / f"skill_{sid}_classifier.svm"
         pess_path = models_dir / f"skill_{sid}_classifier.svm_pessimistic"
         if not opt_path.exists() and not pess_path.exists():
@@ -437,9 +481,9 @@ def main() -> None:
                 plt.Line2D([0], [0], marker="o", color="w", markerfacecolor="tab:green", markersize=5, label="effect")
             )
         fig.legend(handles=handles, loc="upper center", ncol=4, fontsize=8, frameon=True)
-        fig.suptitle(f"Skill {sid} initiation-set decision-value maps", fontsize=12)
+        fig.suptitle(f"Opt-{opt_idx} initiation-set decision-value maps", fontsize=12)
 
-        out_path = out_dir / f"skill_{sid}_boundaries.png"
+        out_path = out_dir / f"opt_{opt_idx}_boundaries.png"
         fig.tight_layout(rect=[0, 0, 1, 0.93])
         fig.savefig(out_path, dpi=160)
         plt.close(fig)
@@ -456,18 +500,18 @@ def main() -> None:
         ax_all.set_ylabel("y")
         ax_all.set_title("All Skills: Pessimistic Boundaries")
 
-        cmap = plt.get_cmap("tab20")
         legend_handles = []
         drawn_count = 0
 
-        for i, sid in enumerate(skills):
+        for sid in skills:
+            opt_idx = sid_to_opt.get(sid, sid)
             pess_path = models_dir / f"skill_{sid}_classifier.svm_pessimistic"
             if not pess_path.exists():
                 continue
             try:
                 pess_model = parse_libsvm_model(pess_path)
                 pess_dec = decision_function(pess_model, feat_pts).reshape(xx.shape)
-                color = cmap(i % 20)
+                color = option_color(opt_idx)
                 ax_all.contour(
                     xx,
                     yy,
@@ -477,7 +521,7 @@ def main() -> None:
                     linewidths=1.6,
                 )
                 legend_handles.append(
-                    plt.Line2D([0], [0], color=color, lw=1.8, label=f"skill {sid}")
+                    plt.Line2D([0], [0], color=color, lw=1.8, label=f"Opt-{opt_idx}")
                 )
                 drawn_count += 1
             except Exception as ex:
