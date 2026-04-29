@@ -284,9 +284,12 @@ void DeepSkillChaining::load(const std::string &dir, const std::string &scene_fi
     }
 
     if (std::filesystem::exists(dir + "/poo_q.pt"))
-        torch::load(_poo.q, dir + "/poo_q.pt");
+        torch::load(_poo.q, dir + "/poo_q.pt", torch::kCPU);
     if (std::filesystem::exists(dir + "/poo_target_q.pt"))
-        torch::load(_poo.target_q, dir + "/poo_target_q.pt");
+        torch::load(_poo.target_q, dir + "/poo_target_q.pt", torch::kCPU);
+    // We deserialize on CPU for portability, then move to runtime device.
+    _poo.q->to(_device);
+    _poo.target_q->to(_device);
     std::cout << "Loaded " << num_skills << " skills and policy-over-options from " << dir << std::endl;
 }
 
@@ -590,9 +593,10 @@ void DeepSkillChaining::_loadGlobalOption(const std::string &actor_path,
                                           const std::string &critic2_path)
 {
     _makeSkill(true, nullptr); // TODO: replace this code for making the skill
-    torch::load(_skills[0]->agent().actor_local, actor_path);
-    torch::load(_skills[0]->agent().critic_local_1, critic1_path);
-    torch::load(_skills[0]->agent().critic_local_2, critic2_path);
+    // Always deserialize onto CPU first; device transfer happens via toDevice().
+    torch::load(_skills[0]->agent().actor_local, actor_path, torch::kCPU);
+    torch::load(_skills[0]->agent().critic_local_1, critic1_path, torch::kCPU);
+    torch::load(_skills[0]->agent().critic_local_2, critic2_path, torch::kCPU);
     _skills[0]->agent().hardCopy();
     _skills[0]->agent().toDevice(_device);
     std::cout << "=== Loaded global option oG from " << actor_path << " ===" << std::endl;

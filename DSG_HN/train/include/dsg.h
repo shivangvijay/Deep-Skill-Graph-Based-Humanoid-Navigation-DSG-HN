@@ -129,6 +129,7 @@ protected:
     void _updateEdgeWeight(int from, int to, bool success);
 
 private:
+    bool _is_loading_checkpoint = false;
     std::unique_ptr<DSCProblem> _current_dsc_problem = nullptr;
     // For first-chain skills created with null Skill parent (anchor is a goal region),
     // remember the intended anchor node so we can add a structural edge on maturation.

@@ -347,7 +347,7 @@ torch::Tensor PolicyOverOptionsAgent::getOptions(torch::Tensor state)
 {
     q->eval();                  // Set to evaluation mode (disables dropout, uses batch norm running stats)
     torch::NoGradGuard no_grad; // Disable gradient computation for inference
-    auto q_values = q->forward(state).to(torch::kCPU).squeeze();
+    auto q_values = q->forward(state.to(q->device)).to(torch::kCPU).squeeze();
     q->train(); // Reset to training mode
     return q_values;
 }

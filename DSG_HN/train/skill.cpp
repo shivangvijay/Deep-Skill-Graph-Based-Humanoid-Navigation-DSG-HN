@@ -489,9 +489,11 @@ void Skill::load(const std::string &actor_path,
 {
     _positive_gestation_records.clear();
 
-    torch::load(_agent.actor_local, actor_path);
-    torch::load(_agent.critic_local_1, critic1_path);
-    torch::load(_agent.critic_local_2, critic2_path);
+    // Always deserialize checkpoints onto CPU first to avoid device-tag issues
+    // (e.g. MPS-tagged artifacts on hosts without usable MPS runtime).
+    torch::load(_agent.actor_local, actor_path, torch::kCPU);
+    torch::load(_agent.critic_local_1, critic1_path, torch::kCPU);
+    torch::load(_agent.critic_local_2, critic2_path, torch::kCPU);
 
     if (!_is_global && std::filesystem::exists(classifier_path))
     {

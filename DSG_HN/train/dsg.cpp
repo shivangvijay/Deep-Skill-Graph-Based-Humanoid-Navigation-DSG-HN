@@ -3,6 +3,8 @@
 #include <filesystem>
 #include <fstream>
 #include <queue>
+#include <sstream>
+#include <unordered_map>
 #include <unordered_set>
 
 // =============================================================================
@@ -86,11 +88,15 @@ void DeepSkillGraph::loadTransitionModel(const std::string &model_path,
 
 void DeepSkillGraph::_makeSkill(bool is_global, std::shared_ptr<Skill> parent)
 {
+    // During checkpoint load there is no active DSC problem yet. Fall back to
+    // the DSG-level global goal in that case to avoid null dereference.
+    AbstractedState global_goal = _global_goal;
+    if (_current_dsc_problem)
+        global_goal = _nodeRepresentativeState(_current_dsc_problem->v_a);
 
-    AbstractedState global_goal = _nodeRepresentativeState(_current_dsc_problem->v_a);
     DeepSkillChaining::_makeSkill(is_global, parent, global_goal);
 
-    if (!_dsg_cfg.save_path.empty())
+    if (!_is_loading_checkpoint && !_dsg_cfg.save_path.empty())
     {
         std::filesystem::create_directories(_dsg_cfg.save_path);
         save(_dsg_cfg.save_path);
@@ -519,6 +525,11 @@ void DeepSkillGraph::save(const std::string &dir) const
 {
     DeepSkillChaining::save(dir); // Saves policy weights
     std::ofstream f(dir + "/graph_structure.txt");
+    std::unordered_map<const Skill *, int> skill_to_id;
+    skill_to_id.reserve(_skills.size());
+    for (int i = 0; i < (int)_skills.size(); ++i)
+        skill_to_id[_skills[i].get()] = i;
+
     f << _nodes.size() << "\n";
     for (const auto &n : _nodes)
     {
@@ -543,60 +554,258 @@ void DeepSkillGraph::save(const std::string &dir) const
             for (float v : n.goal_region.center.angular_velocity)
                 f << v << " ";
         }
+        else if (n.skill)
+        {
+            auto it = skill_to_id.find(n.skill.get());
+            if (it != skill_to_id.end())
+                f << "skill_id " << it->second;
+        }
         f << "\n";
     }
 }
 
 void DeepSkillGraph::load(const std::string &dir, const std::string &scene_file)
 {
-    DeepSkillChaining::load(dir, scene_file);
+    _is_loading_checkpoint = true;
+    try
+    {
+        DeepSkillChaining::load(dir, scene_file);
+    }
+    catch (...)
+    {
+        _is_loading_checkpoint = false;
+        throw;
+    }
+    _is_loading_checkpoint = false;
     _nodes.clear();
+
     std::ifstream f(dir + "/graph_structure.txt");
-    int n_size;
-    f >> n_size;
+    if (!f.is_open())
+        throw std::runtime_error("Missing graph_structure.txt in " + dir);
 
-    // Skill index tracker to map _skills back to nodes
-    int skill_ptr = 0;
+    std::string line;
+    if (!std::getline(f, line))
+        throw std::runtime_error("Invalid graph_structure header in " + dir + "/graph_structure.txt");
+    std::istringstream hs(line);
+    int n_size = 0;
+    if (!(hs >> n_size) || n_size <= 0)
+        throw std::runtime_error("Invalid graph_structure header in " + dir + "/graph_structure.txt");
 
-    for (int i = 0; i < n_size; i++)
+    // Parse exactly as save() writes: 4 lines per node.
+    // 1) header: id is_goal n_children n_parents
+    // 2) children line: (child_id child_w)*n_children
+    // 3) parents line: (parent_id parent_w)*n_parents
+    // 4) payload line: goal payload or empty line for option nodes
+    int legacy_skill_ptr = 0;
+    int max_referenced_skill_id = -1;
+    _nodes.reserve(n_size);
+    for (int i = 0; i < n_size; ++i)
     {
         Node n;
-        int n_children, n_parents;
-        f >> n.id >> n.is_goal_region >> n_children >> n_parents;
-        // Load Edges
-        for (int j = 0; j < n_children; j++)
+        int is_goal_i = 0, n_children = 0, n_parents = 0;
+
+        if (!std::getline(f, line))
+            throw std::runtime_error("Missing node header line in graph_structure.txt at node " + std::to_string(i));
+        std::istringstream hss(line);
+        if (!(hss >> n.id >> is_goal_i >> n_children >> n_parents))
+            throw std::runtime_error("Corrupt node header in graph_structure.txt at node " + std::to_string(i));
+        n.is_goal_region = (is_goal_i != 0);
+
+        if (!std::getline(f, line))
+            throw std::runtime_error("Missing child edge line in graph_structure.txt at node " + std::to_string(i));
+        std::istringstream css(line);
+        std::vector<std::string> child_tokens;
+        for (std::string tok; css >> tok;)
+            child_tokens.push_back(tok);
+        if ((int)child_tokens.size() != 2 * n_children)
+            throw std::runtime_error("Corrupt child edge list in graph_structure.txt at node " + std::to_string(i));
+        n.children.reserve(std::max(0, n_children));
+        for (int j = 0; j < n_children; ++j)
         {
-            int id;
-            float w;
-            f >> id >> w;
+            int id = std::stoi(child_tokens[2 * j]);
+            float w = static_cast<float>(std::stod(child_tokens[2 * j + 1]));
             n.children.push_back({id, w});
         }
-        for (int j = 0; j < n_parents; j++)
+
+        if (!std::getline(f, line))
+            throw std::runtime_error("Missing parent edge line in graph_structure.txt at node " + std::to_string(i));
+        std::istringstream pss(line);
+        std::vector<std::string> parent_tokens;
+        for (std::string tok; pss >> tok;)
+            parent_tokens.push_back(tok);
+        if ((int)parent_tokens.size() != 2 * n_parents)
+            throw std::runtime_error("Corrupt parent edge list in graph_structure.txt at node " + std::to_string(i));
+        n.parents.reserve(std::max(0, n_parents));
+        for (int j = 0; j < n_parents; ++j)
         {
-            int id;
-            float w;
-            f >> id >> w;
+            int id = std::stoi(parent_tokens[2 * j]);
+            float w = static_cast<float>(std::stod(parent_tokens[2 * j + 1]));
             n.parents.push_back({id, w});
         }
 
+        if (!std::getline(f, line))
+            throw std::runtime_error("Missing payload line in graph_structure.txt at node " + std::to_string(i));
+        std::istringstream dss(line);
         if (n.is_goal_region)
         {
-            f >> n.goal_region.epsilon;
+            if (!(dss >> n.goal_region.epsilon))
+                throw std::runtime_error("Corrupt goal payload (epsilon) in graph_structure.txt at node " + std::to_string(i));
             for (float &v : n.goal_region.center.position)
-                f >> v;
+                if (!(dss >> v))
+                    throw std::runtime_error("Corrupt goal payload (position) in graph_structure.txt at node " + std::to_string(i));
             for (float &v : n.goal_region.center.orientation)
-                f >> v;
+                if (!(dss >> v))
+                    throw std::runtime_error("Corrupt goal payload (orientation) in graph_structure.txt at node " + std::to_string(i));
             for (float &v : n.goal_region.center.velocity)
-                f >> v;
+                if (!(dss >> v))
+                    throw std::runtime_error("Corrupt goal payload (velocity) in graph_structure.txt at node " + std::to_string(i));
             for (float &v : n.goal_region.center.angular_velocity)
-                f >> v;
+                if (!(dss >> v))
+                    throw std::runtime_error("Corrupt goal payload (angular_velocity) in graph_structure.txt at node " + std::to_string(i));
         }
         else
         {
-            n.skill = _skills[skill_ptr++];
+            // New format: payload line contains explicit "skill_id <id>".
+            // Legacy format: payload line is empty for options, so we fall back
+            // to sequential assignment in the order option nodes are listed.
+            int assigned_skill_id = -1;
+            std::string tag;
+            int parsed_skill_id = -1;
+            std::istringstream oss(line);
+            if ((oss >> tag >> parsed_skill_id) && tag == "skill_id")
+                assigned_skill_id = parsed_skill_id;
+            else
+                assigned_skill_id = legacy_skill_ptr++;
+
+            if (assigned_skill_id < 0 || assigned_skill_id >= (int)_skills.size())
+                throw std::runtime_error("graph_structure references invalid skill_id " + std::to_string(assigned_skill_id) + " in " + dir);
+
+            n.skill = _skills[assigned_skill_id];
+            max_referenced_skill_id = std::max(max_referenced_skill_id, assigned_skill_id);
         }
+
         _nodes.push_back(n);
     }
+
+    // Retain only skills that are actually referenced by graph option nodes.
+    // Mapping above assigns option nodes from _skills in order, so any tail
+    // beyond skill_ptr is not represented in the graph.
+    {
+        const int retain_count = std::max(1, max_referenced_skill_id + 1); // always keep global option
+        if ((int)_skills.size() > retain_count)
+        {
+            const int dropped = (int)_skills.size() - retain_count;
+            _skills.resize(retain_count);
+            _unfinished_option_idx = std::min(_unfinished_option_idx, retain_count - 1);
+            std::cout << "[Load] Trimmed " << dropped
+                      << " skill(s) not referenced by graph nodes.\n";
+        }
+    }
+
+    // Remove option nodes still in gestation; keep goal regions and non-gestating options.
+    {
+        std::vector<int> old_to_new(_nodes.size(), -1);
+        std::vector<Node> kept;
+        kept.reserve(_nodes.size());
+
+        for (int i = 0; i < (int)_nodes.size(); ++i)
+        {
+            const auto &n = _nodes[i];
+            bool keep = n.is_goal_region;
+            if (!n.is_goal_region && n.skill)
+                keep = (n.skill->getTrainingPhase() != "gestation");
+
+            if (!keep)
+                continue;
+
+            old_to_new[i] = (int)kept.size();
+            kept.push_back(n);
+        }
+
+        for (int new_idx = 0; new_idx < (int)kept.size(); ++new_idx)
+        {
+            auto &n = kept[new_idx];
+            n.id = new_idx;
+
+            std::vector<std::pair<int, float>> new_children;
+            new_children.reserve(n.children.size());
+            for (const auto &c : n.children)
+            {
+                const int old_child = c.first;
+                if (old_child < 0 || old_child >= (int)old_to_new.size())
+                    continue;
+                const int mapped = old_to_new[old_child];
+                if (mapped == -1)
+                    continue;
+                new_children.push_back({mapped, c.second});
+            }
+            n.children.swap(new_children);
+
+            std::vector<std::pair<int, float>> new_parents;
+            new_parents.reserve(n.parents.size());
+            for (const auto &p : n.parents)
+            {
+                const int old_parent = p.first;
+                if (old_parent < 0 || old_parent >= (int)old_to_new.size())
+                    continue;
+                const int mapped = old_to_new[old_parent];
+                if (mapped == -1)
+                    continue;
+                new_parents.push_back({mapped, p.second});
+            }
+            n.parents.swap(new_parents);
+        }
+
+        if ((int)kept.size() != (int)_nodes.size())
+        {
+            std::cout << "[Load] Pruned " << ((int)_nodes.size() - (int)kept.size())
+                      << " gestating option node(s) from graph.\n";
+        }
+        _nodes.swap(kept);
+    }
+
+    int goal_count = 0, option_count = 0;
+    for (const auto &n : _nodes)
+    {
+        if (n.is_goal_region)
+            ++goal_count;
+        else
+            ++option_count;
+    }
+    std::cout << "[Load] Graph nodes: total=" << _nodes.size()
+              << " goals=" << goal_count
+              << " options=" << option_count
+              << " loaded_skills=" << _skills.size() << "\n";
+
+    if (_skills.size() > 1 && option_count == 0)
+    {
+        throw std::runtime_error(
+            "Loaded graph has zero option nodes while checkpoint has multiple skills. "
+            "Refusing to continue with likely-corrupted graph_structure in " + dir);
+    }
+
+    _updateEdges();
+
+    std::cout << "\n=== Graph Structure ===\n";
+
+            for (int i = 0; i < _nodes.size(); i++)
+            {
+                const auto &node = _nodes[i];
+                std::string label = node.is_goal_region ? "GR-" + std::to_string(i) : "Opt-" + std::to_string(i);
+                std::string phase = node.is_goal_region ? "goal_region" : node.skill->getTrainingPhase();
+                std::cout << "  " << label << "   " << phase;
+                if (!node.is_goal_region)
+                    std::cout << "   " << node.skill->goalHits() << "/" << node.skill->gestationPeriod();
+                std::cout << "  children=[";
+                for (const auto &child : node.children)
+                    std::cout << child.first << "(w=" << child.second << ") ";
+                std::cout << "] ";
+                if (node.is_goal_region)
+                    std::cout << " | center=(x=" << node.goal_region.center.position[0]
+                              << ", y=" << node.goal_region.center.position[1]
+                              << ") eps=" << node.goal_region.epsilon;
+                std::cout << "\n";
+            }
 }
 
 // =============================================================================
@@ -606,8 +815,8 @@ void DeepSkillGraph::load(const std::string &dir, const std::string &scene_file)
 void DeepSkillGraph::_updateEdges()
 {
     const int N = _totalNodes();
-    const float connect_threshold = 0.8f; // 80% coverage to add an edge
-    const float stale_threshold = 0.5f;   // 50% failure to remove an edge
+    const float connect_threshold = 0.8f; // 50% coverage to add an edge
+    const float stale_threshold = 0.2f;   // 50% failure to remove an edge
 
     auto is_mature = [&](int idx) -> bool
     {
@@ -916,7 +1125,7 @@ std::string DeepSkillGraph::_optionLabel(int option_idx) const
             }
         }
     }
-    return "option-" + std::to_string(option_idx) + "(node=" + node_part + ")";
+    return "Skill-" + std::to_string(option_idx) + "(node=" + node_part + ")";
 }
 
 // =============================================================================
@@ -1670,7 +1879,7 @@ void DeepSkillGraph::visualizeInitiationSets()
     }
     out.close();
 
-    std::string cmd = "python ../visualize.py \"" + _scene_file_path + "\" \"" + temp_file +
+    std::string cmd = "python ../../visualize.py \"" + _scene_file_path + "\" \"" + temp_file +
                       "\" --models-dir \"" + _dsg_cfg.save_path + "\"";
     system(cmd.c_str());
 }
@@ -1906,7 +2115,7 @@ void DeepSkillGraph::_graphConsolidationPhase()
               << rollout_start.position[0] << ", " << rollout_start.position[1] << "\n";
 
     float reward = _dscRollout();
-    _validateOption();
+    _validateOption(); // this MUST run, it creates the structural edge to parent and also adds to graph if successful
     // Explicit edge refresh after each consolidation rollout/validation step.
     _updateEdges();
     if (_env->getUnderlyingState().second)
@@ -1929,14 +2138,16 @@ void DeepSkillGraph::_graphConsolidationPhase()
 #define OG_ACTOR "../models/UMaze/pretrain_actor_umaze.pt"
 #define OG_CRITIC1 "../models/UMaze/pretrain_critic_1_umaze.pt" 
 #define OG_CRITIC2 "../models/UMaze/pretrain_critic_2_umaze.pt"
-#define DSG_SAVE_PATH "../models/dsg_models/run3"
+#define DSG_SAVE_PATH "../models/UMaze/dsg_models/run2"
+#define DSG_LOAD_PATH "../models/UMaze/dsg_models/run1"
+#define CONTINUE_RUN true
 #define TM_CHECKPOINT "../checkpoints/improved/transition_transformer_delta_latest.pt"
 #define TM_NORMALISER "../checkpoints/improved/normaliser.txt"
 #define TEST false
 
 #define RENDER_TRAINING false
 #define RENDER_REALTIME false // if true, will
-#define RENDER_EVAL true
+#define RENDER_EVAL false
 
 #define X_MIN -7.0f
 #define X_MAX 7.0f
@@ -1957,8 +2168,22 @@ int main(int argc, char **argv)
     }
     else if (torch::mps::is_available())
     {
-        std::cout << "MPS is available! Training on Apple GPU.\n";
-        device = torch::Device(torch::kMPS);
+        // Some environments report MPS available, but runtime tensor creation/load
+        // can still fail (e.g., unsupported macOS runtime). Probe once and fallback.
+        try
+        {
+            auto probe = torch::ones({1}, torch::TensorOptions().device(torch::kMPS));
+            (void)probe;
+            std::cout << "MPS is available! Training on Apple GPU.\n";
+            device = torch::Device(torch::kMPS);
+        }
+        catch (const c10::Error &e)
+        {
+            std::cout << "[DeviceSelect] MPS reported available but is not usable: "
+                      << e.what_without_backtrace()
+                      << "\n[DeviceSelect] Falling back to CPU.\n";
+            device = torch::Device(torch::kCPU);
+        }
     }
 
     auto robot_bridge = std::make_shared<RobotBridgeTrain>(
@@ -2037,7 +2262,7 @@ int main(int argc, char **argv)
     // -------------------------------------------------------------------------
     cfg.graph_update_freq = 10;
     cfg.max_children_per_node = 5;
-    cfg.expansion_freq = 200; // every N episodes run expansion, else consolidation
+    cfg.expansion_freq = 100; // every N episodes run expansion, else consolidation
     cfg.max_expansion_tries = 10;
     cfg.edge_weight_kappa = 0.95f; // learning rate for edge weight updates
 
@@ -2075,6 +2300,40 @@ int main(int argc, char **argv)
     DeepSkillGraph dsg(robot_bridge, device, global_start,
                        OG_ACTOR, OG_CRITIC1, OG_CRITIC2, SCENE_FILE, cfg);
 
+    const std::string load_path = CONTINUE_RUN ? std::string(DSG_LOAD_PATH) : std::string();
+    std::cout << "[CheckpointConfig] continue_run=" << (CONTINUE_RUN ? "true" : "false")
+              << ", load_path=" << (CONTINUE_RUN ? load_path : "<none>")
+              << ", save_path=" << cfg.save_path << "\n";
+
+    if (CONTINUE_RUN)
+    {
+        const std::filesystem::path load_dir(load_path);
+        const std::vector<std::string> required_files = {
+            "graph_structure.txt",
+            "skill_count.txt",
+            "scene_file.txt"};
+
+        for (const auto &fname : required_files)
+        {
+            const auto fp = load_dir / fname;
+            if (!std::filesystem::exists(fp))
+            {
+                throw std::runtime_error(
+                    "CONTINUE_RUN=true but missing required artifact: " + fp.string() +
+                    " (load dir: " + load_dir.string() + ")");
+            }
+        }
+
+        try
+        {
+            dsg.load(load_path, SCENE_FILE);
+        }
+        catch (const std::exception &e)
+        {
+            throw std::runtime_error("Failed to load DSG checkpoint from " + load_path + ": " + e.what());
+        }
+    }
+
     // Load transition model if checkpoints exist (graceful skip if not yet trained)
     if (std::filesystem::exists(TM_CHECKPOINT) && std::filesystem::exists(TM_NORMALISER))
         dsg.loadTransitionModel(TM_CHECKPOINT, TM_NORMALISER);
@@ -2084,24 +2343,26 @@ int main(int argc, char **argv)
 
     if (!TEST)
     {
+        dsg.save(cfg.save_path); // save initial graph structure before training so we can visualize initiation sets even if training is interrupted
         int n = dsg.train(cfg.training_episodes); // cfg.training_episodes default = 20000
         std::cout << "\nTraining complete: " << n << " skill(s) in graph.\n";
     }
-    else
+    else if (!CONTINUE_RUN)
     {
         dsg.load(DSG_SAVE_PATH, SCENE_FILE);
     }
 
-    float total = 0.0f;
-    if (RENDER_EVAL)
-        robot_bridge->startRender();
-    for (int i = 0; i < 40; ++i)
-    {
-        float r = dsg.execute();
-        total += r;
-        std::cout << "  Episode " << i + 1 << ": reward = " << r << "\n";
-    }
-    std::cout << "Mean reward: " << (total / 40.0f) << "\n";
+    // EVALUATION (uncomment to run after training, adjust episode count as desired)
+    // float total = 0.0f;
+    // if (RENDER_EVAL)
+    //     robot_bridge->startRender();
+    // for (int i = 0; i < 40; ++i)
+    // {
+    //     float r = dsg.execute();
+    //     total += r;
+    //     std::cout << "  Episode " << i + 1 << ": reward = " << r << "\n";
+    // }
+    // std::cout << "Mean reward: " << (total / 40.0f) << "\n";
 
     return 0;
 }
