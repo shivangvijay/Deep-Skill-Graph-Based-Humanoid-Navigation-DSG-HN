@@ -18,7 +18,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--models-dir",
-        default="mac/models/UMaze/dsg_models/run4",
+        default="mac/models/UMaze/dsg_models/run1",
         help="Directory containing skill_<id>_classifier.svm files.",
     )
     parser.add_argument(
@@ -71,6 +71,11 @@ def parse_args() -> argparse.Namespace:
         "--points-file",
         default="/tmp/init_sets.txt",
         help="Optional GR overlay file (same format as visualize.py): 'GR <id> <x> <y> <eps>'.",
+    )
+    parser.add_argument(
+        "--out-dir",
+        default="./mac/logs/UMaze/run1/initiation_set_viz",
+        help="Directory to save visualization artifacts.",
     )
     return parser.parse_args()
 
@@ -379,7 +384,7 @@ def main() -> None:
         scale_source = "fallback-default(7,7)"
     print(f"[scale] source={scale_source} scale_x={scale_x:.6g} scale_y={scale_y:.6g}")
 
-    out_dir = models_dir / "initiation_set_viz"
+    out_dir = Path(args.out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
     xs = np.linspace(args.xmin, args.xmax, args.grid)

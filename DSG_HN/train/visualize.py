@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 # Toggle for drawing goal regions (GR circles/labels)
 SHOW_GOAL_REGIONS = True
 # Temporary kill-switch: skip all visualization work to avoid interfering with training.
-SKIP_VISUALIZATION = False
+SKIP_VISUALIZATION = True
 
 
 def log(msg: str):
@@ -28,6 +28,8 @@ def parse_args():
     parser.add_argument("--models-dir", default=None,
                         help="If provided, plot points from skill_*_classifier.svm_positives.txt "
                              "(same records used by visualize_initiation_set.py).")
+    parser.add_argument("--out", default="./mac/logs/UMaze/run1/initiation_sets_viz.png",
+                        help="Output image path.")
     return parser.parse_args()
 
 
@@ -83,18 +85,10 @@ def map_skill_to_graph_node(points, models_dir: Path):
         return points
     option_nodes = parse_graph_option_nodes(models_dir)
     skill_ids = sorted(set(s for s, _, _ in points))
+    if not option_nodes or len(option_nodes) < len(skill_ids):
+        return points
     mapped = []
-
-    # Existing graph options map in-order; extra (e.g., gestating) options get hypothetical next node ids.
-    skill_to_node = {}
-    next_node = (max(option_nodes) + 1) if option_nodes else 0
-    for i, sid in enumerate(skill_ids):
-        if i < len(option_nodes):
-            skill_to_node[sid] = option_nodes[i]
-        else:
-            skill_to_node[sid] = next_node
-            next_node += 1
-
+    skill_to_node = {sid: option_nodes[i] for i, sid in enumerate(skill_ids)}
     for sid, x, y in points:
         mapped.append((skill_to_node.get(sid, sid), x, y))
     return mapped
@@ -219,10 +213,10 @@ ax.set_ylim(-7,7)
 ax.set_aspect('equal')
 ax.set_title('Initiation Sets Visualization')
 
-if not os.path.exists("../logs"):
-    os.makedirs("../logs")
-    
-out_path = "../logs/initiation_sets_viz.png"
+out_path = args.out
+out_dir = os.path.dirname(out_path)
+if out_dir and not os.path.exists(out_dir):
+    os.makedirs(out_dir, exist_ok=True)
 log(f"saving figure to {out_path}")
 plt.savefig(out_path)
 log("done")

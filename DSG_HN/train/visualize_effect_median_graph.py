@@ -18,9 +18,9 @@ def parse_args():
         "models_dir",
         nargs="?",
         help="DSG save directory containing graph_structure.txt and skill files.",
-        default="./mac/models/UMaze/dsg_models/run4",
+        default="./mac/models/UMaze/dsg_models/run1",
     )
-    parser.add_argument("--out", help="Output image path.", default="./mac/logs/UMaze/run4/effect_median_graph.png")
+    parser.add_argument("--out", help="Output image path.", default="./mac/logs/UMaze/run1/effect_median_graph.png")
     parser.add_argument("--xmin", type=float, default=-7.0)
     parser.add_argument("--xmax", type=float, default=7.0)
     parser.add_argument("--ymin", type=float, default=-7.0)
