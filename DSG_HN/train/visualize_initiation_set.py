@@ -18,7 +18,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--models-dir",
-        default="mac/models/UMaze/dsg_models/run1",
+        default="mac/models/UMaze/dsg_models/run2",
         help="Directory containing skill_<id>_classifier.svm files.",
     )
     parser.add_argument(
@@ -74,7 +74,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--out-dir",
-        default="./mac/logs/UMaze/run1/initiation_set_viz",
+        default="./mac/logs/UMaze/run2/initiation_set_viz",
         help="Directory to save visualization artifacts.",
     )
     return parser.parse_args()
@@ -292,7 +292,56 @@ def parse_graph_option_nodes(models_dir: Path) -> List[int]:
     return nodes
 
 
+def parse_graph_option_skill_mapping(models_dir: Path) -> Dict[int, int]:
+    graph_path = models_dir / "graph_structure.txt"
+    if not graph_path.exists():
+        return {}
+    lines = graph_path.read_text().splitlines()
+    if not lines:
+        return {}
+
+    n = int(lines[0].strip())
+    idx = 1
+    mapping: Dict[int, int] = {}
+    for _ in range(n):
+        header = lines[idx].strip().split()
+        idx += 1
+        node_id = int(header[0])
+        is_goal = int(header[1]) != 0
+        idx += 2  # children + parents
+        payload = lines[idx].strip() if idx < len(lines) else ""
+        idx += 1
+        if is_goal:
+            continue
+        toks = payload.split()
+        if len(toks) == 2 and toks[0] == "skill_id":
+            try:
+                skill_id = int(toks[1])
+                mapping[skill_id] = node_id
+            except ValueError:
+                pass
+    return mapping
+
+
 def build_skill_to_graph_index(skills: List[int], models_dir: Path) -> Dict[int, int]:
+    explicit = parse_graph_option_skill_mapping(models_dir)
+    if explicit:
+        mapping: Dict[int, int] = {}
+        used_node_ids = set()
+        for sid in sorted(skills):
+            if sid in explicit:
+                mapping[sid] = explicit[sid]
+                used_node_ids.add(explicit[sid])
+
+        # Preserve prior behavior for gestating/unmapped skills:
+        # assign hypothetical next graph ids.
+        next_node = (max(used_node_ids) + 1) if used_node_ids else 0
+        for sid in sorted(skills):
+            if sid not in mapping:
+                mapping[sid] = next_node
+                next_node += 1
+        return mapping
+
     option_nodes = parse_graph_option_nodes(models_dir)
     mapping: Dict[int, int] = {}
     next_node = (max(option_nodes) + 1) if option_nodes else 0

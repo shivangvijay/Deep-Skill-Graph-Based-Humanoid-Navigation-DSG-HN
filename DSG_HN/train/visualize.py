@@ -28,7 +28,7 @@ def parse_args():
     parser.add_argument("--models-dir", default=None,
                         help="If provided, plot points from skill_*_classifier.svm_positives.txt "
                              "(same records used by visualize_initiation_set.py).")
-    parser.add_argument("--out", default="./mac/logs/UMaze/run1/initiation_sets_viz.png",
+    parser.add_argument("--out", default="./mac/logs/UMaze/run2/initiation_sets_viz.png",
                         help="Output image path.")
     return parser.parse_args()
 
