@@ -240,6 +240,17 @@ def parse_goal_regions_from_points(points_file: Optional[Path]) -> List[Tuple[in
     return goal_regions
 
 
+def parse_goal_regions_from_graph(nodes: List[Dict]) -> List[Tuple[int, float, float, float]]:
+    goal_regions: List[Tuple[int, float, float, float]] = []
+    for n in nodes:
+        if not n["is_goal"] or n["center"] is None:
+            continue
+        x, y = n["center"]
+        eps = float(n["epsilon"] or 0.0)
+        goal_regions.append((int(n["node_id"]), float(x), float(y), eps))
+    return goal_regions
+
+
 def main() -> None:
     args = parse_args()
     scene_file = Path(args.scene_file).resolve()
@@ -254,7 +265,8 @@ def main() -> None:
     sid_to_opt = build_skill_to_graph_index(skills, models_dir)
     explicit_map = parse_graph_option_skill_mapping(models_dir)
     points_file = Path(args.points_file).resolve() if args.points_file else None
-    goal_regions = parse_goal_regions_from_points(points_file)
+    goal_regions_graph = parse_goal_regions_from_graph(nodes)
+    goal_regions_overlay = parse_goal_regions_from_points(points_file)
 
     fig, ax = plt.subplots(figsize=(8, 8))
     draw_obstacles(ax, scene_file)
@@ -263,34 +275,17 @@ def main() -> None:
     plotted_option_node_ids: List[int] = []
     plotted_goal_ids: List[int] = []
 
-    # Plot goal regions. Prefer the same points-file source used by visualize_initiation_set.py.
-    if goal_regions:
-        for gr_id, x, y, eps in goal_regions:
-            anchors[gr_id] = (x, y)
-            plotted_goal_ids.append(gr_id)
-            ax.add_patch(
-                patches.Circle((x, y), eps, linewidth=1.4, edgecolor="magenta", facecolor="none", alpha=0.9)
-            )
-            ax.add_patch(
-                patches.Circle((x, y), 0.14, linewidth=1.6, edgecolor="magenta", facecolor="white", alpha=0.95)
-            )
-            ax.text(x, y, f"GR-{gr_id}", color="magenta", fontsize=7, ha="center", va="center")
-    else:
-        for n in nodes:
-            if not n["is_goal"] or n["center"] is None:
-                continue
-            node_id = n["node_id"]
-            x, y = n["center"]
-            eps = float(n["epsilon"] or 0.0)
-            anchors[node_id] = (x, y)
-            plotted_goal_ids.append(node_id)
-            ax.add_patch(
-                patches.Circle((x, y), eps, linewidth=1.4, edgecolor="magenta", facecolor="none", alpha=0.9)
-            )
-            ax.add_patch(
-                patches.Circle((x, y), 0.14, linewidth=1.6, edgecolor="magenta", facecolor="white", alpha=0.95)
-            )
-            ax.text(x, y, f"GR-{node_id}", color="magenta", fontsize=7, ha="center", va="center")
+    # Plot goal regions from graph_structure.txt (source-of-truth for DSG artifacts).
+    for gr_id, x, y, eps in goal_regions_graph:
+        anchors[gr_id] = (x, y)
+        plotted_goal_ids.append(gr_id)
+        ax.add_patch(
+            patches.Circle((x, y), eps, linewidth=1.4, edgecolor="magenta", facecolor="none", alpha=0.9)
+        )
+        ax.add_patch(
+            patches.Circle((x, y), 0.14, linewidth=1.6, edgecolor="magenta", facecolor="white", alpha=0.95)
+        )
+        ax.text(x, y, f"GR-{gr_id}", color="magenta", fontsize=7, ha="center", va="center")
 
     # Plot effect-set medians for options (only mature options in the graph).
     mature_skills = [sid for sid in skills if sid in sid_to_opt]
@@ -356,7 +351,9 @@ def main() -> None:
     if explicit_map:
         print(f"explicit mapped options: {len(explicit_map)}")
     print(f"goal regions parsed: {sum(1 for n in nodes if n['is_goal'])}")
-    print(f"goal-region source: {'points-file' if goal_regions else 'graph_structure'}")
+    print("goal-region source: graph_structure")
+    if goal_regions_overlay:
+        print(f"goal-region overlay available from points-file: {len(goal_regions_overlay)} (ignored for anchors)")
     print(f"goal regions plotted: {len(plotted_goal_ids)}")
     print(f"options plotted: {len(plotted_option_node_ids)}")
     print(f"edges drawn: {edge_count}")

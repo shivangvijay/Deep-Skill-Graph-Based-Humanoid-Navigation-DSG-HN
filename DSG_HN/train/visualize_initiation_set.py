@@ -381,6 +381,40 @@ def parse_goal_regions_from_points(points_file: Optional[Path]) -> List[Tuple[in
     return goal_regions
 
 
+def parse_goal_regions_from_graph(models_dir: Path) -> List[Tuple[int, float, float, float]]:
+    graph_path = models_dir / "graph_structure.txt"
+    if not graph_path.exists():
+        return []
+    lines = graph_path.read_text().splitlines()
+    if not lines:
+        return []
+
+    n = int(lines[0].strip())
+    idx = 1
+    goal_regions: List[Tuple[int, float, float, float]] = []
+    for _ in range(n):
+        header = lines[idx].strip().split()
+        idx += 1
+        node_id = int(header[0])
+        is_goal = int(header[1]) != 0
+        idx += 2  # children + parents
+        payload = lines[idx].strip() if idx < len(lines) else ""
+        idx += 1
+        if not is_goal:
+            continue
+        toks = payload.split()
+        if len(toks) < 3:
+            continue
+        try:
+            eps = float(toks[0])
+            x = float(toks[1])
+            y = float(toks[2])
+            goal_regions.append((node_id, x, y, eps))
+        except ValueError:
+            continue
+    return goal_regions
+
+
 def draw_goal_regions(ax, goal_regions: List[Tuple[int, float, float, float]]) -> None:
     for gr_id, x, y, eps in goal_regions:
         ax.add_patch(
@@ -404,7 +438,8 @@ def main() -> None:
 
     scene_path = parse_scene_path(models_dir, args.scene)
     points_file = Path(args.points_file).resolve() if args.points_file else None
-    goal_regions = parse_goal_regions_from_points(points_file)
+    goal_regions = parse_goal_regions_from_graph(models_dir)
+    goal_regions_overlay = parse_goal_regions_from_points(points_file)
     skills = sorted(set(args.skills)) if args.skills else discover_skills(models_dir)
     if not skills:
         print(f"No classifier files found in {models_dir}")
@@ -431,6 +466,7 @@ def main() -> None:
     else:
         scale_source = "fallback-default(7,7)"
     print(f"[scale] source={scale_source} scale_x={scale_x:.6g} scale_y={scale_y:.6g}")
+    print(f"[goal-regions] graph={len(goal_regions)} overlay_points={len(goal_regions_overlay)}")
 
     out_dir = Path(args.out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
