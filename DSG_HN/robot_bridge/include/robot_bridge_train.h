@@ -26,6 +26,9 @@ public:
     void startRender(); // lets you start rendering even after you activated robot bridge (useful for cases when you want to train without rendering, but validate with it)
     std::shared_ptr<MuJoCoEngine> getEngine() const { return eng; }
 
+    mjModel *getModel() const { return eng->getModel(); }
+    mjData *getData() const { return eng->getData(); }
+
     AbstractedState generateRandomValidConfiguration();
 
     // used during training to ensure that spawn locations are valid
