@@ -6,6 +6,7 @@
 #include <vector>
 #include <GLFW/glfw3.h>
 #include <array>
+#include <vector>
 
 void silent_warning_handler(const char *msg);
 void mouse_button(GLFWwindow *window, int button, int action, int mods);
@@ -99,8 +100,28 @@ public:
         obstacle_margin = margin;
     }
 
+    struct DebugSphere
+    {
+        float x;
+        float y;
+        float z;
+        float radius;
+        std::array<float, 4> rgba;
+    };
+
+    void setDebugSpheres(const std::vector<DebugSphere> &spheres)
+    {
+        debug_spheres = spheres;
+    }
+
+    void clearDebugSpheres()
+    {
+        debug_spheres.clear();
+    }
+
     float goal_marker_pos[3] = {0, 0, 0};
     bool goal_marker_active = false;
     std::vector<ObstacleMarker> obstacle_markers;
     float obstacle_margin = 0.8f;
+    std::vector<DebugSphere> debug_spheres;
 };

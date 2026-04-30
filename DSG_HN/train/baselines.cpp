@@ -9,14 +9,14 @@ PurePursuitBaseline::PurePursuitBaseline(std::shared_ptr<RobotBridgeTrain> robot
     _readScene(robot_radius, discretization);
 }
 
-float PurePursuitBaseline::execute(const AbstractedState &start, const AbstractedState &goal)
+std::pair<float, bool> PurePursuitBaseline::execute(const AbstractedState &start, const AbstractedState &goal)
 {
     _env->resetTo(start);
     _env->setGoal(goal);
     auto waypoints = _generateWaypoint(start, goal);
     float cum_reward = 0.0f;
     bool env_done = false;
-
+    float last_reward = 0.0f;
     // simple pure pursuit controller to follow waypoints
     for (int i = 0; i < waypoints.size(); i++)
     {
@@ -59,9 +59,10 @@ float PurePursuitBaseline::execute(const AbstractedState &start, const Abstracte
             auto [next_state, reward, done] = _env->step(torch::tensor({linear_vel, 0.0f, angular_vel}));
             cum_reward += reward.item<float>();
             env_done = done.item<bool>();
+            last_reward = reward.item<float>();
         }
     }
-    return cum_reward;
+    return {cum_reward, last_reward > 45.0f};
 }
 
 // Private
@@ -228,8 +229,8 @@ void PurePursuitBaseline::_readScene(float robot_radius, float discretization)
     }
 }
 
-TD3Baseline::TD3Baseline(std::shared_ptr<RobotBridgeTrain> robot_bridge, const std::string& actor_path, const std::string& critic_1_path, const std::string& critic_2_path, const std::vector<int>& actor_layer_sizes, const std::vector<int>& critic_layer_sizes, const torch::Device device)
-    : _robot_bridge(robot_bridge), _env(std::make_shared<TrainEnvironment>(robot_bridge, 1000)),
+TD3Baseline::TD3Baseline(std::shared_ptr<RobotBridgeTrain> robot_bridge, const std::string& actor_path, const std::string& critic_1_path, const std::string& critic_2_path, const std::vector<int>& actor_layer_sizes, const std::vector<int>& critic_layer_sizes, const torch::Device device, bool narrow_map)
+    : _robot_bridge(robot_bridge), _env(std::make_shared<TrainEnvironment>(robot_bridge, 1000, narrow_map)),
      _agent(_env, actor_layer_sizes, critic_layer_sizes, device, 0, 0, 0, 0, 0, 0, 0)
 {
     torch::load(_agent.actor_local, actor_path);
@@ -238,14 +239,15 @@ TD3Baseline::TD3Baseline(std::shared_ptr<RobotBridgeTrain> robot_bridge, const s
     _agent.toDevice(device);
 }
 
-float TD3Baseline::execute(const AbstractedState &start, const AbstractedState &goal)
+std::pair<float, bool> TD3Baseline::execute(const AbstractedState &start, const AbstractedState &goal)
 {
     _env->setGoal(goal);
     _env->updateGoalMarker(goal);
     auto state = _env->resetTo(start);
+
     float cum_reward = 0.0f;
     bool done = false;
-
+    float last_reward = 0.0f;
     while (!done)
     {
         auto [action, _]  = _agent.getAction(_env->getState(), true);
@@ -253,19 +255,21 @@ float TD3Baseline::execute(const AbstractedState &start, const AbstractedState &
         cum_reward += reward.item<float>();
         done = env_done.item<bool>();
         state = next_state;
+        last_reward = reward.item<float>();
     }
-    return cum_reward;
+    return {cum_reward, last_reward > _env->narrow_map};
 }
 
-#define X_MIN -7.0f
-#define X_MAX 7.0f
-#define Y_MIN -7.0f
-#define Y_MAX 7.0f
-#define SCENE_FILE "../config/scene/umaze_scene.xml"
+#define X_MIN -3.0f
+#define X_MAX 3.0f
+#define Y_MIN -3.0f
+#define Y_MAX 3.0f
+#define SCENE_FILE "../config/scene/test_scene_narrow.xml"
+#define NARROW_MAP true
 
-#define ACTOR_PATH "../models/actor.pt"
-#define CRITIC_1_PATH "../models/critic_1.pt"
-#define CRITIC_2_PATH "../models/critic_2.pt"
+#define ACTOR_PATH "../models/pretrain_actor_narrow.pt"
+#define CRITIC_1_PATH "../models/pretrain_critic_1_narrow.pt"
+#define CRITIC_2_PATH "../models/pretrain_critic_2_narrow.pt"
 #define ACTOR_LAYER_SIZES {256, 256, 256}
 #define CRITIC_LAYER_SIZES {256, 256, 256}
 
@@ -290,7 +294,7 @@ int main(int argc, char **argv)
     }
 
     auto robot_bridge = std::make_shared<RobotBridgeTrain>(
-        SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, true);
+        SCENE_FILE, X_MIN, X_MAX, Y_MIN, Y_MAX, policy_dir, false);
 
     std::unique_ptr<Baseline> baseline;
     
@@ -302,7 +306,7 @@ int main(int argc, char **argv)
     {
         std::vector<int> actor_layer_sizes = ACTOR_LAYER_SIZES;
         std::vector<int> critic_layer_sizes = CRITIC_LAYER_SIZES;
-        baseline = std::make_unique<TD3Baseline>(robot_bridge, ACTOR_PATH, CRITIC_1_PATH, CRITIC_2_PATH, actor_layer_sizes, critic_layer_sizes, device);
+        baseline = std::make_unique<TD3Baseline>(robot_bridge, ACTOR_PATH, CRITIC_1_PATH, CRITIC_2_PATH, actor_layer_sizes, critic_layer_sizes, device, NARROW_MAP);
     }
     else
     {
@@ -310,9 +314,22 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    AbstractedState global_goal = {{-4.5, 4.1, 0.}, {0, 0, 0, -1}, {0, 0, 0}, {0, 0, 0}};
-    AbstractedState global_start = {{-5.3, -4.5, 0.}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    // AbstractedState global_goal = {{-4.5, 4.1, 0.}, {0, 0, 0, -1}, {0, 0, 0}, {0, 0, 0}};
+    // AbstractedState global_start = {{-5.3, -4.5, 0.}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    AbstractedState global_goal = {{2.0, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    AbstractedState global_start = {{-2.0, 0, 0}, {1, 0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
 
-    float reward = baseline->execute(global_start, global_goal);
-    std::cout << "Total reward: " << reward << std::endl;
+    int successes = 0;
+    for (int i = 0; i < 50; i++)
+    {
+        auto [reward, success] = baseline->execute(global_start, global_goal);
+        if (success)
+        {
+            auto state = robot_bridge->getRobotState();
+            std::cout << state.position[0] << " " << state.position[1] << std::endl;
+            successes++;
+        }
+        std::cout << "Finished. Success: " << success << std::endl;
+    }
+    std::cout << "Total successes: " << successes << "/" << 50 << std::endl;
 }

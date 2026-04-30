@@ -39,10 +39,25 @@ public:
         int last_k = 10;                  // states collected per successful validation episode
         int refinement_eps = 20;          // eval rollouts from SVM boundary for Phase 3
         double nu = 0.1;                  // one-class SVM outlier fraction
+        double optimistic_svc_c = 1.0;    // phase-2 optimistic SVC C
+        double optimistic_svc_gamma = 0.5; // phase-2 optimistic SVC gamma
+        bool optimistic_svc_balance_classes = true; // phase-2 optimistic SVC class balancing
+        double optimistic_svc_positive_margin_tolerance = 0.0; // include samples with decisionValue >= -tol as optimistic positives
+        double pessimistic_ocsvm_gamma = 0.5;      // one-class gamma for pessimistic classifier
+        double optimistic_ocsvm_gamma = 0.5;       // one-class gamma for optimistic classifier in phase-1
+        double optimistic_ocsvm_nu_divisor = 10.0; // optimistic phase-1 nu = nu / divisor
+        float subgoal_robustness_tolerance = 0.25f; // neighborhood tolerance in sampleSubgoalState
+        int negative_samples_per_failure = 1; // number of failure states added as negatives per failed rollout
         int max_option_steps = 20;        // how long an option can execute for
         int max_skills = 6;
-        float start_noise_radius = 2.0f;
-        float val_accuracy_threshold = 0.8f;
+        float val_accuracy_threshold = 0.0f;
+        float success_radius = 0.5f;      // environment goal termination radius (meters)
+        bool narrow_map = false; // set to true if you want the reward and state to be that of the narrow env. Note that the models need to be pretrained with the correct reward/state info
+        int updates_per_step = 1;
+
+        bool strict_sampling = false;
+        float sample_global_start_percentage = 0.1;
+        float sample_start_near_boundary_percentage = 0.6;
 
         std::vector<int> actor_layers = {256, 256, 256};
         std::vector<int> critic_layers = {256, 256, 256};
@@ -59,12 +74,24 @@ public:
         int batch_size = 256;
         int poo_batch_size = 16;
         int actor_update_freq = 2;
+        bool use_human_collected_data = false;
+        std::string human_collected_data_path = "";
+        float human_data_percentage = 0.25f; // percentage of sampled data that will come from expert data
+        float exploration_noise_gestation = 0.3f;
+        float exploration_noise_mature = 0.1f;
 
         bool render_training = false;           // if true, startRender() is called before the training loop (slows training)
         bool verbose = false;                   // per-rollout logging inside each episode
         bool visualize_initiation_sets = false; // if true, periodically render initiation set visualization
         int log_interval = 50;                  // print episode summary + skill status table every N episodes
-        bool strict_sampling = false;           // if true, all rollout spawns come from _sampleSpawnState() near _global_start
+    };
+
+    struct DSCProblem
+    {
+        int v_d;
+        int v_a;
+        int v_g;
+        std::vector<int> dsc_chain; // skill chain from v_d to v_a, excluding v_d and v_a themselves
     };
 
     // TODO: depending on DSG setup may need other constructors that allow you to pass in the global agent
@@ -77,14 +104,14 @@ public:
                       const std::string &pretrain_critic1_path,
                       const std::string &pretrain_critic2_path,
                       const std::string &scene_file,
-                      Config cfg, bool eval=false);
+                      Config cfg, bool eval=false, bool make_goal_option=true);
 
     DeepSkillChaining(std::shared_ptr<RobotBridgeTrain> robot_bridge,
                       torch::Device device,
                       AbstractedState global_goal,
                       AbstractedState global_start,
                       const std::string &scene_file,
-                      Config cfg, bool eval=false);
+                      Config cfg, bool eval=false, bool make_goal_option=true);
 
     // Train the chain backward from the global goal. Returns total skill count excluding the global option
     virtual int train(int max_episodes);
@@ -119,10 +146,11 @@ protected:
     int _unfinished_option_idx = 0;
 
     void _warmupRollout();
-    float _dscRollout();
-    std::pair<int, AbstractedState> _pickOption();
+    virtual float _dscRollout();
+    virtual std::pair<int, AbstractedState> _pickOption();
     bool _containsGlobalStartState();
     virtual void _makeSkill(bool is_global, std::shared_ptr<Skill> parent);
+    virtual void _makeSkill(bool is_global, std::shared_ptr<Skill> parent, const AbstractedState& local_goal);
     void _loadGlobalOption(const std::string &actor_path, const std::string &critic1_path, const std::string &critic2_path);
 
     float _sampleGaussianDist(float mu, float std);
@@ -131,7 +159,7 @@ protected:
     AbstractedState _sampleStartNearObstacle();
     AbstractedState _sampleStartInterpolated();
     AbstractedState _sampleStartNearBoundary();
-    virtual AbstractedState _sampleSpawnState(); // used when strict_sampling=true; default returns _global_start
+    virtual AbstractedState _sampleSpawnState(); // default returns _global_start
     virtual void _validateOption();
     virtual bool _shouldCreateNewOption();
 };

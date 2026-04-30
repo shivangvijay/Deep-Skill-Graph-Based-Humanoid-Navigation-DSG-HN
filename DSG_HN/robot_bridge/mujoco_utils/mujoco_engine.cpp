@@ -159,12 +159,16 @@ void MuJoCoEngine::render()
         scn.ngeom++;
     }
 
-    for (auto &mk : markers_)
+    for (const auto &s : debug_spheres)
     {
-        if (scn.ngeom >= scn.maxgeom) break;
-        mjvGeom *g = &scn.geoms[scn.ngeom++];
-        mjv_initGeom(g, mk.type, mk.size, mk.pos, NULL, mk.rgba);
-        g->category = mjCAT_DECOR;
+        if (scn.ngeom >= scn.maxgeom)
+            break;
+        mjvGeom *g = &scn.geoms[scn.ngeom];
+        mjtNum pos[3] = {(mjtNum)s.x, (mjtNum)s.y, (mjtNum)s.z};
+        mjtNum size[3] = {(mjtNum)s.radius, (mjtNum)s.radius, (mjtNum)s.radius};
+        float rgba[4] = {s.rgba[0], s.rgba[1], s.rgba[2], s.rgba[3]};
+        mjv_initGeom(g, mjGEOM_SPHERE, size, pos, NULL, rgba);
+        scn.ngeom++;
     }
 
     mjr_render(viewport, &scn, &con);
@@ -255,4 +259,3 @@ bool MuJoCoEngine::inCollision()
     }
     return false;
 }
-
