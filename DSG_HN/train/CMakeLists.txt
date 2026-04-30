@@ -29,8 +29,10 @@ list(APPEND CMAKE_PREFIX_PATH "${LIBTORCH_PATH}")
 find_package(Torch REQUIRED)
 
 
+# DO NOT add $ENV{CONDA_PREFIX}/include here globally — conda ships fmt v11
+# which conflicts with system spdlog (expects fmt v9). Only targets that need
+# conda headers (train, test — for svm.h) get it via target_include_directories.
 include_directories(
-  $ENV{CONDA_PREFIX}/include
   /usr/include/eigen3
   /usr/local/include/ddscxx # dds
   /usr/local/include/iceoryx/v2.0.2 # dds
@@ -41,13 +43,12 @@ include_directories(
   ${MUJOCO_DIR}/include
   ${PROJECT_SOURCE_DIR}/../../unitree_sdk2/include
   ${PROJECT_SOURCE_DIR}/../robot_bridge/include
-
+  ${JOYSTICK_SRC}
 )
 
 file(COPY ${SCENE_XML_DIR}/ DESTINATION ${PROJECT_SOURCE_DIR}/config/scene)
 file(COPY ${POLICY_CONFIG_DIR}/ DESTINATION ${PROJECT_SOURCE_DIR}/config)
 
-link_directories($ENV{CONDA_PREFIX}/lib)
 add_executable(transition_train_gaussian
   transition_train_gaussian.cpp
 )
@@ -134,8 +135,10 @@ target_link_libraries(sandbox_mpc PRIVATE
   unitree_sdk2 ddsc ddscxx rt pthread
   libboost_program_options.a libyaml-cpp.a fmt
   ${PROJECT_SOURCE_DIR}/../deploy/thirdparty/onnxruntime-linux-x64-1.22.0/lib/libonnxruntime.so.1.22.0
-  $ENV{CONDA_PREFIX}/lib/libsvm.so
 )
+if(EXISTS "$ENV{CONDA_PREFIX}/lib/libsvm.so")
+  target_link_libraries(sandbox_mpc PRIVATE "$ENV{CONDA_PREFIX}/lib/libsvm.so")
+endif()
 
 add_executable(test_mpc_obstacles
   test_mpc_obstacles.cpp
@@ -152,7 +155,6 @@ link_libraries(
   ${PROJECT_SOURCE_DIR}/../deploy/thirdparty/onnxruntime-linux-x64-1.22.0/lib/libonnxruntime.so.1.22.0
   ${MUJOCO_DIR}/lib/libmujoco.so
   glfw
-  $ENV{CONDA_PREFIX}/lib/libsvm.so
   ${TORCH_LIBRARIES}
 )
 
@@ -195,3 +197,30 @@ add_executable(dsg
   ${PROJECT_SOURCE_DIR}/../robot_bridge/robot_bridge_train.cpp
 )
 target_compile_definitions(dsg PRIVATE DSG_BUILD)
+
+add_executable(transition_rollout_eval_gaussian_delta
+  transition_rollout_eval_gaussian_delta.cpp
+)
+target_link_libraries(transition_rollout_eval_gaussian_delta PRIVATE
+  ${TORCH_LIBRARIES}
+  libboost_program_options.a
+  fmt
+)
+
+add_executable(transition_train_transformer_delta
+  transition_train_transformer_delta.cpp
+)
+target_link_libraries(transition_train_transformer_delta PRIVATE
+  ${TORCH_LIBRARIES}
+  libboost_program_options.a
+  fmt
+)
+
+add_executable(transition_rollout_eval_transformer_delta
+  transition_rollout_eval_transformer_delta.cpp
+)
+target_link_libraries(transition_rollout_eval_transformer_delta PRIVATE
+  ${TORCH_LIBRARIES}
+  libboost_program_options.a
+  fmt
+)

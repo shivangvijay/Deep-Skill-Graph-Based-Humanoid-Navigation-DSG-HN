@@ -3,6 +3,7 @@
 #include <string>
 #include <iostream>
 #include <filesystem>
+#include <vector>
 #include <GLFW/glfw3.h>
 #include <array>
 #include <vector>
@@ -51,6 +52,10 @@ public:
     bool inCollision();
     bool isWindowOpen() const;
 
+    void addMarker(const mjtNum pos[3], float radius,
+                   const float rgba[4], mjtGeom type = mjGEOM_SPHERE);
+    void clearMarkers();
+
     double lastx = 0;
     double lasty = 0;
     bool button_left = false;
@@ -67,6 +72,14 @@ public:
     mjvScene scn;    // abstract scene
     mjrContext con;  // custom GPU context
     mjvPerturb pert; // mouse perturbation
+
+    struct Marker {
+        mjtNum pos[3];
+        mjtNum size[3];
+        float rgba[4];
+        mjtGeom type;
+    };
+    std::vector<Marker> markers_;
 
     void initViz();
 

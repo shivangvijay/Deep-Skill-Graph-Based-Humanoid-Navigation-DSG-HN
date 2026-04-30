@@ -29,6 +29,9 @@ public:
     void setRenderRealtime(bool enabled) { render_realtime = enabled; }
     std::shared_ptr<MuJoCoEngine> getEngine() const { return eng; }
 
+    mjModel *getModel() const { return eng->getModel(); }
+    mjData *getData() const { return eng->getData(); }
+
     AbstractedState generateRandomValidConfiguration();
 
     // used during training to ensure that spawn locations are valid
